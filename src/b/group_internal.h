@@ -43,12 +43,17 @@ struct GRCORE_Group {
   GRCORE_Meter meter;
   GRCORE_Counting counting;
   size_t contexts; ///< Touched only through `__atomic` builtins.
+  size_t ports;    ///< Likewise.
 };
 
 /** @brief Counts a context in. */
 void grcore_group_enter(GRCORE_Group * group);
 /** @brief Counts a context out. */
 void grcore_group_leave(GRCORE_Group * group);
+/** @brief Counts a port in. */
+void grcore_group_port_enter(GRCORE_Group * group);
+/** @brief Counts a port out. The group may be destroyed after this. */
+void grcore_group_port_leave(GRCORE_Group * group);
 
 #ifdef __cplusplus
 }

@@ -160,13 +160,13 @@ CC := cc
 # shape is reported at level 1 and silent at 0, 2, and 3. Do not simplify it
 # to `*(int *)&local`, which fires at every level from 1 up and certifies
 # nothing. check-aliasing is the measurement.
-CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfloat-conversion -fstrict-aliasing -Wstrict-aliasing=1 -Wno-error=unused-function -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g $(EXTRA_CFLAGS)
+CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfloat-conversion -fstrict-aliasing -Wstrict-aliasing=1 -Wno-error=unused-function -Wfatal-errors -std=c17 -pthread $(OPT_CFLAGS) -g $(EXTRA_CFLAGS)
 ifeq ($(OS_NAME), Windows)
 CFLAGS += -DGRCORE_STATIC
 CXXFLAGS += -DGRCORE_STATIC
 endif
 LIB_CFLAGS := $(CFLAGS) -fvisibility=hidden -DGRCORE_BUILD $(EXTRA_CFLAGS)
-LDFLAGS := -L /usr/lib -lstdc++ -lm $(EXTRA_LDFLAGS)
+LDFLAGS := -L /usr/lib -lstdc++ -lm -pthread $(EXTRA_LDFLAGS)
 ifdef PREFIX
 LDFLAGS += -Wl,-rpath,$(LIB_INSTALL_PATH)/$(SUITE)
 ifeq ($(OS_NAME), Windows)
@@ -210,7 +210,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage clears this: --coverage links the gcov runtime, whose mangle_path
 # check-symbols is right to reject in a shipping library.
 TEST_GATES ?= check-symbols check-aliasing check-stamps check-labels \
-	check-direction check-edges check-gates
+	check-direction check-edges check-gates examples
 
 VALGRIND_FLAGS := --leak-check=full --show-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1 --suppressions=tests/valgrind.supp
 
@@ -341,9 +341,16 @@ test-watch: ## Watch sources and rerun the tests
 		inotifywait -qr -e modify -e create -e delete -e move src include tests Makefile; \
 		done
 
-examples: $(APP_DIR)/$(TARGET) $(EXAMPLES) ## Build the examples
-
 TEST_LD_PATH := $(APP_DIR):$(LIB_INSTALL_PATH)/$(SUITE)
+
+# Builds each example and runs it: an example that is only built can rot into
+# something that compiles and does nothing it claims. It is a test gate for
+# the same reason (a failing example fails `make test`).
+examples: $(APP_DIR)/$(TARGET) $(EXAMPLES) ## Build the examples and run each
+	@for e in $(EXAMPLES); do \
+		printf '\n### Example %s ###\n\n' "$$(basename $$e $(EXE_EXTENSION))"; \
+		LD_LIBRARY_PATH="$(TEST_LD_PATH)" $$e || exit 1; \
+	done
 
 # clang accepts -Wstrict-aliasing and implements nothing, so under clang the
 # probe can never be reported and the gate would fail for a reason that says

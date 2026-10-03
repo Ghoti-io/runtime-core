@@ -32,6 +32,8 @@
 
 #include "account_internal.h"
 
+#include <ghoti.io/runtime-core/b/request.h>
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -76,6 +78,37 @@ uint64_t grcore_meter_blocks(const GRCORE_Meter * meter) {
   return __atomic_load_n(&meter->blocks, __ATOMIC_RELAXED);
 }
 
+/* Whether charging `add` more bytes would pass the budget and its reserve.
+ * Nothing is charged for a refusal. The check and the charge are not one
+ * atomic step, so two threads allocating at once through one context can
+ * overshoot the reserve by what they race over; a context has one owner, so
+ * its own allocations never do (AD-6). */
+static bool refuse(GRCORE_Counting * c, uint64_t add) {
+  uint64_t limit = __atomic_load_n(&c->limit, __ATOMIC_RELAXED);
+  if (limit == UINT64_MAX) {
+    return false;
+  }
+  uint64_t reserve = __atomic_load_n(&c->reserve, __ATOMIC_RELAXED);
+  uint64_t cap = reserve > UINT64_MAX - limit ? UINT64_MAX : limit + reserve;
+  uint64_t now = __atomic_load_n(&c->meter->in_use, __ATOMIC_RELAXED);
+  if (add > cap || now > cap - add) {
+    __atomic_add_fetch(&c->refusals, 1, __ATOMIC_RELAXED);
+    return true;
+  }
+  return false;
+}
+
+/* After a charge: past the budget raises the memory request, which the next
+ * slow poll turns into a verdict. */
+static void note_over(GRCORE_Counting * c) {
+  uint64_t limit = __atomic_load_n(&c->limit, __ATOMIC_RELAXED);
+  if (c->request_word != NULL && limit != UINT64_MAX &&
+      __atomic_load_n(&c->meter->in_use, __ATOMIC_RELAXED) > limit) {
+    __atomic_fetch_or(c->request_word,
+        UINT64_C(1) << GRCORE_REQUEST_MEMORY, __ATOMIC_RELEASE);
+  }
+}
+
 static void * counted_finish(GRCORE_Counting * c, unsigned char * raw,
     size_t size) {
   if (raw == NULL) {
@@ -83,12 +116,16 @@ static void * counted_finish(GRCORE_Counting * c, unsigned char * raw,
   }
   memcpy(raw, &size, sizeof size);
   meter_add(c->meter, size, 1);
+  note_over(c);
   return raw + HEADER;
 }
 
 static void * counted_malloc(void * ctx, size_t size) {
   GRCORE_Counting * c = ctx;
   if (size > SIZE_MAX - HEADER) {
+    return NULL;
+  }
+  if (refuse(c, size)) {
     return NULL;
   }
   const GRCORE_Allocator * b = c->base_allocator;
@@ -98,6 +135,9 @@ static void * counted_malloc(void * ctx, size_t size) {
 static void * counted_calloc(void * ctx, size_t nitems, size_t size) {
   GRCORE_Counting * c = ctx;
   if (size != 0 && nitems > (SIZE_MAX - HEADER) / size) {
+    return NULL;
+  }
+  if (refuse(c, (uint64_t)nitems * size)) {
     return NULL;
   }
   const GRCORE_Allocator * b = c->base_allocator;
@@ -117,6 +157,9 @@ static void * counted_realloc(void * ctx, void * ptr, size_t size) {
   unsigned char * raw = (unsigned char *)ptr - HEADER;
   size_t old;
   memcpy(&old, raw, sizeof old);
+  if (size > old && refuse(c, size - old)) {
+    return NULL;
+  }
   unsigned char * grown = b->realloc_fn(b->ctx, raw, size + HEADER);
   if (grown == NULL) {
     return NULL;
@@ -124,6 +167,7 @@ static void * counted_realloc(void * ctx, void * ptr, size_t size) {
   memcpy(grown, &size, sizeof size);
   if (size >= old) {
     meter_add(c->meter, size - old, 0);
+    note_over(c);
   } else {
     meter_sub(c->meter, old - size, 0);
   }
@@ -148,9 +192,13 @@ static void * counted_map(void * ctx, size_t size) {
       size % c->pages.page_size != 0) {
     return NULL;
   }
+  if (refuse(c, size)) {
+    return NULL;
+  }
   void * p = c->base_pages->map(c->base_pages->ctx, size);
   if (p != NULL) {
     meter_add(c->meter, size, 1);
+    note_over(c);
   }
   return p;
 }
@@ -172,6 +220,10 @@ void grcore_counting_init(GRCORE_Counting * counting, GRCORE_Meter * meter,
   counting->base_pages =
       base_pages != NULL ? base_pages : grcore_page_provider_default();
   counting->meter = meter;
+  counting->limit = UINT64_MAX;
+  counting->reserve = 0;
+  counting->refusals = 0;
+  counting->request_word = NULL;
   counting->allocator.ctx = counting;
   counting->allocator.malloc_fn = counted_malloc;
   counting->allocator.calloc_fn = counted_calloc;
@@ -181,4 +233,22 @@ void grcore_counting_init(GRCORE_Counting * counting, GRCORE_Meter * meter,
   counting->pages.page_size = counting->base_pages->page_size;
   counting->pages.map = counted_map;
   counting->pages.unmap = counted_unmap;
+}
+
+void grcore_counting_set_limit(
+    GRCORE_Counting * counting, uint64_t limit, uint64_t reserve) {
+  __atomic_store_n(&counting->reserve, reserve, __ATOMIC_RELAXED);
+  __atomic_store_n(&counting->limit, limit, __ATOMIC_RELAXED);
+}
+
+uint64_t grcore_counting_limit(const GRCORE_Counting * counting) {
+  return __atomic_load_n(&counting->limit, __ATOMIC_RELAXED);
+}
+
+uint64_t grcore_counting_reserve(const GRCORE_Counting * counting) {
+  return __atomic_load_n(&counting->reserve, __ATOMIC_RELAXED);
+}
+
+uint64_t grcore_counting_refusals(const GRCORE_Counting * counting) {
+  return __atomic_load_n(&counting->refusals, __ATOMIC_RELAXED);
 }

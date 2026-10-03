@@ -14,9 +14,9 @@
 #include <string>
 
 namespace {
-const GRCORE_Key kA = {"a", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, nullptr};
+const GRCORE_Key kA = {"a", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, nullptr, nullptr};
 const GRCORE_Key kB = {"b", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_OBSERVE,
-    nullptr};
+    nullptr, nullptr};
 
 std::string bytes_of(const GRCORE_Options * o, const GRCORE_Key * k) {
   const void * p = reinterpret_cast<const void *>(1);
@@ -50,6 +50,29 @@ TEST(Options, DefaultsAreUnlimited) {
   EXPECT_EQ(grcore_options_get_native_depth(o), GRCORE_UNLIMITED);
   EXPECT_EQ(bytes_of(o, &kA), "<absent>");
   grcore_options_destroy(o);
+}
+
+TEST(Options, TheMemoryReserveDefaultsSetsAndIsCopiedIntoAContext) {
+  GRCORE_Options * o;
+  ASSERT_EQ(grcore_options_create(nullptr, &o), GRCORE_OK);
+  EXPECT_EQ(grcore_options_get_memory_reserve(o), GRCORE_DEFAULT_MEMORY_RESERVE);
+  EXPECT_EQ(GRCORE_DEFAULT_MEMORY_RESERVE, 262144u);
+  EXPECT_EQ(grcore_options_set_memory_reserve(o, 0), GRCORE_OK);
+  EXPECT_EQ(grcore_options_get_memory_reserve(o), 0u); // zero is a real value
+  EXPECT_EQ(grcore_options_set_memory_reserve(o, 777), GRCORE_OK);
+  EXPECT_EQ(grcore_options_set_memory_reserve(nullptr, 1), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_options_get_memory_reserve(nullptr),
+      GRCORE_DEFAULT_MEMORY_RESERVE);
+  GRCORE_Group * g;
+  GRCORE_Context * c;
+  ASSERT_EQ(grcore_group_create(nullptr, nullptr, &g), GRCORE_OK);
+  ASSERT_EQ(grcore_context_create(g, o, &c), GRCORE_OK);
+  EXPECT_EQ(grcore_context_memory_reserve(c), 777u);
+  grcore_options_set_memory_reserve(o, 1); // later changes do not reach it
+  EXPECT_EQ(grcore_context_memory_reserve(c), 777u);
+  grcore_options_destroy(o);
+  EXPECT_EQ(grcore_context_destroy(c), GRCORE_OK);
+  EXPECT_EQ(grcore_group_destroy(g), GRCORE_OK);
 }
 
 TEST(Options, SettersAndGettersRoundTripAndAreIndependent) {

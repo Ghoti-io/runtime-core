@@ -30,6 +30,9 @@
 #include "group_internal.h"
 #include "options_internal.h"
 
+#include <stdint.h>
+#include <string.h>
+
 uintptr_t grcore_thread_id(void) {
   static uintptr_t next_id = 0;
   static _Thread_local uintptr_t mine = 0;
@@ -44,6 +47,71 @@ static bool owned_by_caller(const GRCORE_Context * context) {
       grcore_thread_id();
 }
 
+bool grcore_context_owned_by_caller(const GRCORE_Context * context) {
+  return owned_by_caller(context);
+}
+
+/* The poll's scratch block: for every registration one vote and one slot in
+ * the verdict-key list and the shuffle order, after the same for the built-in
+ * kinds. It is sized with the registration table, so that the poll never
+ * allocates, and a growth carries what is already in it across, because a
+ * handler may register at-poll. */
+typedef struct Scratch {
+  const GRCORE_Key ** keys;
+  size_t * order;
+  GRCORE_Vote * votes;
+} Scratch;
+
+static bool scratch_make(
+    const GRCORE_Context * c, size_t capacity, Scratch * out) {
+  const size_t core = GRCORE_REQUEST_CORE_COUNT;
+  if (capacity > (SIZE_MAX / 2) / 32) {
+    return false;
+  }
+  size_t bytes = (core + capacity) * sizeof(void *) +
+      capacity * sizeof(size_t) + (core + capacity) * sizeof(GRCORE_Vote);
+  const GRCORE_Allocator * a = c->group->allocator;
+  void * block = a->malloc_fn(a->ctx, bytes);
+  if (block == NULL) {
+    return false;
+  }
+  out->keys = block;
+  out->order = (void *)(out->keys + core + capacity);
+  out->votes = (void *)(out->order + capacity);
+  for (size_t i = 0; i < core + capacity; i++) {
+    out->keys[i] = NULL;
+    out->votes[i].verdict = GRCORE_VERDICT_CONTINUE;
+    out->votes[i].result = GRCORE_ERR_LIMIT;
+  }
+  for (size_t i = 0; i < capacity; i++) {
+    out->order[i] = 0;
+  }
+  if (c->votes != NULL) {
+    size_t old = c->scratch_capacity;
+    memcpy(out->keys, c->verdict_keys, (core + old) * sizeof *out->keys);
+    memcpy(out->order, c->order, old * sizeof *out->order);
+    memcpy(out->votes, c->votes, (core + old) * sizeof *out->votes);
+  }
+  return true;
+}
+
+static void scratch_free(const GRCORE_Context * c, void * block) {
+  const GRCORE_Allocator * a = c->group->allocator;
+  a->free_fn(a->ctx, block);
+}
+
+static void scratch_install(
+    GRCORE_Context * c, const Scratch * s, size_t capacity) {
+  void * old = (void *)c->verdict_keys;
+  c->verdict_keys = s->keys;
+  c->order = s->order;
+  c->votes = s->votes;
+  c->scratch_capacity = capacity;
+  if (old != NULL) {
+    scratch_free(c, old);
+  }
+}
+
 GRCORE_Result grcore_context_create(GRCORE_Group * group,
     const GRCORE_Options * options, GRCORE_Context ** out_context) {
   if (group == NULL || out_context == NULL) {
@@ -54,14 +122,28 @@ GRCORE_Result grcore_context_create(GRCORE_Group * group,
   if (c == NULL) {
     return GRCORE_ERR_OOM;
   }
+  c->group = group;
   GRCORE_Result r = grcore_options_clone(options, a, &c->options);
   if (r != GRCORE_OK) {
     a->free_fn(a->ctx, c);
     return r;
   }
+  Scratch scratch;
+  if (!scratch_make(c, 0, &scratch)) {
+    grcore_options_destroy(c->options);
+    a->free_fn(a->ctx, c);
+    return GRCORE_ERR_OOM;
+  }
+  scratch_install(c, &scratch, 0);
   c->group = group;
   grcore_meter_init(&c->meter);
   grcore_counting_init(&c->counting, &c->meter, a, group->pages);
+  c->counting.request_word = &c->request_word;
+  grcore_counting_set_limit(&c->counting,
+      grcore_options_get_memory_bytes(c->options),
+      grcore_options_get_memory_reserve(c->options));
+  c->fuel_limit = grcore_options_get_fuel(c->options);
+  c->unwind_result = GRCORE_OK;
   c->owner = grcore_thread_id();
   c->config = GRCORE_CONFIG_PARKED_OUTSIDE;
   grcore_group_enter(group);
@@ -89,9 +171,14 @@ GRCORE_Result grcore_context_destroy(GRCORE_Context * context) {
       reg.key->destroy(context, reg.value);
     }
   }
+  /* After the destructors, which may still post to or read the port. A post
+   * that races this finds the context gone and is refused. */
+  grcore_context_port_detach(context);
   GRCORE_Group * group = context->group;
   const GRCORE_Allocator * a = group->allocator;
   a->free_fn(a->ctx, context->registrations);
+  a->free_fn(a->ctx, context->kind_keys);
+  scratch_free(context, (void *)context->verdict_keys);
   grcore_options_destroy(context->options);
   a->free_fn(a->ctx, context);
   grcore_group_leave(group);
@@ -206,13 +293,22 @@ GRCORE_Result grcore_context_register(
     const GRCORE_Allocator * a = context->group->allocator;
     size_t capacity =
         context->registration_capacity == 0 ? 4 : context->registration_capacity * 2;
+    /* The registration table and the poll's scratch block grow together or
+     * not at all: a poll must never find a registration it has no vote slot
+     * for. */
+    Scratch scratch;
+    if (!scratch_make(context, capacity, &scratch)) {
+      return GRCORE_ERR_OOM;
+    }
     GRCORE_Registration * grown = a->realloc_fn(
         a->ctx, context->registrations, capacity * sizeof *grown);
     if (grown == NULL) {
+      scratch_free(context, scratch.keys);
       return GRCORE_ERR_OOM;
     }
     context->registrations = grown;
     context->registration_capacity = capacity;
+    scratch_install(context, &scratch, capacity);
   }
   context->registrations[context->registration_count].key = key;
   context->registrations[context->registration_count].value = value;

@@ -49,6 +49,7 @@ GRCORE_Result grcore_group_create(const GRCORE_Allocator * allocator,
   g->allocator = allocator;
   g->pages = pages;
   g->contexts = 0;
+  g->ports = 0;
   grcore_meter_init(&g->meter);
   grcore_counting_init(&g->counting, &g->meter, allocator, pages);
   *out_group = g;
@@ -56,7 +57,8 @@ GRCORE_Result grcore_group_create(const GRCORE_Allocator * allocator,
 }
 
 GRCORE_Result grcore_group_destroy(GRCORE_Group * group) {
-  if (group == NULL || grcore_group_context_count(group) != 0) {
+  if (group == NULL || grcore_group_context_count(group) != 0 ||
+      grcore_group_port_count(group) != 0) {
     return GRCORE_ERR_INVALID;
   }
   group->allocator->free_fn(group->allocator->ctx, group);
@@ -65,6 +67,18 @@ GRCORE_Result grcore_group_destroy(GRCORE_Group * group) {
 
 size_t grcore_group_context_count(const GRCORE_Group * group) {
   return group == NULL ? 0 : __atomic_load_n(&group->contexts, __ATOMIC_ACQUIRE);
+}
+
+size_t grcore_group_port_count(const GRCORE_Group * group) {
+  return group == NULL ? 0 : __atomic_load_n(&group->ports, __ATOMIC_ACQUIRE);
+}
+
+void grcore_group_port_enter(GRCORE_Group * group) {
+  __atomic_add_fetch(&group->ports, 1, __ATOMIC_ACQ_REL);
+}
+
+void grcore_group_port_leave(GRCORE_Group * group) {
+  __atomic_sub_fetch(&group->ports, 1, __ATOMIC_ACQ_REL);
 }
 
 void grcore_group_enter(GRCORE_Group * group) {

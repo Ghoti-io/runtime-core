@@ -43,6 +43,7 @@ struct GRCORE_Options {
   const GRCORE_Allocator * allocator;
   uint64_t fuel;
   uint64_t memory_bytes;
+  uint64_t memory_reserve;
   uint64_t guest_depth;
   uint64_t native_depth;
   Entry * entries;
@@ -64,6 +65,7 @@ GRCORE_Result grcore_options_create(
   o->allocator = allocator;
   o->fuel = GRCORE_UNLIMITED;
   o->memory_bytes = GRCORE_UNLIMITED;
+  o->memory_reserve = GRCORE_DEFAULT_MEMORY_RESERVE;
   o->guest_depth = GRCORE_UNLIMITED;
   o->native_depth = GRCORE_UNLIMITED;
   o->entries = NULL;
@@ -99,6 +101,21 @@ void grcore_options_destroy(GRCORE_Options * options) {
 
 SETTER(fuel, fuel)
 SETTER(memory_bytes, memory_bytes)
+
+GRCORE_Result grcore_options_set_memory_reserve(
+    GRCORE_Options * options, uint64_t bytes) {
+  if (options == NULL) {
+    return GRCORE_ERR_INVALID;
+  }
+  options->memory_reserve = bytes;
+  return GRCORE_OK;
+}
+
+uint64_t grcore_options_get_memory_reserve(const GRCORE_Options * options) {
+  return options == NULL ? GRCORE_DEFAULT_MEMORY_RESERVE
+                         : options->memory_reserve;
+}
+
 SETTER(guest_depth, guest_depth)
 SETTER(native_depth, native_depth)
 
@@ -178,6 +195,7 @@ GRCORE_Result grcore_options_clone(const GRCORE_Options * source,
   if (source != NULL) {
     o->fuel = source->fuel;
     o->memory_bytes = source->memory_bytes;
+    o->memory_reserve = source->memory_reserve;
     o->guest_depth = source->guest_depth;
     o->native_depth = source->native_depth;
     for (size_t i = 0; i < source->count; i++) {

@@ -32,7 +32,11 @@
 
 #include "account_internal.h"
 
+#include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
+#include <ghoti.io/runtime-core/b/poll.h>
+#include <ghoti.io/runtime-core/b/request.h>
+#include <ghoti.io/runtime-core/b/run.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +61,12 @@ typedef struct GRCORE_Registration {
   void * value;
 } GRCORE_Registration;
 
+/** @brief One handler's vote in a poll, kept by registration index. */
+typedef struct GRCORE_Vote {
+  GRCORE_Verdict verdict;  ///< The handler's strongest vote.
+  GRCORE_Result result;    ///< What `run` returns if it votes to unwind.
+} GRCORE_Vote;
+
 struct GRCORE_Context {
   GRCORE_Group * group;
   GRCORE_Options * options; ///< The context's own copy.
@@ -68,6 +78,38 @@ struct GRCORE_Context {
   size_t registration_count;
   size_t registration_capacity;
   bool tearing_down; ///< Set by destroy; the owner's thread only.
+
+  /* Requests (AD-4). The word and the kind count are the only fields another
+   * thread reads, and only a port does, under its mutex. */
+  uint64_t request_word; ///< Bit k is kind k below 63; bit 63: overflow.
+  uint32_t kind_count;   ///< Service kinds defined. `__atomic` builtins.
+  const GRCORE_Key ** kind_keys; ///< Owner only; `kind_count` entries.
+  size_t kind_capacity;
+  GRCORE_Port * port;    ///< The context's own reference. Owner only.
+
+  /* Budgets (AD-21). Owner only. */
+  uint64_t fuel_used;
+  uint64_t fuel_limit;
+  uint64_t depth[2];
+  bool reclaim_tried;    ///< The collector has had its chance at this overage.
+
+  /* The poll. One block, sized for the registrations the table can hold, so a
+   * poll never allocates: `votes` and `verdict_keys` have the built-in kinds
+   * first, then one entry per registration, and `order` one per registration. */
+  GRCORE_Vote * votes;
+  const GRCORE_Key ** verdict_keys;
+  size_t * order;
+  size_t scratch_capacity;       ///< Registrations the block was sized for.
+  size_t verdict_key_count;
+  GRCORE_Location pause_location;
+  GRCORE_Verdict last_verdict;   ///< What the last slow poll decided.
+  GRCORE_Result unwind_result;
+  bool shuffle;                  ///< The phase-shuffle test mode.
+  uint64_t shuffle_state;
+
+  /* run */
+  GRCORE_EntryFn entry;
+  void * entry_state;
 };
 
 /**
@@ -77,6 +119,41 @@ struct GRCORE_Context {
  * thread that has ended can never share its id with a later one.
  */
 uintptr_t grcore_thread_id(void);
+
+/** @brief Whether the calling thread owns the context (acquire load). */
+bool grcore_context_owned_by_caller(const GRCORE_Context * context);
+
+/**
+ * @brief Recomputes the derived fuel and memory requests from the budgets, so
+ *   each bit is set exactly when its condition holds.
+ */
+void grcore_context_refresh_derived(GRCORE_Context * context);
+
+/** @brief Clears the terminate request. Only the end of `run` does this. */
+void grcore_context_clear_terminate(GRCORE_Context * context);
+
+/** @brief Clears time and interrupt, which `resume` acknowledges. */
+void grcore_context_clear_edge_requests(GRCORE_Context * context);
+
+/**
+ * @brief The context's port, created if it has none. No reference is taken.
+ *
+ * @return ::GRCORE_OK or ::GRCORE_ERR_OOM.
+ */
+GRCORE_Result grcore_context_port_ensure(
+    GRCORE_Context * context, GRCORE_Port ** out_port);
+
+/** @brief Cuts the port from the context and drops the context's reference. */
+void grcore_context_port_detach(GRCORE_Context * context);
+
+/**
+ * @brief Blocks until the context's request word is non-zero or the timeout
+ *   passes.
+ *
+ * @return True if the word is non-zero.
+ */
+bool grcore_port_wait(
+    GRCORE_Port * port, const GRCORE_Context * context, uint64_t timeout_ns);
 
 /**
  * @brief Moves a context along one of the eight legal lifecycle edges.

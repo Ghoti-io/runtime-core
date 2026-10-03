@@ -23,6 +23,7 @@ TEST(Group, NullArgumentsAreRefused) {
   EXPECT_EQ(grcore_group_create(nullptr, nullptr, nullptr), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_group_destroy(nullptr), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_group_context_count(nullptr), 0u);
+  EXPECT_EQ(grcore_group_port_count(nullptr), 0u);
   EXPECT_EQ(grcore_group_allocator(nullptr), nullptr);
   EXPECT_EQ(grcore_group_page_provider(nullptr), nullptr);
   EXPECT_EQ(grcore_group_memory_in_use(nullptr), 0u);

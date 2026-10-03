@@ -30,8 +30,9 @@
  * basics never include A. This is the only header that includes both, which
  * is why it sits at the top and is exempt from the direction gate.
  *
- * B has the first half of its headers (`b/`: groups, contexts, options, keys
- * and the page provider, with memory accounting behind them); A has none yet.
+ * B is complete for now (`b/`: groups, contexts, options, keys, the page
+ * provider with memory accounting behind them, requests and ports, the poll,
+ * `run` and `resume`, and the budgets); A has none yet.
  */
 
 #ifndef GHOTI_IO_GRCORE_RUNTIME_CORE_H
@@ -43,10 +44,14 @@
 #include <ghoti.io/runtime-core/core.h>
 #include <ghoti.io/runtime-core/libver.h>
 
+#include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/group.h>
 #include <ghoti.io/runtime-core/b/key.h>
 #include <ghoti.io/runtime-core/b/options.h>
 #include <ghoti.io/runtime-core/b/page.h>
+#include <ghoti.io/runtime-core/b/poll.h>
+#include <ghoti.io/runtime-core/b/request.h>
+#include <ghoti.io/runtime-core/b/run.h>
 
 #endif /* GHOTI_IO_GRCORE_RUNTIME_CORE_H */

@@ -27,8 +27,8 @@
  * Only the host creates groups, and every context belongs to exactly one from
  * the moment it exists. A group holds the allocator and page provider its
  * contexts draw on, and a meter for what is charged to the group rather than
- * to any one context. Ports, shared regions and group policy attach here in
- * later stories.
+ * to any one context. Its ports are charged to that meter. Shared regions and
+ * group policy attach here in later stories.
  *
  * Contexts of one group may be created and destroyed on different threads at
  * once. Destroying the group is the host's job, after every context is gone,
@@ -75,7 +75,8 @@ GRCORE_API GRCORE_Result grcore_group_create(const GRCORE_Allocator * allocator,
  *
  * @param group The group.
  * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL or a group that still
- *   has contexts; the group is then unchanged.
+ *   has contexts or live ports (a port outlives its context for as long as
+ *   anyone holds a reference to it); the group is then unchanged.
  */
 GRCORE_API GRCORE_Result grcore_group_destroy(GRCORE_Group * group);
 
@@ -86,6 +87,14 @@ GRCORE_API GRCORE_Result grcore_group_destroy(GRCORE_Group * group);
  * @return The count; zero for NULL.
  */
 GRCORE_API size_t grcore_group_context_count(const GRCORE_Group * group);
+
+/**
+ * @brief How many ports the group has: those created and not yet freed.
+ *
+ * @param group The group.
+ * @return The count; zero for NULL.
+ */
+GRCORE_API size_t grcore_group_port_count(const GRCORE_Group * group);
 
 /**
  * @brief The group's counting allocator: what group-level code allocates

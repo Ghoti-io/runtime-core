@@ -59,6 +59,14 @@ typedef struct GRCORE_Counting {
   const GRCORE_Allocator * base_allocator;
   const GRCORE_PageProvider * base_pages;
   GRCORE_Meter * meter;
+  /* The memory budget (AD-21). Each is touched only through `__atomic`
+   * builtins. An allocation that would take the meter past limit + reserve
+   * is refused; one that leaves it past the limit sets the memory request
+   * bit in `request_word`, if there is one. */
+  uint64_t limit;          ///< UINT64_MAX means no limit.
+  uint64_t reserve;        ///< Bytes allowed past the limit.
+  uint64_t refusals;       ///< Allocations refused for being past the reserve.
+  uint64_t * request_word; ///< The context's request word, or NULL.
 } GRCORE_Counting;
 
 /** @brief Zeroes a meter. */
@@ -81,6 +89,22 @@ uint64_t grcore_meter_blocks(const GRCORE_Meter * meter);
 void grcore_counting_init(GRCORE_Counting * counting, GRCORE_Meter * meter,
     const GRCORE_Allocator * base_allocator,
     const GRCORE_PageProvider * base_pages);
+
+/**
+ * @brief Sets the memory budget of a counting pair.
+ *
+ * @param counting The pair.
+ * @param limit The budget in bytes; UINT64_MAX for none.
+ * @param reserve How far past it an allocation is still served.
+ */
+void grcore_counting_set_limit(
+    GRCORE_Counting * counting, uint64_t limit, uint64_t reserve);
+/** @brief The budget (relaxed load). */
+uint64_t grcore_counting_limit(const GRCORE_Counting * counting);
+/** @brief The reserve (relaxed load). */
+uint64_t grcore_counting_reserve(const GRCORE_Counting * counting);
+/** @brief Allocations refused so far (relaxed load). */
+uint64_t grcore_counting_refusals(const GRCORE_Counting * counting);
 
 #ifdef __cplusplus
 }

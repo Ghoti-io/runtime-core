@@ -42,6 +42,25 @@ extern "C" {
 typedef struct GRCORE_Context GRCORE_Context;
 
 /**
+ * @brief What a poll handler is given to read the poll and to vote with.
+ *
+ * Opaque. Valid only for the duration of the handler call. Its accessors are
+ * in poll.h.
+ */
+typedef struct GRCORE_PollCall GRCORE_PollCall;
+
+/**
+ * @brief A poll handler: run by the poll in its key's phase (AD-5).
+ *
+ * @param context The context being polled, at-poll.
+ * @param value The value this handler was registered with. NULL for the
+ *   built-in keys.
+ * @param call The poll in progress.
+ */
+typedef void (*GRCORE_PollHandler)(
+    GRCORE_Context * context, void * value, GRCORE_PollCall * call);
+
+/**
  * @brief The poll phase a registration belongs to.
  *
  * The phases are the poll's four fixed ones (AD-5). ::GRCORE_PHASE_NONE is
@@ -76,6 +95,15 @@ typedef struct GRCORE_Key {
    * value needs no release.
    */
   void (*destroy)(GRCORE_Context * context, void * value);
+  /**
+   * The handler the poll runs in `phase`, with the registered value. May be
+   * NULL, and is then never run. A key whose phase is ::GRCORE_PHASE_NONE
+   * is never polled whatever this holds.
+   *
+   * This field is last, so a static key written before it existed keeps
+   * working: C zero-fills the omitted initialiser.
+   */
+  GRCORE_PollHandler poll;
 } GRCORE_Key;
 
 #ifdef __cplusplus

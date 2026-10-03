@@ -57,6 +57,15 @@ extern "C" {
  */
 #define GRCORE_UNLIMITED UINT64_MAX
 
+/**
+ * @brief The memory reserve of a context that has not set one, in bytes.
+ *
+ * The reserve is how far past its memory budget a context may allocate, so
+ * that the allocation that crosses the budget can be served and the poll can
+ * react to it (AD-21).
+ */
+#define GRCORE_DEFAULT_MEMORY_RESERVE 262144u
+
 /** @brief Context options. Opaque. */
 typedef struct GRCORE_Options GRCORE_Options;
 
@@ -100,6 +109,17 @@ GRCORE_API GRCORE_Result grcore_options_set_memory_bytes(
     GRCORE_Options * options, uint64_t bytes);
 
 /**
+ * @brief Sets the memory reserve: the bytes a context may allocate beyond its
+ *   memory budget before an allocation is refused (AD-21).
+ *
+ * @param options The options.
+ * @param bytes A byte count. Zero means no reserve: the budget is a hard cap.
+ * @return ::GRCORE_OK or ::GRCORE_ERR_INVALID for NULL options.
+ */
+GRCORE_API GRCORE_Result grcore_options_set_memory_reserve(
+    GRCORE_Options * options, uint64_t bytes);
+
+/**
  * @brief Sets the guest call-depth budget.
  *
  * @param options The options.
@@ -134,6 +154,16 @@ GRCORE_API uint64_t grcore_options_get_fuel(const GRCORE_Options * options);
  * @return The budget; ::GRCORE_UNLIMITED if unset or `options` is NULL.
  */
 GRCORE_API uint64_t grcore_options_get_memory_bytes(
+    const GRCORE_Options * options);
+
+/**
+ * @brief The memory reserve in bytes.
+ *
+ * @param options The options.
+ * @return The reserve; ::GRCORE_DEFAULT_MEMORY_RESERVE if unset or `options`
+ *   is NULL.
+ */
+GRCORE_API uint64_t grcore_options_get_memory_reserve(
     const GRCORE_Options * options);
 
 /**
