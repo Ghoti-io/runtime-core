@@ -75,6 +75,26 @@ bool grcore_frame_walk_next(
   return true;
 }
 
+bool grcore_stack_hook_frame(const GRCORE_Stack * stack, GRCORE_FrameRef ref,
+    size_t depth, GRCORE_AbstractFrame * out, GRCORE_FrameHeader * header) {
+  GRCORE_FrameHeader h;
+  if (!grcore_stack_read_frame(stack, ref, &h)) {
+    return false;
+  }
+  out->context = stack->context;
+  out->engine = h.engine;
+  out->descriptor = stack->engines[h.engine - 1];
+  out->identity.function = h.function;
+  out->identity.offset = h.offset;
+  out->location.file = NULL;
+  out->location.line = 0;
+  out->slot_count = h.slot_count;
+  out->depth = depth;
+  out->frame = ref;
+  *header = h;
+  return true;
+}
+
 /* The stack a frame's slots are read from, when the frame may be read now. */
 static const GRCORE_Stack * readable_stack(const GRCORE_AbstractFrame * frame) {
   if (frame == NULL || frame->context == NULL || frame->descriptor == NULL ||

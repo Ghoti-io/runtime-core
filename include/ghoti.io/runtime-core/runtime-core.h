@@ -32,9 +32,11 @@
  *
  * B is complete for now (`b/`: groups, contexts, options, keys, the page
  * provider with memory accounting behind them, requests and ports, the poll,
- * `run` and `resume`, and the budgets). A has its first half (`a/`: engine
- * descriptors, the guest stack, and the abstract frame with its walk and
- * scopes); activation records, root sources and the unwinder come later.
+ * `run` and `resume`, the budgets with their fuel scopes, and root sources).
+ * A is complete for now too (`a/`: engine descriptors, the guest stack, the
+ * abstract frame with its walk and scopes, activation records, the unwinder
+ * and budget scopes). What comes next is the collector, the JIT and the
+ * debugger, each in a library of its own.
  */
 
 #ifndef GHOTI_IO_GRCORE_RUNTIME_CORE_H
@@ -46,9 +48,12 @@
 #include <ghoti.io/runtime-core/core.h>
 #include <ghoti.io/runtime-core/libver.h>
 
+#include <ghoti.io/runtime-core/a/activation.h>
+#include <ghoti.io/runtime-core/a/budget_scope.h>
 #include <ghoti.io/runtime-core/a/engine.h>
 #include <ghoti.io/runtime-core/a/frame.h>
 #include <ghoti.io/runtime-core/a/stack.h>
+#include <ghoti.io/runtime-core/a/unwind.h>
 #include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/group.h>
@@ -57,6 +62,7 @@
 #include <ghoti.io/runtime-core/b/page.h>
 #include <ghoti.io/runtime-core/b/poll.h>
 #include <ghoti.io/runtime-core/b/request.h>
+#include <ghoti.io/runtime-core/b/roots.h>
 #include <ghoti.io/runtime-core/b/run.h>
 
 #endif /* GHOTI_IO_GRCORE_RUNTIME_CORE_H */

@@ -34,8 +34,9 @@
  * The descriptor is deliberately small. Only what the stories so far read is
  * in it; C zero-fills fields added after it, so a descriptor written before a
  * field existed keeps working, and a NULL callback always means "the engine
- * has nothing to say", never an error. Root enumeration, unwinding and
- * deoptimization arrive with the stories that need them.
+ * has nothing to say", never an error. Root enumeration and unwinding are in
+ * it now (the `roots` and `unwind` hooks); deoptimization arrives with the
+ * story that needs it, and the descriptor has no field for it yet.
  *
  * A is labelled `free` (AD-14): a consumer requires the exact version it was
  * built against.
@@ -48,6 +49,7 @@
 
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/poll.h>
+#include <ghoti.io/runtime-core/b/roots.h>
 #include <ghoti.io/runtime-core/core.h>
 
 #include <stdbool.h>
@@ -168,6 +170,22 @@ typedef struct GRCORE_EngineDescriptor {
   /** The conservative decoder for this engine's value encoding; a zero mask
    *  for none. */
   GRCORE_ConservativeDecoder decoder;
+  /** Reports the roots of `frame` that are not plain VALUE slots (an open
+   *  upvalue, a pointer into the frame, a value held in a side table), to
+   *  `visitor` as precise slots. A's root source has already reported every
+   *  VALUE slot of the frame itself, so a hook reports each root once, not
+   *  twice. NULL means the VALUE slots are all there is. The hook may read
+   *  the frame's slots through stack.h but must not push, pop or poll, and
+   *  the frame's `location` is not filled in (a collector calls this on every
+   *  frame at every collection). */
+  void (*roots)(GRCORE_Context * context, const GRCORE_AbstractFrame * frame,
+      const GRCORE_RootVisitor * visitor);
+  /** Called by the unwinder for each frame it pops, innermost first, while
+   *  the frame is still on the stack: the engine releases what the frame
+   *  holds (closes its open upvalues, drops a handler). It never runs guest
+   *  code, and must not push, pop or poll. NULL means nothing to release. The
+   *  frame's `location` is not filled in. */
+  void (*unwind)(GRCORE_Context * context, const GRCORE_AbstractFrame * frame);
 } GRCORE_EngineDescriptor;
 
 /**

@@ -43,6 +43,7 @@ static void begin_run(GRCORE_Context * c) {
   c->pause_location.line = 0;
   c->unwind_result = GRCORE_OK;
   c->last_verdict = GRCORE_VERDICT_CONTINUE;
+  c->scoped_unwind = 0;
 }
 
 /* The end of a run that is not a pause: the context is parked outside `run`

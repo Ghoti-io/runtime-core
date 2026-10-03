@@ -306,7 +306,7 @@ inline GRCORE_Result alpha_variable(const GRCORE_AbstractFrame * frame,
 inline const GRCORE_EngineDescriptor kAlpha = {"alpha", alpha_slot_kind,
     alpha_locate, alpha_inspect,
     GRCORE_ScopeInterface{alpha_scope_count, alpha_scope, alpha_variable},
-    GRCORE_ConservativeDecoder{0, 0, 0}};
+    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
 
 inline GRCORE_SlotKind beta_slot_kind(
     const GRCORE_AbstractFrame *, size_t) {
@@ -324,11 +324,11 @@ inline size_t beta_inspect(const GRCORE_Context *, GRCORE_SlotKind,
 }
 inline const GRCORE_EngineDescriptor kBeta = {"beta", beta_slot_kind,
     beta_locate, beta_inspect, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0xFFFF0, 4, 0x1000}};
+    GRCORE_ConservativeDecoder{0xFFFF0, 4, 0x1000}, nullptr, nullptr};
 
 inline const GRCORE_EngineDescriptor kGamma = {"gamma", nullptr, nullptr,
     nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0, 0, 0}};
+    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
 
 /* A RunWorld with the two engines registered. */
 struct StackWorld : RunWorld {
@@ -339,13 +339,79 @@ struct StackWorld : RunWorld {
       uint64_t memory = GRCORE_UNLIMITED,
       uint64_t reserve = GRCORE_DEFAULT_MEMORY_RESERVE,
       uint64_t guest_depth = GRCORE_UNLIMITED,
-      const GRCORE_Allocator * allocator = nullptr)
-      : RunWorld(fuel, memory, reserve, guest_depth, GRCORE_UNLIMITED,
+      const GRCORE_Allocator * allocator = nullptr,
+      uint64_t native_depth = GRCORE_UNLIMITED)
+      : RunWorld(fuel, memory, reserve, guest_depth, native_depth,
             allocator) {
     EXPECT_EQ(grcore_engine_register(ctx, &kAlpha, &alpha), GRCORE_OK);
     EXPECT_EQ(grcore_engine_register(ctx, &kBeta, &beta), GRCORE_OK);
     stack = grcore_context_stack(ctx);
   }
+};
+
+/* "delta": an engine with hooks. Slot 0 of every frame is a VALUE and the
+ * rest are RAW. Its `roots` hook reports the frame's slot 1 as a precise root
+ * when the frame's function is 99 (a "boxed" frame whose RAW slot is really a
+ * reference), and always logs the call. Its `unwind` hook logs the frame's slot
+ * 0, its depth, and whether the frame was still on the stack. Its decoder takes
+ * bits 8..15 and adds 0x40. */
+struct HookLog {
+  std::vector<uint64_t> unwound;       // slot 0 of each frame unwound, in order
+  std::vector<size_t> unwound_depth;   // the abstract frame's depth each time
+  std::vector<bool> on_stack;          // frame valid while the hook ran
+  std::vector<uint64_t> root_functions; // function of each frame `roots` saw
+  std::vector<const GRCORE_Context *> contexts; // where hooks were called
+};
+inline HookLog * g_hook_log = nullptr;
+
+inline GRCORE_SlotKind delta_slot_kind(
+    const GRCORE_AbstractFrame *, size_t index) {
+  return index == 0 ? GRCORE_SLOT_VALUE : GRCORE_SLOT_RAW;
+}
+inline void delta_roots(GRCORE_Context * context,
+    const GRCORE_AbstractFrame * frame, const GRCORE_RootVisitor * visitor) {
+  if (g_hook_log != nullptr) {
+    g_hook_log->root_functions.push_back(frame->identity.function);
+    g_hook_log->contexts.push_back(context);
+  }
+  if (frame->identity.function == 99 && frame->slot_count > 1 &&
+      visitor->slot != nullptr) {
+    uint64_t * slots = grcore_stack_slots(grcore_context_stack(context), frame->frame);
+    visitor->slot(visitor->user, &slots[1]);
+  }
+}
+inline void delta_unwind(
+    GRCORE_Context * context, const GRCORE_AbstractFrame * frame) {
+  if (g_hook_log == nullptr) {
+    return;
+  }
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  uint64_t v = 0;
+  grcore_stack_slot_get(stack, frame->frame, 0, &v);
+  g_hook_log->unwound.push_back(v);
+  g_hook_log->unwound_depth.push_back(frame->depth);
+  g_hook_log->on_stack.push_back(grcore_stack_frame_valid(stack, frame->frame));
+  g_hook_log->contexts.push_back(context);
+}
+inline const GRCORE_EngineDescriptor kDelta = {"delta", delta_slot_kind, nullptr,
+    nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
+    GRCORE_ConservativeDecoder{0xFF00, 8, 0x40}, delta_roots, delta_unwind};
+
+/* A StackWorld that also has the hooked engine, and a log the hooks write. */
+struct HookWorld : StackWorld {
+  GRCORE_EngineId delta = 0;
+  HookLog log;
+  explicit HookWorld(uint64_t fuel = GRCORE_UNLIMITED,
+      uint64_t memory = GRCORE_UNLIMITED,
+      uint64_t reserve = GRCORE_DEFAULT_MEMORY_RESERVE,
+      uint64_t guest_depth = GRCORE_UNLIMITED,
+      const GRCORE_Allocator * allocator = nullptr,
+      uint64_t native_depth = GRCORE_UNLIMITED)
+      : StackWorld(fuel, memory, reserve, guest_depth, allocator, native_depth) {
+    EXPECT_EQ(grcore_engine_register(ctx, &kDelta, &delta), GRCORE_OK);
+    g_hook_log = &log;
+  }
+  ~HookWorld() { g_hook_log = nullptr; }
 };
 
 /* An engine-free guest whose position lives entirely on the guest stack. It

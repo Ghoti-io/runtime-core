@@ -69,10 +69,10 @@ TEST(Engine, RegisterRefusesBadArgumentsAndLeavesTheTableUnchanged) {
   EXPECT_EQ(grcore_engine_register(w.ctx, &kAlpha, nullptr), GRCORE_ERR_INVALID);
   static const GRCORE_EngineDescriptor no_name = {nullptr, nullptr, nullptr,
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}};
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
   static const GRCORE_EngineDescriptor empty_name = {"", nullptr, nullptr,
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}};
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
   EXPECT_EQ(grcore_engine_register(w.ctx, &no_name, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_engine_register(w.ctx, &empty_name, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(id, 77u); // never written on a refusal

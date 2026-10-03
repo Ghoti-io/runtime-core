@@ -132,6 +132,42 @@ GRCORE_API GRCORE_Result grcore_runtime_poll(
     GRCORE_Context * context, uint64_t work, GRCORE_Location location);
 
 /**
+ * @brief Enters a nested activation (AD-5).
+ *
+ * A nested activation is a YIELD run, an evaluation while paused, or a
+ * re-entry from an opaque host function. It cannot pause to the host, so
+ * while any is open a pause verdict becomes an unwind with
+ * ::GRCORE_ERR_LIMIT, exactly as for the runtime poll; the keys that asked
+ * for the pause stay readable as the reason. Terminate is unaffected: it stays
+ * pending until the outermost `run` returns, so the nested poll unwinds, and
+ * so does the outer one after the nested unwind and its leave.
+ *
+ * Engines do not call this directly: A's activation records do, for an
+ * activation recorded as nested.
+ *
+ * @param context The context. The caller must own it.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL or a non-owner.
+ */
+GRCORE_API GRCORE_Result grcore_context_nested_enter(GRCORE_Context * context);
+
+/**
+ * @brief Leaves a nested activation.
+ *
+ * @param context The context. The caller must own it.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL, a non-owner or a
+ *   depth of zero.
+ */
+GRCORE_API GRCORE_Result grcore_context_nested_leave(GRCORE_Context * context);
+
+/**
+ * @brief How many nested activations are open.
+ *
+ * @param context The context.
+ * @return The depth; zero for NULL.
+ */
+GRCORE_API uint64_t grcore_context_nested_depth(const GRCORE_Context * context);
+
+/**
  * @brief The phase being run.
  *
  * @param call The poll in progress.

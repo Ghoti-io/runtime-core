@@ -34,6 +34,7 @@
 #include "context_internal.h"
 
 #include <stdint.h>
+#include <string.h>
 
 #define FUEL_BIT (UINT64_C(1) << GRCORE_REQUEST_FUEL)
 #define MEMORY_BIT (UINT64_C(1) << GRCORE_REQUEST_MEMORY)
@@ -45,7 +46,8 @@ static bool memory_over(const GRCORE_Context * c) {
 }
 
 void grcore_context_refresh_derived(GRCORE_Context * context) {
-  if (context->fuel_used > context->fuel_limit) {
+  if (grcore_fuel_ceiling_exhausted(context) ||
+      grcore_fuel_scope_exhausted(context)) {
     __atomic_fetch_or(&context->request_word, FUEL_BIT, __ATOMIC_RELEASE);
   } else {
     __atomic_fetch_and(&context->request_word, ~FUEL_BIT, __ATOMIC_ACQ_REL);
@@ -65,7 +67,13 @@ bool grcore_context_charge_fuel(GRCORE_Context * context, uint64_t amount) {
   uint64_t used = context->fuel_used;
   used = amount > UINT64_MAX - used ? UINT64_MAX : used + amount;
   context->fuel_used = used;
-  if (used > context->fuel_limit) {
+  /* The scope's clock is exclusive: only the innermost one runs. */
+  if (context->fuel_scope_count > 0) {
+    GRCORE_FuelScope * s = &context->fuel_scopes[context->fuel_scope_count - 1];
+    s->used = amount > UINT64_MAX - s->used ? UINT64_MAX : s->used + amount;
+  }
+  if (grcore_fuel_ceiling_exhausted(context) ||
+      grcore_fuel_scope_exhausted(context)) {
     __atomic_fetch_or(&context->request_word, FUEL_BIT, __ATOMIC_RELEASE);
     return true;
   }
@@ -164,4 +172,128 @@ uint64_t grcore_context_depth(
     return 0;
   }
   return context->depth[kind];
+}
+
+/* ---- Fuel scopes (AD-21) ---------------------------------------------- */
+
+static bool scope_owner(const GRCORE_Context * c) {
+  return c != NULL && grcore_context_owned_by_caller(c) && !c->tearing_down;
+}
+
+static GRCORE_FuelScope * scope_find(const GRCORE_Context * c, uint64_t id) {
+  if (c == NULL || id == 0) {
+    return NULL;
+  }
+  /* Ids rise with depth, so the match is usually the innermost. */
+  for (size_t i = c->fuel_scope_count; i > 0; i--) {
+    if (c->fuel_scopes[i - 1].id == id) {
+      return &c->fuel_scopes[i - 1];
+    }
+  }
+  return NULL;
+}
+
+GRCORE_Result grcore_context_fuel_scope_open(GRCORE_Context * context,
+    uint64_t budget, GRCORE_ScopePolicy policy, uint64_t * out_id) {
+  if (!scope_owner(context) || out_id == NULL ||
+      (unsigned)policy > GRCORE_SCOPE_POLICY_PAUSE) {
+    return GRCORE_ERR_INVALID;
+  }
+  if (context->fuel_scope_count == context->fuel_scope_capacity) {
+    const GRCORE_Allocator * a = &context->counting.allocator;
+    size_t capacity =
+        context->fuel_scope_capacity == 0 ? 8 : context->fuel_scope_capacity * 2;
+    if (capacity > SIZE_MAX / sizeof(GRCORE_FuelScope)) {
+      return GRCORE_ERR_OOM;
+    }
+    uint64_t refusals = grcore_counting_refusals(&context->counting);
+    GRCORE_FuelScope * grown = a->malloc_fn(a->ctx, capacity * sizeof *grown);
+    if (grown == NULL) {
+      return grcore_counting_refusals(&context->counting) > refusals
+          ? GRCORE_ERR_LIMIT
+          : GRCORE_ERR_OOM;
+    }
+    if (context->fuel_scope_count > 0) {
+      memcpy(grown, context->fuel_scopes,
+          context->fuel_scope_count * sizeof *grown);
+    }
+    a->free_fn(a->ctx, context->fuel_scopes);
+    context->fuel_scopes = grown;
+    context->fuel_scope_capacity = capacity;
+  }
+  GRCORE_FuelScope * s = &context->fuel_scopes[context->fuel_scope_count++];
+  s->id = ++context->fuel_scope_serial;
+  s->budget = budget;
+  s->used = 0;
+  s->policy = policy;
+  *out_id = s->id;
+  grcore_context_refresh_derived(context);
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_context_fuel_scope_close(
+    GRCORE_Context * context, uint64_t id) {
+  if (!scope_owner(context) || id == 0 || context->fuel_scope_count == 0 ||
+      context->fuel_scopes[context->fuel_scope_count - 1].id != id) {
+    return GRCORE_ERR_INVALID;
+  }
+  context->fuel_scope_count--;
+  if (context->scoped_unwind == id) {
+    /* The engine has unwound to this scope's boundary: the unwind is over, and
+     * `run` must not mistake it for the terminal kind. */
+    context->scoped_unwind = 0;
+    if (context->last_verdict == GRCORE_VERDICT_UNWIND) {
+      context->last_verdict = GRCORE_VERDICT_CONTINUE;
+    }
+    context->unwind_result = GRCORE_OK;
+  }
+  grcore_context_refresh_derived(context);
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_context_fuel_scope_set_budget(
+    GRCORE_Context * context, uint64_t id, uint64_t budget) {
+  GRCORE_FuelScope * s = scope_find(context, id);
+  if (s == NULL || !budget_settable(context)) {
+    return GRCORE_ERR_INVALID;
+  }
+  s->budget = budget;
+  grcore_context_refresh_derived(context);
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_context_fuel_scope_used(
+    const GRCORE_Context * context, uint64_t id, uint64_t * out_used) {
+  const GRCORE_FuelScope * s = scope_find(context, id);
+  if (s == NULL || out_used == NULL) {
+    return GRCORE_ERR_INVALID;
+  }
+  *out_used = s->used;
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_context_fuel_scope_remaining(
+    const GRCORE_Context * context, uint64_t id, uint64_t * out_remaining) {
+  const GRCORE_FuelScope * s = scope_find(context, id);
+  if (s == NULL || out_remaining == NULL) {
+    return GRCORE_ERR_INVALID;
+  }
+  *out_remaining = s->budget == GRCORE_UNLIMITED ? GRCORE_UNLIMITED
+      : s->used >= s->budget                     ? 0
+                                                 : s->budget - s->used;
+  return GRCORE_OK;
+}
+
+uint64_t grcore_context_fuel_scope_depth(const GRCORE_Context * context) {
+  return context == NULL ? 0 : context->fuel_scope_count;
+}
+
+uint64_t grcore_context_fuel_scope_top(const GRCORE_Context * context) {
+  return context == NULL || context->fuel_scope_count == 0
+      ? 0
+      : context->fuel_scopes[context->fuel_scope_count - 1].id;
+}
+
+uint64_t grcore_context_fuel_scope_unwinding(const GRCORE_Context * context) {
+  return context == NULL ? 0 : context->scoped_unwind;
 }

@@ -12,9 +12,9 @@ Nothing is released. So far there is the scaffold (the build, the version, the
 result vocabulary, the allocator, and the gates and benchmark harness), all of
 B: groups, contexts, options, keys, the lifecycle and ownership rules,
 memory accounting, requests and ports, the four-phase poll, `run` and `resume`,
-and the budgets; and the first half of A: the guest stack, engine descriptors,
-the abstract frame, the frame walk and scopes. Activation records, root sources
-and the unwinder come next.
+the budgets with their fuel scopes, and root sources; and all of A: the guest
+stack, engine descriptors, the abstract frame, the frame walk and scopes,
+activation records, the unwinder and budget scopes.
 
 ## Example
 
@@ -94,10 +94,14 @@ local name), and, in `b/` and `a/`:
 | `b/request.h` | request kinds, and `GRCORE_Port`: the only way another thread acts on a context, reference-counted and valid after its context is gone |
 | `b/poll.h` | `grcore_poll`, the runtime poll for natives, the four phases and their verdicts, and the phase-shuffle test mode |
 | `b/run.h` | `grcore_run`, `grcore_resume`, `grcore_context_wait`, and the pause's keys, location and unwind reason |
-| `b/budget.h` | fuel, memory (budget, reserve, refusals) and depth enforcement |
+| `b/budget.h` | fuel, memory (budget, reserve, refusals) and depth enforcement; fuel scopes, an exclusive budget under the request's ceiling |
+| `b/roots.h` | root sources: how a collector finds a context's roots (precise slots and conservative ranges) through B's types alone |
 | `a/engine.h` | `GRCORE_EngineDescriptor`: an engine's slot kinds, locator, inspector, scope interface and conservative decoder, registered per context; `free` |
 | `a/stack.h` | `GRCORE_Stack`: the context's guest stack of frames named by offset, growing by copy, with the depth budget counting frames; `grcore_stack_poll` records a poll identity; `free` |
 | `a/frame.h` | `GRCORE_AbstractFrame` and the frame walk: the one way any consumer reads a frame, its slots and its scopes, in readable states only; `free` |
+| `a/activation.h` | activation records: every crossing between host, interpreter, JIT code and C, entered and left in LIFO order, with the native depth budget and the nesting that forbids a pause; `free` |
+| `a/unwind.h` | the unwinder: pops frames innermost first with their engine's hook, leaves deeper activations, closes deeper scopes; `free` |
+| `a/budget_scope.h` | budget scopes: a call boundary with its own fuel budget, unwound to when it runs out; `free` |
 
 ```c
 GRCORE_Group * group;

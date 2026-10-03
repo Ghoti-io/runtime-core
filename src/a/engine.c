@@ -45,6 +45,8 @@ static void guest_destroy(GRCORE_Context * context, void * value) {
   const GRCORE_Allocator * a = grcore_context_allocator(context);
   a->free_fn(a->ctx, stack->buffer);
   a->free_fn(a->ctx, (void *)stack->engines);
+  a->free_fn(a->ctx, stack->activations);
+  a->free_fn(a->ctx, stack->scopes);
   a->free_fn(a->ctx, stack);
 }
 
@@ -119,7 +121,17 @@ GRCORE_Result grcore_engine_register(GRCORE_Context * context,
     stack->engine_capacity = capacity;
   }
   if (fresh) {
-    GRCORE_Result r = grcore_context_register(context, &grcore_guest_key, stack);
+    /* The root source goes in first and comes out again if the registration
+     * fails, so a refusal leaves no source that points at a freed stack. */
+    GRCORE_Result r =
+        grcore_context_add_root_source(context, &grcore_guest_root_source, stack);
+    if (r == GRCORE_OK) {
+      r = grcore_context_register(context, &grcore_guest_key, stack);
+      if (r != GRCORE_OK) {
+        grcore_context_remove_root_source(
+            context, &grcore_guest_root_source, stack);
+      }
+    }
     if (r != GRCORE_OK) {
       a->free_fn(a->ctx, (void *)grown);
       a->free_fn(a->ctx, stack);

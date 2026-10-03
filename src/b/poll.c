@@ -120,9 +120,21 @@ static void decide_interrupt(
 static void decide_fuel(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call) {
   (void)value;
-  if (grcore_context_request_pending(context, GRCORE_REQUEST_FUEL)) {
-    grcore_pollcall_vote(call, GRCORE_VERDICT_PAUSE);
+  if (!grcore_context_request_pending(context, GRCORE_REQUEST_FUEL)) {
+    return;
   }
+  /* The ceiling beats a scope: when both are exhausted the host can raise the
+   * ceiling, and the next poll then finds the scope still exhausted. Only a
+   * scope that alone ran out, with the unwind policy, unwinds. */
+  const GRCORE_FuelScope * scope = grcore_fuel_scope_innermost(context);
+  if (grcore_fuel_ceiling_exhausted(context) || scope == NULL ||
+      scope->policy != GRCORE_SCOPE_POLICY_UNWIND) {
+    grcore_pollcall_vote(call, GRCORE_VERDICT_PAUSE);
+    return;
+  }
+  grcore_pollcall_vote(call, GRCORE_VERDICT_UNWIND);
+  grcore_pollcall_set_unwind_result(call, GRCORE_ERR_LIMIT);
+  context->fuel_vote_scoped = true;
 }
 
 /* Memory defers its verdict by one poll: the first poll over budget lets ACT
@@ -251,6 +263,10 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
   }
   grcore_context_transition(c, GRCORE_CONFIG_AT_POLL);
   grcore_context_refresh_derived(c);
+  c->fuel_vote_scoped = false;
+  /* A pause cannot return to the host from inside a nested activation
+   * (AD-5), so there it is refused exactly as the runtime poll refuses it. */
+  allow_pause = allow_pause && c->nested == 0;
 
   size_t registrations = c->registration_count;
   for (size_t i = 0; i < CORE + registrations; i++) {
@@ -306,6 +322,15 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
     c->unwind_result = GRCORE_ERR_LIMIT;
   }
   c->last_verdict = verdict;
+  /* A scoped unwind: the exhausted scope alone, through the fuel key alone,
+   * and not a pause that was refused. The engine unwinds to the scope's
+   * boundary and closes it, which ends the unwind (budget.c). */
+  c->scoped_unwind = 0;
+  if (verdict == GRCORE_VERDICT_UNWIND && !promoted && c->fuel_vote_scoped &&
+      c->verdict_key_count == 1 &&
+      c->verdict_keys[0] == &core_keys[GRCORE_REQUEST_FUEL]) {
+    c->scoped_unwind = grcore_context_fuel_scope_top(c);
+  }
   if (verdict != GRCORE_VERDICT_CONTINUE) {
     c->pause_location = location;
   }
@@ -338,4 +363,26 @@ GRCORE_Result grcore_runtime_poll(
   GRCORE_Result result;
   poll_slow(context, location, false, &result);
   return result;
+}
+
+GRCORE_Result grcore_context_nested_enter(GRCORE_Context * context) {
+  if (context == NULL || !grcore_context_owned_by_caller(context) ||
+      context->tearing_down || context->nested == UINT64_MAX) {
+    return GRCORE_ERR_INVALID;
+  }
+  context->nested++;
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_context_nested_leave(GRCORE_Context * context) {
+  if (context == NULL || !grcore_context_owned_by_caller(context) ||
+      context->nested == 0) {
+    return GRCORE_ERR_INVALID;
+  }
+  context->nested--;
+  return GRCORE_OK;
+}
+
+uint64_t grcore_context_nested_depth(const GRCORE_Context * context) {
+  return context == NULL ? 0 : context->nested;
 }

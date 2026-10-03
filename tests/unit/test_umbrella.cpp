@@ -37,6 +37,18 @@ TEST(Umbrella, ReachesTheThreeAHeaders) {
   EXPECT_EQ(grcore_frame_walk_begin(nullptr, &walk), GRCORE_ERR_INVALID);
 }
 
+TEST(Umbrella, ReachesTheNewAHeadersAndTheRootsHeaderOfB) {
+  // One symbol from each of activation.h, unwind.h, budget_scope.h and
+  // b/roots.h, through the umbrella alone.
+  EXPECT_EQ(grcore_activation_count(nullptr), 0u);
+  EXPECT_EQ(grcore_unwind_all(nullptr, nullptr), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_budget_scope_count(nullptr), 0u);
+  EXPECT_EQ(grcore_context_root_source_count(nullptr), 0u);
+  // And the additions to budget.h and poll.h.
+  EXPECT_EQ(grcore_context_fuel_scope_depth(nullptr), 0u);
+  EXPECT_EQ(grcore_context_nested_depth(nullptr), 0u);
+}
+
 TEST(Umbrella, HeadersHaveExternCLinkageSoCppCanLinkTheSymbols) {
   /* A C++ translation unit that declared these without extern "C" would fail
    * to link; reaching this line at all is the check. */
@@ -51,7 +63,14 @@ TEST(Umbrella, EveryTypeRenameIsInEffectNotInsideAComment) {
       GRCORE_TEST_EXPAND(GRCORE_Stack), GRCORE_TEST_EXPAND(GRCORE_FrameRef),
       GRCORE_TEST_EXPAND(GRCORE_AbstractFrame),
       GRCORE_TEST_EXPAND(GRCORE_EngineDescriptor),
-      GRCORE_TEST_EXPAND(GRCORE_PollIdentity)};
+      GRCORE_TEST_EXPAND(GRCORE_PollIdentity),
+      GRCORE_TEST_EXPAND(GRCORE_ActivationRef),
+      GRCORE_TEST_EXPAND(GRCORE_ActivationInfo),
+      GRCORE_TEST_EXPAND(GRCORE_BudgetScope),
+      GRCORE_TEST_EXPAND(GRCORE_RootSource),
+      GRCORE_TEST_EXPAND(GRCORE_RootVisitor),
+      GRCORE_TEST_EXPAND(GRCORE_ConservativeRange),
+      GRCORE_TEST_EXPAND(GRCORE_CSegment)};
   for (const char * r : renamed) {
     EXPECT_NE(std::string(r).find("ghotiio_"), std::string::npos) << r;
   }

@@ -378,7 +378,7 @@ TEST(FrameScopes, AnEnginesRefusalComesBackAndWritesNothing) {
           },
           [](const GRCORE_AbstractFrame *, size_t, size_t,
               GRCORE_Variable *) -> GRCORE_Result { return GRCORE_ERR_INVALID; }},
-      GRCORE_ConservativeDecoder{0, 0, 0}};
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
   RunWorld w(0);
   GRCORE_EngineId e;
   ASSERT_EQ(grcore_engine_register(w.ctx, &liar, &e), GRCORE_OK);

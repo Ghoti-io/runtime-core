@@ -28,7 +28,9 @@
  * cases of the runtime: creating and destroying a context, a counting
  * malloc/free pair, a keyed slot lookup, the poll's fast path, its slow path
  * through four handlers, a post to a port, a push and pop of a guest frame,
- * the engine-aware poll's fast path, and a walk of sixteen frames at a pause.
+ * the engine-aware poll's fast path, a walk of sixteen frames at a pause, an
+ * activation record entered and left, a fuel scope opened, charged and closed,
+ * and the enumeration of the roots of sixteen frames.
  *
  * The calibration case is a fixed amount of integer work that touches no
  * library code, run the same way every real case will be, so a figure from a
@@ -308,8 +310,18 @@ static GRCORE_Location bench_locate(
   return where;
 }
 
+static GRCORE_SlotKind bench_all_values(
+    const GRCORE_AbstractFrame * frame, size_t index) {
+  (void)frame;
+  (void)index;
+  return GRCORE_SLOT_VALUE;
+}
+
+static const GRCORE_EngineDescriptor bench_value_engine = {"bench-value",
+    bench_all_values, NULL, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL};
+
 static const GRCORE_EngineDescriptor bench_engine = {"bench", NULL,
-    bench_locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}};
+    bench_locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL};
 
 /* A push and the matching pop of a four-slot frame on a warm stack: the price
  * of a guest call's bookkeeping, depth budget included. */
@@ -441,6 +453,100 @@ static uint64_t frame_walk_run(uint64_t iterations) {
   return sink;
 }
 
+/* An activation record entered and left: the price of recording one crossing
+ * (a JIT or native call), native depth budget included. */
+static uint64_t activation_pair_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK ||
+      grcore_context_create(group, NULL, &context) != GRCORE_OK ||
+      grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK) {
+    setup_failed("setup");
+  }
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  GRCORE_CSegment segment = {0x1000, 0x2000};
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRCORE_ActivationRef ref;
+    if (grcore_activation_enter(stack, GRCORE_ACTIVATION_NATIVE, engine, 0,
+            &segment, &ref) != GRCORE_OK ||
+        grcore_activation_leave(stack, ref) != GRCORE_OK) {
+      setup_failed("activation");
+    }
+    sink += ref.id;
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
+/* A budget scope opened, charged once and closed: the price of a template
+ * call's boundary on the fuel path. */
+static uint64_t fuel_scope_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK ||
+      grcore_context_create(group, NULL, &context) != GRCORE_OK ||
+      grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK) {
+    setup_failed("setup");
+  }
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRCORE_BudgetScope scope;
+    if (grcore_budget_scope_open(
+            stack, 1000, GRCORE_SCOPE_POLICY_UNWIND, &scope) != GRCORE_OK) {
+      setup_failed("scope open");
+    }
+    sink += grcore_context_charge_fuel(context, 20);
+    if (grcore_budget_scope_close(stack, scope) != GRCORE_OK) {
+      setup_failed("scope close");
+    }
+    sink += scope.id;
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
+static void count_slot(void * user, uint64_t * slot) {
+  *(uint64_t *)user += *slot;
+}
+
+/* The roots of sixteen frames of two VALUE slots each, enumerated through B's
+ * types alone, as a collector would. An iteration is one frame, so the figure
+ * is per frame. */
+static uint64_t roots_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK ||
+      grcore_context_create(group, NULL, &context) != GRCORE_OK ||
+      grcore_engine_register(context, &bench_value_engine, &engine) !=
+          GRCORE_OK) {
+    setup_failed("setup");
+  }
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  for (unsigned i = 0; i < WALK_FRAMES; i++) {
+    GRCORE_FrameRef frame;
+    if (grcore_stack_push(stack, engine, 2, &frame) != GRCORE_OK) {
+      setup_failed("push");
+    }
+  }
+  uint64_t sink = 0;
+  GRCORE_RootVisitor visitor = {&sink, count_slot, NULL};
+  for (uint64_t frames = 0; frames < iterations; frames += WALK_FRAMES) {
+    if (grcore_context_enumerate_roots(context, &visitor) != GRCORE_OK) {
+      setup_failed("enumerate");
+    }
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"ctx-create", context_create_destroy_run, 1000u * 1000u, 1000u},
@@ -452,6 +558,9 @@ static const Case cases[] = {
     {"stack-pushpop", stack_push_pop_run, 50u * 1000u * 1000u, 100000u},
     {"stack-poll", stack_poll_fast_run, 200u * 1000u * 1000u, 100000u},
     {"frame-walk", frame_walk_run, 20u * 1000u * 1000u, 10000u},
+    {"activation", activation_pair_run, 50u * 1000u * 1000u, 100000u},
+    {"fuel-scope", fuel_scope_run, 50u * 1000u * 1000u, 100000u},
+    {"roots-16", roots_run, 50u * 1000u * 1000u, 10000u},
 };
 
 #define REPEATS 7

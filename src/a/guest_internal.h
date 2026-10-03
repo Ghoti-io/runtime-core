@@ -31,9 +31,12 @@
 
 #include <ghoti.io/runtime-core/macros.h>
 
+#include <ghoti.io/runtime-core/a/activation.h>
 #include <ghoti.io/runtime-core/a/engine.h>
+#include <ghoti.io/runtime-core/a/frame.h>
 #include <ghoti.io/runtime-core/a/stack.h>
 #include <ghoti.io/runtime-core/b/key.h>
+#include <ghoti.io/runtime-core/b/roots.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -69,6 +72,24 @@ typedef struct GRCORE_FrameHeader {
   uint32_t tag;         ///< Derived from the frame's own offset.
 } GRCORE_FrameHeader;
 
+/** @brief One activation record, as the stack keeps it. */
+typedef struct GRCORE_ActivationRecord {
+  uint64_t id;            ///< From the stack's serial; never reused.
+  GRCORE_ActivationKind kind;
+  GRCORE_EngineId engine; ///< Zero for none.
+  bool nested;
+  size_t base_frames;     ///< The frame count when it was entered.
+  uintptr_t lo;           ///< The C segment, or both zero.
+  uintptr_t hi;
+} GRCORE_ActivationRecord;
+
+/** @brief One budget scope A opened, as the stack keeps it. */
+typedef struct GRCORE_ScopeRecord {
+  uint64_t id;               ///< B's fuel scope id.
+  size_t frame_base;         ///< The frame count when it was opened.
+  size_t activation_base;    ///< The activation count when it was opened.
+} GRCORE_ScopeRecord;
+
 /** @brief A's state for one context: the guest stack and the engine table. */
 struct GRCORE_Stack {
   GRCORE_Context * context;
@@ -82,6 +103,14 @@ struct GRCORE_Stack {
   const GRCORE_EngineDescriptor ** engines;
   size_t engine_count;
   size_t engine_capacity;
+  /* Activation records and budget scopes, outermost first (AD-17, AD-21). */
+  GRCORE_ActivationRecord * activations;
+  size_t activation_count;
+  size_t activation_capacity;
+  uint64_t activation_serial;
+  GRCORE_ScopeRecord * scopes;
+  size_t scope_count;
+  size_t scope_capacity;
 };
 
 /** @brief The key the state is registered under (cardinality one). */
@@ -94,6 +123,46 @@ extern const GRCORE_Key grcore_guest_key;
  */
 GRCORE_Result grcore_guest_alloc_failure(
     const GRCORE_Context * context, uint64_t refusals_before);
+
+/** @brief A's root source over the guest stack; the value is the stack. */
+extern const GRCORE_RootSource grcore_guest_root_source;
+
+/** @brief Whether the calling thread owns the stack's context. */
+bool grcore_stack_owned(const GRCORE_Stack * stack);
+
+/**
+ * @brief Makes room for one more element of an array that grows by copy,
+ *   through the context's counting allocator.
+ *
+ * @return ::GRCORE_OK, with the array in `out_array` (the same pointer if it
+ *   had room); ::GRCORE_ERR_LIMIT or ::GRCORE_ERR_OOM, with the array and
+ *   capacity unchanged.
+ */
+GRCORE_Result grcore_guest_array_reserve(GRCORE_Context * context, void * array,
+    size_t * capacity, size_t count, size_t element_size, void ** out_array);
+
+/**
+ * @brief Builds the abstract frame of `ref` for an engine hook. The location
+ *   is not filled in.
+ *
+ * @return True if `ref` is a live frame, with `out` and `header` filled.
+ */
+bool grcore_stack_hook_frame(const GRCORE_Stack * stack, GRCORE_FrameRef ref,
+    size_t depth, GRCORE_AbstractFrame * out, GRCORE_FrameHeader * header);
+
+/** @brief Pops frames, running each engine's `unwind` hook first, until
+ *   `target` remain. */
+GRCORE_Result grcore_unwind_frames(
+    GRCORE_Stack * stack, size_t target, size_t * popped);
+
+/** @brief Leaves the top activation, whatever the stack's state: gives back
+ *   its native depth and nesting. Returns false if there is none. */
+bool grcore_activation_drop_top(GRCORE_Stack * stack);
+
+/** @brief Closes the top budget scope record and its fuel scope, and any fuel
+ *   scope opened above it directly through B. Returns false if there is
+ *   none. */
+bool grcore_budget_scope_drop_top(GRCORE_Stack * stack);
 
 /**
  * @brief Reads and validates the header of `frame`.

@@ -1,11 +1,12 @@
 # Design
 
-**Status:** In progress. Describes what exists (the scaffold, all of B:
-groups, contexts, options, keys, memory accounting, requests and ports, the
-poll, `run` and `resume`, and the budgets; and the first half of A: the guest
-stack, engine descriptors, the abstract frame, the frame walk and scopes); the
-rest of A (activation records, root sources, the unwinder) is design, taken
-from the runtime stack's architecture spine (AD-1 to AD-26).
+**Status:** In progress. Describes what exists: the scaffold; all of B (groups,
+contexts, options, keys, memory accounting, requests and ports, the poll, `run`
+and `resume`, the budgets with their fuel scopes, and root sources); and all of
+A (the guest stack, engine descriptors, the abstract frame, the frame walk and
+scopes, activation records, the unwinder and budget scopes). What is not here is
+the collector, the JIT and the debugger, each a library of its own, taken from
+the runtime stack's architecture spine (AD-1 to AD-26).
 
 ## What this library is
 
@@ -352,9 +353,10 @@ poll identity as a source location, an inspector that prints a value, a scope
 interface, and a conservative decoder (mask, shift, base) for its value
 encoding. A callback that is NULL means the engine has nothing to say, and the
 reader falls back (hexadecimal for an uninspected value). Fields that later
-stories need (root enumeration, unwinding, deoptimization) are trailing: C
-zero-fills a descriptor written before they existed. They are not in the struct
-yet because a field with no reader is a promise nobody has tested.
+stories need are trailing: C zero-fills a descriptor written before they
+existed. They were not in the struct until a story read them, because a field
+with no reader is a promise nobody has tested; root enumeration and unwinding
+are in it now (part 2), and deoptimization is not yet.
 
 **One abstract frame, one walk (AD-18, AD-20).** `grcore_frame_walk_*` yields
 a `GRCORE_AbstractFrame`: context, engine, descriptor, poll identity, the
@@ -399,17 +401,149 @@ Alternatives considered and rejected:
   would have to chase them. A contiguous buffer is cache-friendly, is freed
   with one call, and is what a native segment would also be.
 
+## A, part 2: activation records, root sources, the unwinder and budget scopes
+
+The second half of A adds three headers under `a/` (`activation.h`, `unwind.h`
+and `budget_scope.h`, all `free`) and one under `b/` (`roots.h`, `stable`), and
+adds to `budget.h` and `poll.h`. Before this nothing recorded how control
+crossed between host, interpreter, JIT and C; nothing let a collector find a
+context's roots; nothing took the stack apart when a run ended early; and fuel
+was one flat budget, so a runaway template call could not be stopped at its own
+boundary (AD-5, AD-17, AD-18, AD-21).
+
+**Activation records (AD-17).** Every crossing records a record on the stack's
+array, entered and left in strict LIFO order: HOST, INTERPRETER, JIT, NATIVE and
+REENTRY. A record is named by a serial that is never reused, so a stale or
+forged reference is refused where a stale frame offset could name a later
+frame. It holds counts and a segment, never an address into the guest stack, so
+growth cannot invalidate it. A JIT, NATIVE or REENTRY record enters the native
+depth budget and its leave gives it back (AD-21); HOST and INTERPRETER do not,
+because an interpreter makes no C call to enter a guest frame (AD-8). A leave
+is refused unless the stack is back at the frame count the record began with
+and no scope opened inside it is still open, so the two LIFO disciplines
+cannot cross. A record stays open across a pause, which is what lets a
+context paused inside nested scopes and activations migrate and resume.
+
+**The nesting count, and why it lives in B (AD-5).** A nested activation (a
+REENTRY always, an INTERPRETER when the caller says so) cannot pause to the
+host, because there is a C frame of the host's, or of an opaque function's,
+above `run`. B owns the poll, so B owns the count: `grcore_context_nested_enter`
+and `leave`, called by A's records. While it is above zero the poll treats
+`allow_pause` as false, exactly as the runtime poll already did, so a pause
+verdict becomes a limit unwind and the keys that asked for the pause stay
+readable. Terminate needed no change: it is an unwind vote that stays pending
+until the outermost `run` returns, so the nested poll unwinds, and so does the
+outer one after the nested unwind and its leave. Nothing evaluates while
+paused and no YIELD run is made yet (those are later stories); the count and
+the rule are here so they will have somewhere to stand.
+
+**Root sources (AD-11, AD-18).** B holds a table of `(source, value)` pairs and
+a function that asks each in turn. A source reports two things as plain data: a
+pointer to a 64-bit value slot (a visitor may write through it, which is how a
+moving collector will update a slot in place) and a conservative range
+(`lo`, `hi`, `mask`, `shift`, `base`). `gc` reaches them only through B's types
+(AD-2). A's source is registered with B by the first engine registration, before
+the keyed registration of the stack, and removed again if that fails, so a
+refusal leaves no source pointing at a freed stack. It reports every VALUE slot
+of every frame, innermost frame first, then calls the frame's engine `roots`
+hook for what a slot kind cannot say (an open upvalue, a value held in a side
+table), then one range for each activation that recorded a C segment, with its
+engine's decoder; engine zero has none, and its words are read as the
+addresses they are. JIT frames are not scanned conservatively and a record
+without a segment contributes nothing (AD-17).
+
+**The unwinder (AD-5, AD-18).** `grcore_unwind_to_activation` and
+`grcore_unwind_all` pop frames innermost first, calling the engine's `unwind`
+hook while the frame is still on the stack, leave the deeper activations (which
+gives back their native depth and nesting) and close the deeper scopes. They run
+no guest code: a limit unwind cannot be caught and runs no `finally`. They edit
+data; the C frames above `run` unwind by returning, which is why nothing crosses
+a host frame. `unwind_all` is the end of a run, after an unwind and after a
+finish alike, and so it also settles the case story 4 deferred: frames left on
+the stack when a run finishes leave a stale used depth for the next run.
+
+**Fuel scopes (AD-21), counted in B.** A scope has an *exclusive* budget: a
+charge goes to the innermost scope only, so the parent's clock stops while a
+child runs, and every charge also counts against the existing fuel limit, which
+is the *inclusive* request ceiling. The poll turns exhaustion into a verdict by
+the same FUEL request bit as before; the handler tells the cases apart. When the
+ceiling is exhausted, or the scope's policy is PAUSE, the verdict is a pause,
+so the host can raise the ceiling or the scope's budget. When only a scope is,
+and its policy is UNWIND, the verdict is an unwind with `ERR_LIMIT` and the
+`fuel` key as its only voter. The poll records that as a *scoped* unwind, naming
+the scope. The engine then unwinds its frames to the scope's boundary and
+closes the scope; closing it clears the scoped unwind, so `run` does not hold a
+terminal one and a FINISHED return afterwards is legal. An unwind with another
+voter (terminate), or a pause refused because the activation is nested, is not
+scoped and closing a scope does not clear it. Because the votes are levels, the
+ceiling beats the scope: with both exhausted the poll pauses, and once the host
+raises the ceiling the next poll finds the scope still exhausted and unwinds.
+
+**Budget scopes in A (AD-21).** B counts; A adds what only A can know: where on
+the guest stack and among the activation records the scope began. Open reserves
+room for A's record first, then opens B's scope, so the two succeed or fail
+together. Close needs the scope innermost, the stack back at its frame count
+and no activation opened inside it still open. `grcore_budget_scope_unwind` pops
+to the base, leaves the activations opened since, closes the scopes inside it
+and then closes the scope. A fuel scope opened straight through B is not A's to
+track; closing or unwinding an A scope closes any left open inside it, and
+`unwind_all` closes them all.
+
+**Two new trailing fields on the descriptor.** `roots` and `unwind` follow the
+decoder. Like the key's `poll` field, a descriptor written before they existed
+keeps its meaning (C zero-fills the omission; a NULL hook is never called), but
+a C++ compile with `-Wextra` flags the omission, and the static descriptors in
+the tests, the benchmark and the examples were updated.
+
+**Nothing raw survives (AD-17).** Records and scopes are arrays that grow by
+copy through the context's counting allocator, as the stack does, so they are
+charged to the context: a growth the memory budget refuses is `ERR_LIMIT`, any
+other refusal `ERR_OOM`, and nothing has changed. A hook's abstract frame has
+no `location` (a collector calls `roots` on every frame at every collection,
+and `locate` is engine code), and a hook must not push, pop or poll.
+
+Alternatives considered and rejected:
+
+- **Scopes counted in A.** B does all the accounting (AD-20), the poll that
+  decides is B's, and the ceiling those charges must also count against is
+  B's. A would have had to charge B's counter and keep its own, and the two
+  could disagree. The scope is B's; only its position is A's.
+- **Activation records on the guest stack.** They would be frames, and the
+  frame walk, the depth budget and every consumer would have to tell them from
+  guest frames. They are not guest frames: JIT and C activations are not on the
+  guest stack at all, and a record must be able to outlive the frames above it.
+  A separate array, with the frame count as a field, keeps both simple.
+- **A root-source key instead of a registry.** A key finds one slot of one
+  kind, and the collector would have had to know every library's key to find
+  the roots, which is the knowledge AD-2 forbids. A table of sources is one
+  call the collector makes whatever is registered.
+- **A new request kind for scope exhaustion.** The FUEL bit already means "fuel
+  needs a verdict", and a new kind would change the core kind count, the
+  fast-path word and every existing test. The cost of reusing the bit is that
+  the `fuel` key reports both a ceiling and a scope, which is accurate: it is
+  fuel either way.
+- **Unwinding by `longjmp`.** It would cross host C frames (AD-13), skip any
+  cleanup between, and pin the thread. The unwinder edits data and the C frames
+  return.
+- **Having `run` unwind to the scope's boundary.** Only the engine knows its
+  frames and what its caller does about a failed call (a limit-error value, an
+  error-list entry), so the engine unwinds and `run` learns it is over when the
+  scope closes.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and nine real cases: creating and destroying a context, a
+was taken on, and twelve real cases: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
 poll's slow path through one handler in each phase, a post to a port, a push
-and pop of a guest frame, the engine-aware poll's fast path, and a walk of
-sixteen frames at a pause (reported per frame read). No budgets are recorded:
-the spine records them once a first measurement of a real case exists.
+and pop of a guest frame, the engine-aware poll's fast path, a walk of
+sixteen frames at a pause (reported per frame read), an activation record
+entered and left, a budget scope opened, charged and closed, and the
+enumeration of the roots of sixteen frames (reported per frame). No budgets
+are recorded: the spine records them once a first measurement of a real case
+exists.
 
 ## Continuous integration
 

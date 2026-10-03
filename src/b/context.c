@@ -175,6 +175,12 @@ GRCORE_Result grcore_context_destroy(GRCORE_Context * context) {
   grcore_context_port_detach(context);
   GRCORE_Group * group = context->group;
   const GRCORE_Allocator * a = group->allocator;
+  /* The fuel scopes and the root sources came from the counting allocator,
+   * which lives in the context and so is used before the context is freed. */
+  context->counting.allocator.free_fn(
+      context->counting.allocator.ctx, context->fuel_scopes);
+  context->counting.allocator.free_fn(
+      context->counting.allocator.ctx, context->roots);
   a->free_fn(a->ctx, context->registrations);
   a->free_fn(a->ctx, context->kind_keys);
   scratch_free(context, (void *)context->verdict_keys);

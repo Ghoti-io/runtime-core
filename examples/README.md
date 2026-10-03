@@ -12,9 +12,12 @@ an example that stops working fails the build. Run them with the same
 | Read a paused guest's frames, slots and scope variables without knowing the engine | [`frame_walk.c`](frame_walk.c), `main` |
 | Write an engine descriptor: slot kinds, a locator, an inspector and a scope interface | [`frame_walk.c`](frame_walk.c), `toy_engine` |
 | Keep a guest's position on the guest stack instead of in C frames, so a pause can be read | [`frame_walk.c`](frame_walk.c), `toy_entry` |
+| Stop a runaway call at its own boundary while the page around it finishes (a budget scope per template call) | [`scoped_pages.c`](scoped_pages.c), `render_pane` |
+| Unwind the guest stack to a scope's boundary, and see the engine's `unwind` hook release each frame | [`scoped_pages.c`](scoped_pages.c), `render_pane` and `toy_unwind` |
+| Read how much of its own budget a scope used, and how the parent's clock stops while a child runs | [`scoped_pages.c`](scoped_pages.c), `main` |
 | Write an entry function that can be paused and resumed without keeping a C frame | [`pause_resume.c`](pause_resume.c), `loop_entry` |
 
 The examples use no engine. In `pause_resume.c` the "guest" is a counting loop
-whose position lives in its own state; in `frame_walk.c` the frames are on the
-guest stack, as a real engine keeps them, and a toy descriptor stands in for the
-engine.
+whose position lives in its own state; in `frame_walk.c` and `scoped_pages.c`
+the frames are on the guest stack, as a real engine keeps them, and a toy
+descriptor stands in for the engine.

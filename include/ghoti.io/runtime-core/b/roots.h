@@ -1,0 +1,153 @@
+/*
+ * SPDX-License-Identifier: LGPL-3.0-only
+ *
+ * Copyright (C) 2026 Corey Pennycuff
+ *
+ * This file is part of Ghoti.io Runtime-core.
+ *
+ * Ghoti.io Runtime-core is free software: you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public License version
+ * 3 as published by the Free Software Foundation.
+ *
+ * Ghoti.io Runtime-core is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/**
+ * @file roots.h
+ * @stability stable
+ *
+ * Root sources: how a collector finds a context's roots without knowing who
+ * holds them (AD-11, AD-18).
+ *
+ * A library that holds values the collector must see (A's guest stack is the
+ * first) registers a *root source* with the context. The collector pulls the
+ * context's sources from B and calls them through these types alone, so it
+ * includes nothing from A (AD-2). A source reports two kinds of root, both as
+ * plain data:
+ *
+ *  - *precise* roots: the address of a 64-bit slot holding a value. The
+ *    visitor may write through it, so a moving collector can update a slot in
+ *    place (AD-12);
+ *  - *conservative ranges*: a span of memory the collector scans word by
+ *    word, with the mask, shift and base that turn a word into an address.
+ *
+ * An address handed to the visitor is valid only during the callback, and
+ * only while the visitor does not push, pop or poll: the stack that holds a
+ * slot may move when it grows (AD-17).
+ *
+ * Threads: a context's sources are the owner's, so every function here is
+ * called by the owning thread.
+ */
+
+#ifndef GHOTI_IO_GRCORE_B_ROOTS_H
+#define GHOTI_IO_GRCORE_B_ROOTS_H
+
+#include <ghoti.io/runtime-core/macros.h>
+
+#include <ghoti.io/runtime-core/b/context.h>
+#include <ghoti.io/runtime-core/core.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief A span of memory to scan conservatively, and how to read a word of
+ *   it: `address = ((word & mask) >> shift) + base`.
+ */
+typedef struct GRCORE_ConservativeRange {
+  uint64_t lo;       ///< The first byte of the span.
+  uint64_t hi;       ///< One past the last byte.
+  uint64_t mask;     ///< Bits of a word that carry an address.
+  unsigned shift;    ///< How far to shift them down; below 64.
+  uint64_t base;     ///< Added after the shift.
+} GRCORE_ConservativeRange;
+
+/** @brief What a root source reports its roots to. */
+typedef struct GRCORE_RootVisitor {
+  void * user; ///< Handed back to both callbacks.
+  /** A precise root: `slot` is the address of a 64-bit value slot, which the
+   *  callback may rewrite. May be NULL, and the source then skips them. */
+  void (*slot)(void * user, uint64_t * slot);
+  /** A conservative range. May be NULL, and the source then skips them. */
+  void (*range)(void * user, const GRCORE_ConservativeRange * range);
+} GRCORE_RootVisitor;
+
+/** @brief A root source: a name and one function that reports the roots. */
+typedef struct GRCORE_RootSource {
+  const char * name; ///< For diagnostics. May be NULL.
+  /**
+   * Reports every root the source holds to `visitor`, precise ones before
+   * conservative ones, innermost first where the source has an order. Must not
+   * add or remove a root source, or push, pop or poll.
+   */
+  void (*enumerate)(
+      GRCORE_Context * context, void * value, const GRCORE_RootVisitor * visitor);
+} GRCORE_RootSource;
+
+/**
+ * @brief Adds a root source to a context, after the ones already there.
+ *
+ * The table is allocated through the context's counting allocator and freed
+ * when the context is destroyed. The source must outlive the context.
+ *
+ * @param context The context. The caller must own it, and it must not be
+ *   tearing down.
+ * @param source The source, by address. Must have an `enumerate` function.
+ * @param value Handed to `enumerate`.
+ * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, a source
+ *   without `enumerate`, a source and value already added, or a non-owner;
+ *   ::GRCORE_ERR_LIMIT if the memory budget refuses the table's growth;
+ *   ::GRCORE_ERR_OOM for any other allocation failure. A refusal leaves the
+ *   table unchanged.
+ */
+GRCORE_API GRCORE_Result grcore_context_add_root_source(GRCORE_Context * context,
+    const GRCORE_RootSource * source, void * value);
+
+/**
+ * @brief Removes a root source added with the same source and value.
+ *
+ * @param context The context. The caller must own it.
+ * @param source The source.
+ * @param value The value it was added with.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for a NULL argument, a
+ *   non-owner or a source that is not there (nothing changes).
+ */
+GRCORE_API GRCORE_Result grcore_context_remove_root_source(
+    GRCORE_Context * context, const GRCORE_RootSource * source, void * value);
+
+/**
+ * @brief How many root sources the context holds.
+ *
+ * @param context The context.
+ * @return The count; zero for NULL.
+ */
+GRCORE_API size_t grcore_context_root_source_count(const GRCORE_Context * context);
+
+/**
+ * @brief Asks every root source for its roots, in the order they were added.
+ *
+ * Allowed in any state, since the collector runs at-poll and a host may
+ * enumerate a paused context.
+ *
+ * @param context The context. The caller must own it.
+ * @param visitor Receives the roots. Must not be NULL.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL or a non-owner.
+ */
+GRCORE_API GRCORE_Result grcore_context_enumerate_roots(
+    GRCORE_Context * context, const GRCORE_RootVisitor * visitor);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* GHOTI_IO_GRCORE_B_ROOTS_H */

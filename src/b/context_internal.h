@@ -36,6 +36,7 @@
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/poll.h>
 #include <ghoti.io/runtime-core/b/request.h>
+#include <ghoti.io/runtime-core/b/roots.h>
 #include <ghoti.io/runtime-core/b/run.h>
 
 #ifdef __cplusplus
@@ -67,6 +68,20 @@ typedef struct GRCORE_Vote {
   GRCORE_Result result;    ///< What `run` returns if it votes to unwind.
 } GRCORE_Vote;
 
+/** @brief One fuel scope (AD-21): an exclusive budget under the ceiling. */
+typedef struct GRCORE_FuelScope {
+  uint64_t id;     ///< From a per-context serial; never reused.
+  uint64_t budget; ///< What the scope may use itself; may be UNLIMITED.
+  uint64_t used;   ///< Charged while this scope was the innermost.
+  GRCORE_ScopePolicy policy;
+} GRCORE_FuelScope;
+
+/** @brief One root source with the value it was added with. */
+typedef struct GRCORE_RootEntry {
+  const GRCORE_RootSource * source;
+  void * value;
+} GRCORE_RootEntry;
+
 struct GRCORE_Context {
   GRCORE_Group * group;
   GRCORE_Options * options; ///< The context's own copy.
@@ -92,6 +107,25 @@ struct GRCORE_Context {
   uint64_t fuel_limit;
   uint64_t depth[2];
   bool reclaim_tried;    ///< The collector has had its chance at this overage.
+
+  /* Fuel scopes (AD-21), outermost first. Owner only; allocated through the
+   * counting allocator and freed at destroy. */
+  GRCORE_FuelScope * fuel_scopes;
+  size_t fuel_scope_count;
+  size_t fuel_scope_capacity;
+  uint64_t fuel_scope_serial;
+  /* Set by the last slow poll: the id of the scope whose exhaustion alone
+   * made it unwind, or zero. Closing that scope clears the unwind. */
+  uint64_t scoped_unwind;
+  bool fuel_vote_scoped; ///< DECIDE's fuel vote was a scoped unwind.
+
+  /* Nested activations (AD-5): a pause inside one becomes a limit unwind. */
+  uint64_t nested;
+
+  /* Root sources (AD-18). Owner only. */
+  GRCORE_RootEntry * roots;
+  size_t root_count;
+  size_t root_capacity;
 
   /* The poll. One block, sized for the registrations the table can hold, so a
    * poll never allocates: `votes` and `verdict_keys` have the built-in kinds
@@ -128,6 +162,24 @@ bool grcore_context_owned_by_caller(const GRCORE_Context * context);
  *   each bit is set exactly when its condition holds.
  */
 void grcore_context_refresh_derived(GRCORE_Context * context);
+
+/** @brief Whether the fuel ceiling (the request budget) is exhausted. */
+static inline bool grcore_fuel_ceiling_exhausted(const GRCORE_Context * c) {
+  return c->fuel_used > c->fuel_limit;
+}
+
+/** @brief The innermost fuel scope; NULL if none is open. */
+static inline const GRCORE_FuelScope * grcore_fuel_scope_innermost(
+    const GRCORE_Context * c) {
+  return c->fuel_scope_count == 0 ? NULL
+                                  : &c->fuel_scopes[c->fuel_scope_count - 1];
+}
+
+/** @brief Whether the innermost fuel scope has used more than its budget. */
+static inline bool grcore_fuel_scope_exhausted(const GRCORE_Context * c) {
+  const GRCORE_FuelScope * s = grcore_fuel_scope_innermost(c);
+  return s != NULL && s->used > s->budget;
+}
 
 /** @brief Clears the terminate request. Only the end of `run` does this. */
 void grcore_context_clear_terminate(GRCORE_Context * context);
