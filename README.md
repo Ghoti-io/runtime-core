@@ -92,7 +92,7 @@ local name), and, in `b/` and `a/`:
 | `b/key.h` | `GRCORE_Key`: a static object with a cardinality, a phase and a destructor; identity is its address |
 | `b/page.h` | `GRCORE_PageProvider`: the pages `runtime-heap` and `runtime-jit` will ask for |
 | `b/request.h` | request kinds, and `GRCORE_Port`: the only way another thread acts on a context, reference-counted and valid after its context is gone |
-| `b/poll.h` | `grcore_poll`, the runtime poll for natives, the four phases and their verdicts, and the phase-shuffle test mode |
+| `b/poll.h` | `grcore_poll`, the runtime poll for natives, the four phases and their verdicts, `grcore_pollcall_pause_allowed` (whether a pause vote would return to the host, which a debugger asks before voting one), and the phase-shuffle test mode |
 | `b/run.h` | `grcore_run`, `grcore_resume`, `grcore_context_wait`, and the pause's keys, location and unwind reason |
 | `b/budget.h` | fuel, memory (budget, reserve, refusals) and depth enforcement; fuel scopes, an exclusive budget under the request's ceiling |
 | `b/roots.h` | root sources: how a collector finds a context's roots (precise slots and conservative ranges) through B's types alone |

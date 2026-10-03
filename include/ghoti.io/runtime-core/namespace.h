@@ -240,6 +240,7 @@
 #define grcore_options_set_native_depth GHOTIIO_RUNTIME_CORE(grcore_options_set_native_depth)
 #define grcore_page_provider_default GHOTIIO_RUNTIME_CORE(grcore_page_provider_default)
 #define grcore_poll GHOTIIO_RUNTIME_CORE(grcore_poll)
+#define grcore_pollcall_pause_allowed GHOTIIO_RUNTIME_CORE(grcore_pollcall_pause_allowed)
 #define grcore_pollcall_pending GHOTIIO_RUNTIME_CORE(grcore_pollcall_pending)
 #define grcore_pollcall_phase GHOTIIO_RUNTIME_CORE(grcore_pollcall_phase)
 #define grcore_pollcall_reclaim_requested GHOTIIO_RUNTIME_CORE(grcore_pollcall_reclaim_requested)

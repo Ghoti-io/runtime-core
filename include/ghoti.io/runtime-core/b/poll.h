@@ -195,6 +195,22 @@ GRCORE_API bool grcore_pollcall_pending(
 GRCORE_API GRCORE_Verdict grcore_pollcall_verdict(const GRCORE_PollCall * call);
 
 /**
+ * @brief Whether this poll may pause to the host.
+ *
+ * True exactly for a ::grcore_poll made outside every nested activation: a
+ * pause verdict voted there ends the run as a pause. False for the runtime
+ * poll (::grcore_runtime_poll) and inside a nested activation, where a pause
+ * verdict becomes an unwind with ::GRCORE_ERR_LIMIT, and false for NULL. A
+ * handler that would vote to pause only for the host's benefit, such as a
+ * debugger, asks first, because a pause refused here would change the
+ * program: it would end the run it only meant to look at.
+ *
+ * @param call The poll in progress.
+ * @return True if a pause verdict would return from `run` to the host.
+ */
+GRCORE_API bool grcore_pollcall_pause_allowed(const GRCORE_PollCall * call);
+
+/**
  * @brief Whether the context is over its memory budget and has not yet been
  *   given the chance to reclaim, so an ACT handler that can collect should.
  *

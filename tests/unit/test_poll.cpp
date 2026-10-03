@@ -491,6 +491,35 @@ TEST(Poll, AnOverflowKindPendingTakesTheSlowPathSoHandlersRun) {
   grcore_port_release(p);
 }
 
+TEST(Poll, PauseAllowedIsTrueOnlyForAnOrdinaryPollOutsideEveryNestedActivation) {
+  RunWorld w;
+  Probe y{"y"};
+  std::vector<bool> allowed;
+  y.extra = [&](GRCORE_Context *, GRCORE_PollCall * c) {
+    allowed.push_back(grcore_pollcall_pause_allowed(c));
+  };
+  ASSERT_EQ(grcore_context_register(w.ctx, &kYieldKey, &y), GRCORE_OK);
+  GRCORE_RequestKind kind;
+  ASSERT_EQ(grcore_context_request_kind(w.ctx, &kYieldKey, &kind), GRCORE_OK);
+  GRCORE_Port * p;
+  ASSERT_EQ(grcore_context_port(w.ctx, &p), GRCORE_OK);
+  ASSERT_EQ(grcore_port_post(p, kind), GRCORE_OK);
+  Fn fn{[&](GRCORE_Context * c) {
+    EXPECT_EQ(GRCORE_POLL(c), GRCORE_VERDICT_CONTINUE);                 // true
+    EXPECT_EQ(grcore_runtime_poll(c, 0, GRCORE_HERE), GRCORE_OK);       // false
+    EXPECT_EQ(grcore_context_nested_enter(c), GRCORE_OK);
+    EXPECT_EQ(GRCORE_POLL(c), GRCORE_VERDICT_CONTINUE);                 // false
+    EXPECT_EQ(grcore_context_nested_leave(c), GRCORE_OK);
+    EXPECT_EQ(GRCORE_POLL(c), GRCORE_VERDICT_CONTINUE);                 // true
+    return GRCORE_STEP_FINISHED;
+  }};
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
+  EXPECT_EQ(allowed, (std::vector<bool>{true, false, false, true}));
+  EXPECT_FALSE(grcore_pollcall_pause_allowed(nullptr));
+  grcore_port_release(p);
+}
+
 TEST(Poll, AHandlerSeesItsOwnValueAndTheRequestsAsThePollSeesThem) {
   RunWorld w;
   Probe d{"d"};

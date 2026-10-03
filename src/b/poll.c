@@ -44,6 +44,7 @@ struct GRCORE_PollCall {
   GRCORE_Verdict verdict; ///< What handlers of later phases are told.
   bool reclaim;           ///< ACT handlers are asked to reclaim memory.
   size_t current;         ///< The vote slot of the handler being run.
+  bool allow_pause;       ///< This poll may pause to the host.
 };
 
 GRCORE_Phase grcore_pollcall_phase(const GRCORE_PollCall * call) {
@@ -57,6 +58,10 @@ bool grcore_pollcall_pending(
 
 GRCORE_Verdict grcore_pollcall_verdict(const GRCORE_PollCall * call) {
   return call == NULL ? GRCORE_VERDICT_CONTINUE : call->verdict;
+}
+
+bool grcore_pollcall_pause_allowed(const GRCORE_PollCall * call) {
+  return call != NULL && call->allow_pause;
 }
 
 bool grcore_pollcall_reclaim_requested(const GRCORE_PollCall * call) {
@@ -278,7 +283,7 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
     c->reclaim_tried = false;
   }
   GRCORE_PollCall call = {c, GRCORE_PHASE_DECIDE, GRCORE_VERDICT_CONTINUE,
-      over && !c->reclaim_tried, 0};
+      over && !c->reclaim_tried, 0, allow_pause};
 
   /* 1. DECIDE: the built-ins in kind order, then the keyed handlers. */
   for (size_t k = 0; k < CORE; k++) {

@@ -437,6 +437,14 @@ outer one after the nested unwind and its leave. Nothing evaluates while
 paused and no YIELD run is made yet (those are later stories); the count and
 the rule are here so they will have somewhere to stand.
 
+**Asking whether a pause is possible.** A YIELD handler that votes a pause only
+to give the host a look (the debugger) must not vote one the poll will refuse:
+core turns a refused pause into a limit unwind, which would end the program the
+handler meant only to inspect. The runtime poll and a nested activation both
+refuse, and the handler cannot see either from its arguments, so
+`grcore_pollcall_pause_allowed` reports what the poll already decided. It is a
+read of one flag in the poll's record and changes no behaviour.
+
 **Root sources (AD-11, AD-18).** B holds a table of `(source, value)` pairs and
 a function that asks each in turn. A source reports two things as plain data: a
 pointer to a 64-bit value slot (a visitor may write through it, which is how a
