@@ -1,0 +1,7 @@
+Name: Ghoti.io Runtime-core(BRANCH)
+Description: The language runtime stack's core: the execution context (B) and the frame protocol (A).
+Version: (VERSION)
+URL: https://github.com/Ghoti-io/runtime-core
+Libs: -L(PC_LIB_DIR) -l(SUITE)-(PROJECT)(BRANCH)
+CFlags: -I(PC_INCLUDE_DIR)
+Requires: (REQUIRES)

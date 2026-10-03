@@ -1,0 +1,304 @@
+# Continuous integration for ghoti.io-runtime-core.
+#
+# Everything here is a target the Makefile already has, run the way the
+# project documents it (AD-16: core gets runtime-core-style CI from the start).
+# The point of the file is that they are all run, on every change, rather
+# than when somebody remembers.
+#
+# The layout follows ../runtime-core's workflow: the project is checked out into a
+# subdirectory so that cutil can be checked out beside it rather than inside
+# it, and both are installed into one prefix in the workspace, exactly the way
+# ../bootstrap.sh does it locally. runtime-core depends on cutil and nothing
+# else (AD-2), so cutil is the only thing the setup action builds. The steps
+# common to every job are in .github/actions/setup.
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A branch that is pushed twice in quick succession does not need the first
+# run finished. Pull requests are cancelled; pushes to master are not, so that
+# every commit on the branch keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PREFIX: ${{ github.workspace }}/.local
+  PKG_CONFIG_PATH: ${{ github.workspace }}/.local/share/pkgconfig
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The everyday gate: it builds, the symbols are namespaced, the tests pass,
+  # the examples still compile, and what `make install` leaves behind can
+  # actually be consumed.
+  #
+  # Both compilers, because -Werror is only as good as the warnings the
+  # compiler in use happens to emit, and the two disagree about which ones
+  # those are. Neither is pinned: whatever the runner image ships is a third
+  # opinion on top of the GCC 14 the suite is developed against, and a warning
+  # only one of them emits is still a warning worth reading. If that ever
+  # becomes noise rather than signal, pin a version here rather than dropping
+  # the job.
+  # ---------------------------------------------------------------------------
+  test:
+    name: Build and test (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc: gcc
+            cxx: g++
+            packages: ""
+          - cc: clang
+            cxx: clang++
+            packages: clang
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runtime-core
+
+      - uses: ./runtime-core/.github/actions/setup
+        with:
+          packages: ${{ matrix.packages }}
+
+      - name: Build
+        working-directory: runtime-core
+        run: make -j"$(nproc)" CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} PREFIX="$PREFIX"
+
+      # `make test` depends on this, but running it as its own step reports a
+      # namespace regression as a namespace regression rather than as a test
+      # failure at the bottom of a long log.
+      - name: Symbol namespace gate
+        working-directory: runtime-core
+        run: make check-symbols CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} PREFIX="$PREFIX"
+
+      # AD-2, AD-3 and AD-14 as gates, then the self-test that runs each of
+      # them against a planted defect and a control. `make test` depends on
+      # all four; naming them here reports a layering regression as one.
+      - name: Layering gates and their self-test
+        working-directory: runtime-core
+        run: make check-labels check-direction check-edges check-gates CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} PREFIX="$PREFIX"
+
+      - name: Tests
+        working-directory: runtime-core
+        run: make test -j"$(nproc)" CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} PREFIX="$PREFIX"
+
+      # AD-26: the harness runs on every change and prints its calibration, so
+      # a figure recorded later can be read against the machine it came from.
+      - name: Benchmark harness
+        working-directory: runtime-core
+        run: make bench CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} PREFIX="$PREFIX"
+
+      - name: Examples
+        working-directory: runtime-core
+        run: make examples CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} PREFIX="$PREFIX"
+
+      # The tests reach the library through include/ and a static archive
+      # linked with --whole-archive. A consumer reaches it through pkg-config,
+      # the installed headers and the shared library, and nothing else here
+      # exercises that path - which is where CONVENTIONS.md section 1 records
+      # three defects that every in-tree build was blind to.
+      - name: Install
+        working-directory: runtime-core
+        run: make install CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} PREFIX="$PREFIX"
+
+      - name: A consumer can use what was installed
+        working-directory: runtime-core
+        run: CC=${{ matrix.cc }} CXX=${{ matrix.cxx }} tools/check-install.sh "$PREFIX"
+
+  # ---------------------------------------------------------------------------
+  # ASan and UBSan, in their own build directory so the objects are never
+  # shared with the plain build.
+  # ---------------------------------------------------------------------------
+  sanitizers:
+    name: ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runtime-core
+
+      - uses: ./runtime-core/.github/actions/setup
+
+      - name: Tests under ASan and UBSan
+        working-directory: runtime-core
+        run: make test-asan -j"$(nproc)" PREFIX="$PREFIX"
+
+  # ---------------------------------------------------------------------------
+  # ThreadSanitizer, in a third build directory: it cannot share objects with
+  # the ASan build because the two sanitizers cannot be combined.
+  #
+  # Nothing here is threaded yet, so today this job has little to find. It is
+  # here from the first commit because the design is not single-threaded:
+  # requests are the one cross-thread operation (AD-4), contexts migrate
+  # between threads (AD-20), and shared regions are read by several (AD-7).
+  # The job that proves those rules has to exist before the code that breaks
+  # them, not after the first race report from a user. ASan sees a
+  # use-after-free only on a run where the timing produced one, and Valgrind's
+  # memcheck does not look for races at all.
+  # ---------------------------------------------------------------------------
+  thread-sanitizer:
+    name: ThreadSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runtime-core
+
+      - uses: ./runtime-core/.github/actions/setup
+
+      - name: Tests under ThreadSanitizer
+        working-directory: runtime-core
+        run: make test-tsan -j"$(nproc)" PREFIX="$PREFIX"
+
+  # ---------------------------------------------------------------------------
+  # Valgrind finds what the sanitizers do not: uninitialised reads that happen
+  # to be harmless, and leaks in code the sanitizers' interceptors do not see.
+  # The -quiet variant is the one that treats a leak as a failure.
+  # ---------------------------------------------------------------------------
+  valgrind:
+    name: Valgrind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runtime-core
+
+      - uses: ./runtime-core/.github/actions/setup
+        with:
+          packages: valgrind
+
+      - name: Build
+        working-directory: runtime-core
+        run: make -j"$(nproc)" PREFIX="$PREFIX"
+
+      - name: Tests under Valgrind
+        working-directory: runtime-core
+        run: make test-valgrind-quiet PREFIX="$PREFIX"
+
+  # ---------------------------------------------------------------------------
+  # A floor, so that coverage can only be argued upward. Raise it when the
+  # number rises; do not lower it to make a branch pass.
+  #
+  # The scaffold is small and fully covered, so the floor of 80 has a great deal
+  # of slack today. It is a ratchet, not a target: the report counts every line
+  # of src/, including platform branches a Linux runner cannot execute, so the
+  # number will not stay at 100 as contexts and frames arrive.
+  # ---------------------------------------------------------------------------
+  coverage:
+    name: Coverage floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runtime-core
+
+      - uses: ./runtime-core/.github/actions/setup
+
+      - name: Line coverage
+        working-directory: runtime-core
+        run: make coverage -j"$(nproc)" COVERAGE_MIN=80 PREFIX="$PREFIX"
+
+  # ---------------------------------------------------------------------------
+  # Windows, natively, under MSYS2.
+  #
+  # This job exists so that the Windows arms are built and run, not guessed
+  # at: every other job here is ubuntu-latest, so nothing else would stop a
+  # commit from breaking the port silently. runtime-core owns the platform
+  # mechanisms for wait/wake and for scanning the stack and registers
+  # (spine, Stack), and those are `_WIN32` branches of exactly the kind that
+  # rot unbuilt. The scaffold has none of them yet; the job is here first so
+  # that the first one lands on a runner that already works.
+  #
+  # Notes on the shape, each of which is a thing that does not work otherwise:
+  #
+  # - `shell: msys2 {0}` on every step. The default shell on a Windows runner
+  #   is PowerShell, and these recipes are POSIX shell.
+  # - MSYS `make` and `diffutils`, not the MinGW ones. The recipes are POSIX
+  #   shell, and every flag stamp uses `cmp`; without diffutils `cmp` is absent
+  #   and the stamps never compare equal, so everything rebuilds every time.
+  # - `binutils` comes with the gcc package; check-edges reads a DLL's imports
+  #   with `objdump -p`, since there is no readelf-style NEEDED list on PE.
+  # - `pkgconf` from the MINGW64 prefix rather than MSYS's own pkg-config,
+  #   which cannot see MINGW64's .pc files - gtest included.
+  # - PREFIX converted with `cygpath`. github.workspace is a Windows path
+  #   (D:\a\...), and make, pkg-config and the recipes all want a POSIX one, so
+  #   it is converted once here rather than in each recipe.
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows (MSYS2 MINGW64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runtime-core
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            diffutils
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-gtest
+
+      - name: Resolve the prefix as a POSIX path
+        run: |
+          prefix="$(cygpath -u '${{ github.workspace }}')/.local"
+          echo "PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$prefix/share/pkgconfig" >> "$GITHUB_ENV"
+
+      # Unpinned, for the same reason the Linux setup action leaves it
+      # unpinned: a library is expected to build against its dependency's tip.
+      - uses: actions/checkout@v4
+        with:
+          repository: Ghoti-io/CUtil
+          path: cutil
+
+      - name: Build and install cutil
+        working-directory: cutil
+        run: |
+          make -j"$(nproc)" PREFIX="$PREFIX"
+          make install PREFIX="$PREFIX"
+
+      - name: Build
+        working-directory: runtime-core
+        run: make -j"$(nproc)" PREFIX="$PREFIX"
+
+      - name: Symbol namespace gate
+        working-directory: runtime-core
+        run: make check-symbols PREFIX="$PREFIX"
+
+      - name: Tests
+        working-directory: runtime-core
+        run: make test -j"$(nproc)" PREFIX="$PREFIX"
+
+      - name: Examples
+        working-directory: runtime-core
+        run: make examples PREFIX="$PREFIX"
+
+      # The same argument as on Linux: the tests reach the library through
+      # include/ and an archive, a consumer reaches it through pkg-config, the
+      # installed headers and the DLL. On Windows the DLL also has to be found
+      # at run time, which is a different mechanism from an rpath and so is
+      # worth exercising here specifically.
+      - name: Install
+        working-directory: runtime-core
+        run: make install PREFIX="$PREFIX"
+
+      - name: A consumer can use what was installed
+        working-directory: runtime-core
+        run: tools/check-install.sh "$PREFIX"
