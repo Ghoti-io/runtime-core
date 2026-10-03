@@ -1,6 +1,7 @@
 # Design
 
-**Status:** In progress. Describes the scaffold that exists; the rest is
+**Status:** In progress. Describes what exists (the scaffold and B's first
+half: groups, contexts, options, keys and memory accounting); the rest is
 design, taken from the runtime stack's architecture spine (AD-1 to AD-26).
 
 ## What this library is
@@ -82,20 +83,102 @@ program threw" and "the runtime's invariant failed" one result, and a host
 that must tell them apart could not. The departure is recorded in
 CONVENTIONS.md section 13.
 
+## B, part 1: groups, contexts, options, keys, accounting
+
+The first half of B is the object a host holds and the rules about who may
+touch it. It has no `run`, no poll and no requests yet; those attach to it in
+later stories, which is why the lifecycle's internal transition function
+exists now and is tested exhaustively.
+
+**Groups and contexts.** A context belongs to one group from creation (AD-7)
+and a group refuses to be destroyed while it has contexts. The count is
+atomic because contexts of one group are created and destroyed on different
+threads. A group takes a base allocator and page provider and frees with
+them; the group and each context own counting wrappers over that same base
+allocator and provider. Destroying a group needs quiescence: no context of it
+may be created or destroyed concurrently.
+
+**Options, not `_Limits`.** The four budgets (fuel, memory bytes, guest depth,
+native depth) are set through an opaque options object (AD-13). An unset
+budget is `GRCORE_UNLIMITED`, the largest `uint64_t`, so that no real budget
+can be mistaken for it. Creating a context deep-copies the options, so
+changing them afterwards cannot change a context that exists. Nothing is
+enforced yet; the story that enforces a budget also decides what it charges.
+
+**Rejected: a `_Limits` struct.** A field added to a struct breaks every
+caller that built one. The spine reserves `_Limits` for parsers and
+validators, whose limits are inputs to a pure function.
+
+**Keys.** A key is a static object, identified by its address, carrying a
+cardinality, a phase and a destructor (AD-19). A context stores
+`(key, value)` pairs in registration order and knows nothing about what they
+are (AD-1). A NULL value is refused, so a NULL lookup always means absent.
+Teardown runs destructors in reverse registration order, so that a later
+registrant, which may depend on an earlier one, is released first (AD-20).
+Lookup is a linear scan: a context holds a handful of registrations, and the
+scan beats a hash on that size and needs no extra allocation.
+
+**Lifecycle.** The four public states hide a fifth configuration: "parked"
+means either not inside `run`, or inside a host call bracketed by park and
+unpark, and only the first can migrate (AD-20). The context stores the five
+configurations; the public state folds the two parked ones. There are exactly
+eight legal edges, held in one table behind one checked function, which the
+tests walk over all 25 pairs.
+
+**Ownership.** One owning thread at a time (AD-6): the creator, until
+`release`. The owner is an atomic word; `release` stores zero with release
+ordering and `acquire` compare-and-swaps with acquire ordering. Everything
+else about a context is plain data guarded by that protocol, so a hand-off
+using only those two calls is race-free and ThreadSanitizer checks it (the
+test writes a plain variable on one side and reads it on the other).
+
+**Rejected: a mutex per context.** A context is single-threaded by design, so
+a lock would protect nothing the ownership protocol does not, would cost on
+every access and would hide a violated protocol instead of refusing it.
+
+**Rejected: an ownership token the caller holds** (a handle passed to every
+call). It would make a thread's identity something the host must carry and
+could forge or lose. The thread id is assigned lazily from a global atomic
+counter on a thread's first call, so it needs no platform thread API and is
+never reused: a thread that exits while owning a context leaves it owned by an
+id no later thread can take. A host should release or destroy a context before
+its thread ends. A paused context the host abandons can still be destroyed by
+its owner.
+
+**Accounting.** B does all memory accounting (AD-20). A meter is three atomic
+counters: bytes in use, the high-water mark, and live blocks. A counting
+allocator wraps a base allocator, and a counting page provider wraps a base
+page provider; each charges one meter. A group has one pair, and each context
+has its own, so services and engines that allocate through the context's
+allocator are metered exactly. The allocator prefixes each block with a header
+the size of `max_align_t` that records its size; a page mapping counts as one
+block. A base allocation that fails changes no counter. The context's own
+struct and its registration table come from the base allocator uncharged: they
+are the runtime's, not the guest's. Context-independent code is charged to
+the group (AD-13); how a context's usage rolls up into its group's is the
+nested-budget story's decision.
+
+**Page provider.** `runtime-heap` and `runtime-jit` obtain pages only through
+the provider the context hands them (AD-13), so their memory is counted
+without either library knowing how. The default is anonymous `mmap`,
+zero-filled and read-write. A size that is zero or not a page multiple returns
+NULL. Changing protection (needed for JIT, never writable and executable at
+once) is not in this interface yet.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This
-one holds only a calibration case, fixed integer work that touches no library
+one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on. No budgets are recorded: the spine records them once a first
-measurement of a real case exists, and the poll, the frame walk and request
-posting are the first cases to add.
+was taken on, and three real cases: creating and destroying a context, a
+counting malloc/free pair, and a keyed slot lookup. No budgets are recorded:
+the spine records them once a first measurement of a real case exists, and
+the poll, the frame walk and request posting are the next cases to add.
 
 ## Continuous integration
 
 `core` gets compress-style CI from the start (AD-16): both compilers,
 ASan+UBSan, ThreadSanitizer, Valgrind, the gates and their self-test, a
-coverage floor of 80, and MSYS2 on Windows. ThreadSanitizer has little to find
-in a scaffold with no threads. It is here before the threaded code because
-the rules it will check (requests as the one cross-thread operation, contexts
-migrating between threads) are the design.
+coverage floor of 80, and MSYS2 on Windows. ThreadSanitizer now checks the
+ownership hand-off between threads; the requests that are the one
+cross-thread operation come later.

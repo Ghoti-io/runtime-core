@@ -8,9 +8,11 @@ records and root sources). Engines such as `lang-tang` push frames through A;
 services such as the heap and the debugger attach to B; hosts create contexts
 and run them. This library knows no engine and no service.
 
-Nothing is released. This is the scaffold: the build, the version, the result
-vocabulary, the allocator, and the gates and benchmark harness that the
-contexts and frames will be built under. Contexts and frames come next.
+Nothing is released. So far there is the scaffold (the build, the version, the
+result vocabulary, the allocator, and the gates and benchmark harness) and the
+first half of B: groups, contexts, options, keys, the lifecycle and ownership
+rules, and memory accounting. Requests, the poll, `run` and the frames come
+next.
 
 ## Example
 
@@ -77,7 +79,29 @@ Today the API is the basics: `GRCORE_Result` (the suite's vocabulary plus
 `GRCORE_ERR_GUEST`, for guest code that ended in an uncaught exception or a
 trap), `grcore_result_string`, `grcore_version_string`,
 `grcore_version_number`, and `GRCORE_Allocator` (cutil's allocator under a
-local name).
+local name), and, in `b/`:
+
+| Header | Holds |
+| --- | --- |
+| `b/group.h` | `GRCORE_Group`: created by the host, owns the allocator and page provider its contexts draw on; refuses to be destroyed while it has contexts |
+| `b/context.h` | `GRCORE_Context`: four states (parked, running, at-poll, paused), one owning thread, `acquire`/`release` to migrate, keyed registration, a counting allocator and page provider, memory getters |
+| `b/options.h` | `GRCORE_Options`: opaque, set through setters; four budgets that are `GRCORE_UNLIMITED` until set, plus keyed byte options |
+| `b/key.h` | `GRCORE_Key`: a static object with a cardinality, a phase and a destructor; identity is its address |
+| `b/page.h` | `GRCORE_PageProvider`: the pages `runtime-heap` and `runtime-jit` will ask for |
+
+```c
+GRCORE_Group * group;
+GRCORE_Context * context;
+grcore_group_create(NULL, NULL, &group);
+grcore_context_create(group, NULL, &context);   /* parked, owned by this thread */
+/* ... register keyed state, hand the context to a worker with release/acquire ... */
+grcore_context_destroy(context);                /* destructors in reverse order */
+grcore_group_destroy(group);
+```
+
+A context is used by its owning thread only. Hand it over with
+`grcore_context_release` (allowed only when it is parked outside `run`, or
+paused) and `grcore_context_acquire` on the other thread.
 
 ## Status
 

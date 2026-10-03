@@ -24,14 +24,14 @@
  * The benchmark harness (AD-26).
  *
  * Every library ships one from its first commit, so that "performant" is a
- * claim with a way to check it. This one holds no benchmark of the runtime
- * yet, because the runtime has nothing to measure: contexts, polls and frame
- * walks arrive in later stories, and each brings its case here.
+ * claim with a way to check it. Besides the calibration case it holds the
+ * first cases of the runtime: creating and destroying a context, a counting
+ * malloc/free pair, and a keyed slot lookup. Polls and frame walks arrive in
+ * later stories, and each brings its case here.
  *
- * What it does hold is the calibration case. That is a fixed amount of
- * integer work that touches no library code, run the same way every real case
- * will be, so a figure from a real case can be read against the machine it
- * was taken on: a poll that costs 3 ns means one thing next to a calibration
+ * The calibration case is a fixed amount of integer work that touches no
+ * library code, run the same way every real case will be, so a figure from a
+ * real case can be read against the machine it was taken on: a poll that costs 3 ns means one thing next to a calibration
  * of 1 ns per step and another next to 6. A budget recorded without the
  * calibration beside it cannot be compared across hosts or compilers.
  *
@@ -65,6 +65,13 @@ typedef struct {
   uint64_t smoke_iterations; /* per repeat, --smoke */
 } Case;
 
+/* A case that cannot set itself up must not report a short, fast run as a
+ * measurement. */
+static _Noreturn void setup_failed(const char * what) {
+  fprintf(stderr, "bench: setup failed: %s\n", what);
+  abort();
+}
+
 static double now_ns(void) {
   struct timespec ts;
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
@@ -86,8 +93,97 @@ static uint64_t calibration_run(uint64_t iterations) {
   return x;
 }
 
+/* Create and destroy a context in a group: the cost of a context that does
+ * nothing, which is the floor under every request a host serves. */
+static uint64_t context_create_destroy_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK) {
+    setup_failed("group create");
+  }
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRCORE_Context * context;
+    if (grcore_context_create(group, NULL, &context) != GRCORE_OK) {
+      setup_failed("context create");
+    }
+    sink += grcore_group_context_count(group);
+    if (grcore_context_destroy(context) != GRCORE_OK) {
+      setup_failed("context destroy");
+    }
+  }
+  grcore_group_destroy(group);
+  return sink;
+}
+
+/* A counting malloc and free pair: the price of the exact meter over a plain
+ * allocation. Sizes vary so the allocator cannot settle on one free list. */
+static uint64_t counting_malloc_free_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK) {
+    setup_failed("group create");
+  }
+  if (grcore_context_create(group, NULL, &context) != GRCORE_OK) {
+    setup_failed("context create");
+  }
+  const GRCORE_Allocator * a = grcore_context_allocator(context);
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    void * p = a->malloc_fn(a->ctx, 16u + (size_t)(i & 63u) * 8u);
+    if (p == NULL) {
+      setup_failed("malloc");
+    }
+    sink += grcore_context_memory_blocks(context);
+    a->free_fn(a->ctx, p);
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
+static const GRCORE_Key bench_keys[8] = {
+    {"k0", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+    {"k1", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+    {"k2", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+    {"k3", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+    {"k4", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+    {"k5", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+    {"k6", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+    {"k7", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL},
+};
+
+/* A keyed slot lookup with eight registrations, asking for the last: the
+ * worst case of the linear table that a service pays on a cold path. */
+static uint64_t keyed_lookup_run(uint64_t iterations) {
+  static int values[8];
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK) {
+    setup_failed("group create");
+  }
+  if (grcore_context_create(group, NULL, &context) != GRCORE_OK) {
+    setup_failed("context create");
+  }
+  for (int k = 0; k < 8; k++) {
+    if (grcore_context_register(context, &bench_keys[k], &values[k]) !=
+        GRCORE_OK) {
+      setup_failed("register");
+    }
+  }
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    sink += (uint64_t)(uintptr_t)grcore_context_slot(context, &bench_keys[7]);
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
+    {"ctx-create", context_create_destroy_run, 1000u * 1000u, 1000u},
+    {"count-malloc", counting_malloc_free_run, 20u * 1000u * 1000u, 10000u},
+    {"keyed-lookup", keyed_lookup_run, 100u * 1000u * 1000u, 100000u},
 };
 
 #define REPEATS 7

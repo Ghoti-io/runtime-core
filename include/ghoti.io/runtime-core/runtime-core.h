@@ -30,7 +30,8 @@
  * basics never include A. This is the only header that includes both, which
  * is why it sits at the top and is exempt from the direction gate.
  *
- * Neither layer has a header yet; they land with the contexts and frames.
+ * B has the first half of its headers (`b/`: groups, contexts, options, keys
+ * and the page provider, with memory accounting behind them); A has none yet.
  */
 
 #ifndef GHOTI_IO_GRCORE_RUNTIME_CORE_H
@@ -41,5 +42,11 @@
 #include <ghoti.io/runtime-core/allocator.h>
 #include <ghoti.io/runtime-core/core.h>
 #include <ghoti.io/runtime-core/libver.h>
+
+#include <ghoti.io/runtime-core/b/context.h>
+#include <ghoti.io/runtime-core/b/group.h>
+#include <ghoti.io/runtime-core/b/key.h>
+#include <ghoti.io/runtime-core/b/options.h>
+#include <ghoti.io/runtime-core/b/page.h>
 
 #endif /* GHOTI_IO_GRCORE_RUNTIME_CORE_H */
