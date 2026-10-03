@@ -131,6 +131,7 @@ typedef struct {
   int pushed;
   unsigned step;
   uint64_t total;
+  GRCORE_Result failure; /* why a push stopped the guest, if one did */
 } Toy;
 
 static GRCORE_Step toy_entry(GRCORE_Context * context, void * state) {
@@ -141,8 +142,9 @@ static GRCORE_Step toy_entry(GRCORE_Context * context, void * state) {
      * where it called from, so a walk can say where it is. */
     for (uint64_t function = 1; function <= 3; function++) {
       GRCORE_FrameRef frame;
-      if (grcore_stack_push(stack, toy->engine, 2, &frame) != GRCORE_OK) {
-        return GRCORE_STEP_UNWOUND;
+      toy->failure = grcore_stack_push(stack, toy->engine, 2, &frame);
+      if (toy->failure != GRCORE_OK) {
+        return GRCORE_STEP_FINISHED; /* the host reads `failure` */
       }
       grcore_stack_slot_set(stack, frame, 0, function * 10);
       if (function < 3) {
@@ -186,12 +188,13 @@ int main(void) {
   CHECK(grcore_context_create(group, options, &context) == GRCORE_OK);
   grcore_options_destroy(options);
 
-  Toy toy = {0, 0, 0, 0};
+  Toy toy = {0, 0, 0, 0, GRCORE_OK};
   CHECK(grcore_engine_register(context, &toy_engine, &toy.engine) == GRCORE_OK);
 
   GRCORE_Outcome outcome;
   CHECK(grcore_run(context, toy_entry, &toy, &outcome) == GRCORE_OK);
   CHECK(outcome == GRCORE_OUTCOME_PAUSED);
+  CHECK(toy.failure == GRCORE_OK);
 
   GRCORE_Location where = grcore_context_pause_location(context);
   printf("paused at %s:%d\n", where.file, where.line);
@@ -255,6 +258,7 @@ int main(void) {
   CHECK(grcore_context_set_fuel(context, GRCORE_UNLIMITED) == GRCORE_OK);
   CHECK(grcore_resume(context, &outcome) == GRCORE_OK);
   CHECK(outcome == GRCORE_OUTCOME_FINISHED);
+  CHECK(toy.failure == GRCORE_OK);
   CHECK(toy.total == 190); /* 0 + 1 + ... + 19 */
   CHECK(grcore_stack_frame_count(grcore_context_stack(context)) == 0);
   printf("finished: total %llu\n", (unsigned long long)toy.total);

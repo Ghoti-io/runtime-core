@@ -35,8 +35,10 @@
  * Reading is two-tier. The engine that owns the running context uses the
  * stack accessors in stack.h, in any state. Every other consumer uses the
  * walk, which is refused unless the context is at-poll or paused and the
- * caller holds it (AD-20). The accessors here repeat that check, so an
- * abstract frame kept past a resume cannot be read through.
+ * caller holds it (AD-20). The accessors here repeat that check, but an
+ * abstract frame is valid only until the context next runs: after that its
+ * results are unspecified (the context may be readable again, paused
+ * somewhere else, and the frame may name something else or nothing).
  */
 
 #ifndef GHOTI_IO_GRCORE_A_FRAME_H

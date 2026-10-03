@@ -48,7 +48,11 @@
  * counting allocator, so it is charged to the context.
  *
  * Threads: a stack is its context's, and every function that changes it or
- * reads a slot must be called by the context's owner. Reading from outside
+ * reads a slot must be called by the context's owner. The header readers
+ * (::grcore_stack_slot_count, ::grcore_stack_identity, ::grcore_stack_engine,
+ * ::grcore_stack_caller, ::grcore_stack_frame_valid) do not check, and are for
+ * the owner or the holder of an at-poll or paused context, never a concurrent
+ * thread. Reading from outside
  * `run` goes through the frame walk in frame.h, which also checks the state.
  */
 

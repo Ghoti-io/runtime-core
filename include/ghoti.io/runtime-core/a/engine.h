@@ -184,14 +184,19 @@ typedef struct GRCORE_EngineDescriptor {
  *   already be registered with this context.
  * @param out_id Receives the engine's id, from 1. Written only on success.
  * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, an unnamed
- *   or already registered descriptor, a non-owner or a wrong state; or
- *   ::GRCORE_ERR_OOM. A refusal leaves the engine table unchanged.
+ *   or already registered descriptor, a non-owner or a wrong state;
+ *   ::GRCORE_ERR_LIMIT if the context's memory budget refuses the allocation;
+ *   or ::GRCORE_ERR_OOM for any other allocation failure. A refusal leaves the engine table unchanged.
  */
 GRCORE_API GRCORE_Result grcore_engine_register(GRCORE_Context * context,
     const GRCORE_EngineDescriptor * descriptor, GRCORE_EngineId * out_id);
 
 /**
  * @brief The descriptor registered under `id`.
+ *
+ * Like ::grcore_engine_count, this reads the context's engine table and is for
+ * the owner, or the holder of an at-poll or paused context; not for a
+ * concurrent thread.
  *
  * @param context The context.
  * @param id An id returned by ::grcore_engine_register.
@@ -202,6 +207,9 @@ GRCORE_API const GRCORE_EngineDescriptor * grcore_engine_descriptor(
 
 /**
  * @brief How many engines the context has registered.
+ *
+ * For the owner, or the holder of an at-poll or paused context; not for a
+ * concurrent thread.
  *
  * @param context The context.
  * @return The count; zero for NULL.

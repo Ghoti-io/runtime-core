@@ -311,7 +311,7 @@ was.
 A call from guest code to guest code pushes a frame, so an interpreter never
 recurses in C to make it, and a pause is just a return: the whole position is
 data on the stack. A frame is a 40-byte header (the caller's offset, the poll
-identity, the engine id, the slot count, a tag) followed by 64-bit slots. A
+identity, the frame size, the engine id, the slot count, a tag) followed by 64-bit slots. A
 consumer holds a `GRCORE_FrameRef`, an offset, never an address, because the
 stack grows by allocating a bigger buffer, copying and freeing the old one.
 `grcore_stack_slots` hands out an address anyway, for an interpreter's inner
@@ -364,13 +364,13 @@ debugger, the collector, the frame-level differential and the recorder all read
 one thing. Reading is two-tier: the engine that owns the running context uses
 the stack accessors in any state; every other consumer uses the walk, which is
 refused unless the context is at-poll or paused and the caller holds it. The
-accessors repeat the check, so an abstract frame kept past a resume cannot be
-read through.
+accessors repeat the check, but an abstract frame is valid only until the
+context next runs; after that, results are unspecified.
 
 **The poll names where it is (AD-18).** `grcore_stack_poll(context, function,
 offset)` records the identity in the top frame and polls. The descriptor's
 `locate` is called only when a request is pending, so the fast path is
-`grcore_poll`'s own load and branch plus a stack lookup and two stores. With no
+`grcore_poll`'s own load and branch plus a keyed lookup and two stores. With no
 frame it polls as `grcore_poll` does, with the location `{NULL, 0}` and no
 identity. An engine records the call-site identity on a caller's frame with
 `grcore_stack_set_identity` before it pushes the callee, so a walk can say where

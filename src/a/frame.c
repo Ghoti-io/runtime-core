@@ -129,7 +129,7 @@ GRCORE_Result grcore_frame_scope(const GRCORE_AbstractFrame * frame,
       frame->descriptor->scopes.scope == NULL) {
     return GRCORE_ERR_INVALID;
   }
-  GRCORE_ScopeInfo info;
+  GRCORE_ScopeInfo info = {GRCORE_SCOPE_LOCAL, NULL, 0};
   GRCORE_Result r = frame->descriptor->scopes.scope(frame, index, &info);
   if (r == GRCORE_OK) {
     *out_scope = info;
@@ -139,14 +139,14 @@ GRCORE_Result grcore_frame_scope(const GRCORE_AbstractFrame * frame,
 
 GRCORE_Result grcore_frame_variable(const GRCORE_AbstractFrame * frame,
     size_t scope, size_t index, GRCORE_Variable * out_variable) {
-  GRCORE_ScopeInfo info;
+  GRCORE_ScopeInfo info = {GRCORE_SCOPE_LOCAL, NULL, 0};
   if (out_variable == NULL ||
       grcore_frame_scope(frame, scope, &info) != GRCORE_OK ||
       index >= info.variable_count ||
       frame->descriptor->scopes.variable == NULL) {
     return GRCORE_ERR_INVALID;
   }
-  GRCORE_Variable variable;
+  GRCORE_Variable variable = {NULL, GRCORE_SLOT_RAW, 0};
   GRCORE_Result r =
       frame->descriptor->scopes.variable(frame, scope, index, &variable);
   if (r == GRCORE_OK) {

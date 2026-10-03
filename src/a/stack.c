@@ -318,10 +318,14 @@ GRCORE_Verdict grcore_stack_poll(
     return grcore_poll(context, (GRCORE_Location){NULL, 0});
   }
   /* The identity is recorded on every poll, so the frame always says where
-   * the engine last polled; two stores. */
+   * the engine last polled. */
   GRCORE_FrameRef top = {stack->top};
-  GRCORE_PollIdentity identity = {function, offset};
-  grcore_stack_set_identity(stack, top, identity);
+  /* `top` is a live frame (the stack maintains it), so the words go straight
+   * in without the validation the public setter does. */
+  memcpy(stack->buffer + stack->top + offsetof(GRCORE_FrameHeader, function),
+      &function, sizeof function);
+  memcpy(stack->buffer + stack->top + offsetof(GRCORE_FrameHeader, offset),
+      &offset, sizeof offset);
   /* The fast path is grcore_poll's own: one load, nothing else, so the
    * descriptor's `locate` is not called unless a request is pending. */
   if (__builtin_expect(

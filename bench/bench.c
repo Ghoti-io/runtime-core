@@ -344,7 +344,7 @@ static uint64_t stack_push_pop_run(uint64_t iterations) {
 }
 
 /* The poll that records an identity: nothing pending, one frame, so it is
- * grcore_poll's fast path plus the lookup of the stack and two stores. */
+ * grcore_poll's fast path plus a keyed lookup and two stores. */
 static GRCORE_Step stack_poll_entry(GRCORE_Context * context, void * state) {
   PollLoop * loop = state;
   GRCORE_FrameRef frame;

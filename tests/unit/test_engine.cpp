@@ -182,6 +182,18 @@ TEST(Engine, EveryAllocationFailureOfRegisterIsOomAndLeaksNothing) {
   EXPECT_GE(failures, 3);
 }
 
+TEST(Engine, RegisterUnderATinyMemoryBudgetIsALimitAndLeavesTheTableUnchanged) {
+  RunWorld w(GRCORE_UNLIMITED, 16, 0);
+  GRCORE_EngineId id = 8;
+  uint64_t refusals = grcore_context_memory_refusals(w.ctx);
+  EXPECT_EQ(grcore_engine_register(w.ctx, &kAlpha, &id), GRCORE_ERR_LIMIT);
+  EXPECT_GT(grcore_context_memory_refusals(w.ctx), refusals);
+  EXPECT_EQ(id, 8u);
+  EXPECT_EQ(grcore_engine_count(w.ctx), 0u);
+  EXPECT_EQ(grcore_context_stack(w.ctx), nullptr);
+  EXPECT_EQ(grcore_context_memory_blocks(w.ctx), 0u);
+}
+
 TEST(Engine, AFailedSecondRegistrationLeavesTheFirstWorking) {
   TrackingAllocator t;
   RunWorld w(GRCORE_UNLIMITED, GRCORE_UNLIMITED, GRCORE_DEFAULT_MEMORY_RESERVE,

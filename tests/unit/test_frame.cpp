@@ -330,6 +330,32 @@ TEST(FrameScopes, OutOfRangeScopesAndVariablesAreRefusedAndWriteNothing) {
   EXPECT_EQ(v.value, 77u);
 }
 
+TEST(FrameWalk, AnEngineThatDeclaresNothingReadsAsRawAndUnlocated) {
+  RunWorld w(0);
+  GRCORE_EngineId gamma;
+  ASSERT_EQ(grcore_engine_register(w.ctx, &kGamma, &gamma), GRCORE_OK);
+  Fn fn{[&](GRCORE_Context * c) {
+    GRCORE_FrameRef f;
+    grcore_stack_push(grcore_context_stack(c), gamma, 2, &f);
+    grcore_context_charge_fuel(c, 1);
+    return grcore_stack_poll(c, 4, 5) == GRCORE_VERDICT_PAUSE
+        ? GRCORE_STEP_PAUSED
+        : GRCORE_STEP_FINISHED;
+  }};
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
+  std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx);
+  ASSERT_EQ(frames.size(), 1u);
+  EXPECT_EQ(frames[0].location.file, nullptr);
+  EXPECT_EQ(frames[0].location.line, 0);
+  for (size_t i = 0; i < 2; i++) {
+    GRCORE_SlotKind kind = GRCORE_SLOT_VALUE;
+    ASSERT_EQ(grcore_frame_slot(&frames[0], i, &kind, nullptr), GRCORE_OK);
+    EXPECT_EQ(kind, GRCORE_SLOT_RAW);
+  }
+  EXPECT_EQ(grcore_frame_scope_count(&frames[0]), 0u);
+}
+
 TEST(FrameScopes, AnEngineRegisteredWithAnEmptyInterfaceHasNoScopes) {
   Paused w;
   std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx);

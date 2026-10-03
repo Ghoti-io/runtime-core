@@ -504,6 +504,13 @@ TEST(StackPoll, TheDescriptorIsNotAskedWhereAPollIsUnlessSomethingIsPending) {
       EXPECT_EQ(grcore_stack_poll(c, 1, static_cast<uint64_t>(i)),
           GRCORE_VERDICT_CONTINUE);
     }
+    // The identity is recorded even on the fast path.
+    GRCORE_PollIdentity id = {0, 0};
+    EXPECT_EQ(grcore_stack_identity(
+                  grcore_context_stack(c), grcore_stack_top(grcore_context_stack(c)), &id),
+        GRCORE_OK);
+    EXPECT_EQ(id.function, 1u);
+    EXPECT_EQ(id.offset, 999u);
     return GRCORE_STEP_FINISHED;
   }};
   GRCORE_Outcome outcome;
