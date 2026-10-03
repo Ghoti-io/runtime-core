@@ -29,7 +29,8 @@ TEST(Result, EveryCodeHasItsOwnString) {
 
 TEST(Result, OutOfRangeIsUnknownNotUndefined) {
   EXPECT_STREQ(grcore_result_string(GRCORE_RESULT_COUNT), "Unknown error");
-  EXPECT_STREQ(grcore_result_string(static_cast<GRCORE_Result>(-1)),
+  EXPECT_STREQ(grcore_result_string(
+                   static_cast<GRCORE_Result>(GRCORE_RESULT_COUNT + 1)),
       "Unknown error");
 }
 

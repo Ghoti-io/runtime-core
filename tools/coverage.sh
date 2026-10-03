@@ -49,7 +49,8 @@ awk -v min="${COVERAGE_MIN:-0}" '
 
   {
     # Each line is "<count>:<lineno>:<text>", where the count is a number, a
-    # dash for a non-executable line, or ##### for one never executed.
+    # dash for a non-executable line, or ##### (or ===== for an unexecuted
+    # exception-path block) for one never executed.
     c1 = index($0, ":")
     if (c1 == 0) next
     count = substr($0, 1, c1 - 1)
@@ -65,7 +66,7 @@ awk -v min="${COVERAGE_MIN:-0}" '
     # counts as executed if any instantiation reached it.
     key = src ":" lineno
     seen[key] = 1
-    if (count != "#####" && count != "$$$$$") {
+    if (count != "#####" && count != "$$$$$" && count != "=====") {
       hit[key] = 1
     } else if (!(key in hit)) {
       body[key] = text

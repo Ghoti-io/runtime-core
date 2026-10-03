@@ -1,11 +1,11 @@
 # Continuous integration for ghoti.io-runtime-core.
 #
 # Everything here is a target the Makefile already has, run the way the
-# project documents it (AD-16: core gets runtime-core-style CI from the start).
+# project documents it (AD-16: core gets compress-style CI from the start).
 # The point of the file is that they are all run, on every change, rather
 # than when somebody remembers.
 #
-# The layout follows ../runtime-core's workflow: the project is checked out into a
+# The layout follows ../compress's workflow: the project is checked out into a
 # subdirectory so that cutil can be checked out beside it rather than inside
 # it, and both are installed into one prefix in the workspace, exactly the way
 # ../bootstrap.sh does it locally. runtime-core depends on cutil and nothing
@@ -254,6 +254,7 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-gtest
+            mingw-w64-x86_64-python
 
       - name: Resolve the prefix as a POSIX path
         run: |

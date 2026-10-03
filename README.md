@@ -46,7 +46,7 @@ this library:
 
 | Target | Does |
 | --- | --- |
-| `test` | build, `check-symbols`, the four gates below, the unit tests, and one smoke run of the benchmark |
+| `test` | build, `check-symbols`, `check-aliasing` (gcc only), `check-stamps`, the gates below, the unit tests, and one smoke run of the benchmark |
 | `check-labels` | fail if a public header has no `@stability stable` or `free` label, or the wrong one for its directory |
 | `check-direction` | fail if a `b/` or top-level header includes an `a/` header (or the umbrella) |
 | `check-edges` | fail on any `#include` or shared-object dependency on a Ghoti library other than `cutil` |

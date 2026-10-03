@@ -446,7 +446,7 @@ ifeq ($(OS_NAME), Linux)
 		printf '### Exported symbols missing the $(LIBVER_SYMBOL)_ namespace ###\n%s\n' "$$leaked" >&2; \
 		exit 1; \
 	fi
-	@unexported=$$(find include -name '*.h' -exec awk '/^#if DOXYGEN/{d=1} d==0 && /^[a-z_][A-Za-z0-9_ ]*\**[[:space:]]*grcore_[a-z0-9_]+[[:space:]]*\(/{print FILENAME": "$$0} /^#endif/{d=0}' {} + \
+	@unexported=$$(find include -name '*.h' -exec awk '/^#if DOXYGEN/{d=1} d==0 && !/GRCORE_API/ && /^[A-Za-z_][A-Za-z0-9_ ]*\**[[:space:]]*grcore_[a-z0-9_]+[[:space:]]*\(/{print FILENAME": "$$0} /^#endif/{d=0}' {} + \
 		| grep -vE 'typedef|static inline' || true); \
 	if [ -n "$$unexported" ]; then \
 		printf '### Public declarations without GRCORE_API ###\n%s\n' "$$unexported" >&2; \
@@ -765,7 +765,7 @@ endif
 uninstall: ## Delete the installed files
 ifeq ($(OS_NAME), Linux)
 	@rm -f $(LIB_INSTALL_PATH)/$(SUITE)/$(BASE_NAME)*
-	@rm -f $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf
+	@if [ -n "$(LDCONF_INSTALL_PATH)" ]; then rm -f $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf; fi
 endif
 ifeq ($(OS_NAME), Windows)
 	@rm -f $(LIB_INSTALL_PATH)/$(SUITE)/$(TARGET).a

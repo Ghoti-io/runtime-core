@@ -8,7 +8,8 @@
 # that is what an umbrella is.
 #
 # What counts as "including A": a path through a/, and also the umbrella
-# itself, which pulls A in by the back door. An include of runtime-core.h from
+# itself, which pulls A in by the back door (also by a relative path:
+# "../runtime-core.h" from b/, "runtime-core.h" from the top level). An include of runtime-core.h from
 # b/ would pass a check that only looked for "a/".
 #
 # Usage: check-direction.sh <root>
@@ -40,7 +41,7 @@ for h in $subjects; do
   count=$((count + 1))
   # file:line:text for every include that reaches A. Four spellings: the
   # installed path, the umbrella, and the two relative forms.
-  hits="$(grep -nE '^[[:space:]]*#[[:space:]]*include[[:space:]]*([<"](ghoti\.io/)?runtime-core/(a/|runtime-core\.h)|"(\.\.?/)*a/)' "$h" || true)"
+  hits="$(grep -nE '^[[:space:]]*#[[:space:]]*include[[:space:]]*([<"](ghoti\.io/)?runtime-core/(a/|runtime-core\.h)|"(\.\.?/)*(a/|runtime-core\.h))' "$h" || true)"
   if [ -n "$hits" ]; then
     printf '%s\n' "$hits" | while IFS= read -r line; do
       n="${line%%:*}"

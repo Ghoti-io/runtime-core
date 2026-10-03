@@ -79,6 +79,10 @@ expect_fail 'labels/planted-wrong-directory' 'a/frame.h is labelled stable' \
 expect_fail 'labels/planted-bogus' '"experimental"' "$L" "$FIX/labels/planted-bogus"
 expect_fail 'labels/planted-prose-only' 'top.h has no @stability' \
   "$L" "$FIX/labels/planted-prose-only"
+expect_fail 'labels/planted-b-free' 'b/ctx.h is labelled free' \
+  "$L" "$FIX/labels/planted-b-free"
+expect_fail 'labels/planted-two-labels' 'more than one @stability' \
+  "$L" "$FIX/labels/planted-two-labels"
 expect_fail 'labels/empty' 'measuring nothing' "$L" "$work/empty"
 
 printf 'check-direction\n'
@@ -92,6 +96,10 @@ expect_fail 'direction/planted-b-includes-umbrella' 'b/ctx.h:' \
   "$D" "$FIX/direction/planted-b-includes-umbrella"
 expect_fail 'direction/planted-b-includes-a-relative' 'b/ctx.h:' \
   "$D" "$FIX/direction/planted-b-includes-a-relative"
+expect_fail 'direction/planted-b-includes-umbrella-relative' 'b/ctx.h:' \
+  "$D" "$FIX/direction/planted-b-includes-umbrella-relative"
+expect_fail 'direction/planted-top-includes-umbrella-relative' 'top.h:' \
+  "$D" "$FIX/direction/planted-top-includes-umbrella-relative"
 expect_fail 'direction/empty' 'measuring nothing' "$D" "$work/empty"
 
 printf 'check-edges --includes\n'
@@ -116,7 +124,7 @@ case "$(uname -s)" in
   *) SHEXT=so; SHFLAGS="-shared -fPIC" ;;
 esac
 stubs="$work/stubs"
-mkdir -p "$stubs" "$work/planted" "$work/control"
+mkdir -p "$stubs" "$work/planted" "$work/control" "$work/dev"
 printf 'int stub_heap(void) { return 1; }\n' > "$work/heap.c"
 printf 'int stub_cutil(void) { return 2; }\n' > "$work/cutil.c"
 printf 'int stub_heap(void);\nint planted(void) { return stub_heap(); }\n' \
@@ -131,6 +139,9 @@ built=1
   $CC $SHFLAGS -o "$stubs/libghoti.io-cutil-0.$SHEXT" "$work/cutil.c" &&
   $CC $SHFLAGS -o "$work/planted/libplanted.$SHEXT" "$work/planted.c" \
     -L"$stubs" -Wl,--no-as-needed -l:libghoti.io-runtime-heap-0.$SHEXT &&
+  $CC $SHFLAGS -o "$stubs/libghoti.io-cutil-dev.$SHEXT" "$work/cutil.c" &&
+  $CC $SHFLAGS -o "$work/dev/libdev.$SHEXT" "$work/control.c" \
+    -L"$stubs" -Wl,--no-as-needed -l:libghoti.io-cutil-dev.$SHEXT &&
   $CC $SHFLAGS -o "$work/control/libcontrol.$SHEXT" "$work/control.c" \
     -L"$stubs" -Wl,--no-as-needed -l:libghoti.io-cutil-0.$SHEXT
 } >"$work/build.log" 2>&1 || built=0
@@ -139,6 +150,7 @@ if [ "$built" -eq 0 ]; then
 $(cat "$work/build.log")"
 else
   expect_pass 'links/control' "$E" --links "$work/control"
+  expect_pass 'links/cutil with a BRANCH suffix (-dev)' "$E" --links "$work/dev"
   expect_fail 'links/planted-heap' 'runtime-core -> runtime-heap' \
     "$E" --links "$work/planted"
   expect_fail 'links/planted-heap names the object' 'libplanted' \

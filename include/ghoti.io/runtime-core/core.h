@@ -77,8 +77,9 @@ GRCORE_API const char * grcore_result_string(GRCORE_Result result);
 /**
  * @brief This build's version, as the string the Makefile generated.
  *
- * @return A static string, never NULL.  "0.0.0", or "0.0.0-dev" when BRANCH
- *   was overridden.
+ * @return A static string, never NULL.  "0.0.0", "0.0.0-dev" when BRANCH
+ *   was overridden, and with "-debug" appended for a BUILD=debug build
+ *   ("0.0.0-debug", "0.0.0-dev-debug").
  */
 GRCORE_API const char * grcore_version_string(void);
 

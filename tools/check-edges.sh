@@ -113,7 +113,10 @@ HITS
             # libghoti.io-runtime-core-0.so.0 -> runtime-core.
             lib="$(printf '%s\n' "$lib" \
               | sed -E 's/(-[0-9]+)?(-debug)?(\.so.*|\.dll.*|\.dylib.*)$//')"
-            if ! printf '%s\n' "$lib" | grep -qE "^($ALLOWED)\$"; then
+            # Exactly an allowed name, or one followed by a BRANCH suffix
+            # (cutil-dev, cutil-0-debug); never a different library that
+            # merely starts with one.
+            if ! printf '%s\n' "$lib" | grep -qE "^($ALLOWED)(-.*)?\$"; then
               printf 'check-edges: forbidden edge runtime-core -> %s: %s has NEEDED %s\n' \
                 "$lib" "$so" "$dep" >&2
               status=1
