@@ -9,10 +9,12 @@ services such as the heap and the debugger attach to B; hosts create contexts
 and run them. This library knows no engine and no service.
 
 Nothing is released. So far there is the scaffold (the build, the version, the
-result vocabulary, the allocator, and the gates and benchmark harness) and the
-all of B: groups, contexts, options, keys, the lifecycle and ownership rules,
+result vocabulary, the allocator, and the gates and benchmark harness), all of
+B: groups, contexts, options, keys, the lifecycle and ownership rules,
 memory accounting, requests and ports, the four-phase poll, `run` and `resume`,
-and the budgets. The frames (A) come next.
+and the budgets; and the first half of A: the guest stack, engine descriptors,
+the abstract frame, the frame walk and scopes. Activation records, root sources
+and the unwinder come next.
 
 ## Example
 
@@ -80,7 +82,7 @@ Today the API is the basics: `GRCORE_Result` (the suite's vocabulary plus
 `GRCORE_ERR_GUEST`, for guest code that ended in an uncaught exception or a
 trap), `grcore_result_string`, `grcore_version_string`,
 `grcore_version_number`, and `GRCORE_Allocator` (cutil's allocator under a
-local name), and, in `b/`:
+local name), and, in `b/` and `a/`:
 
 | Header | Holds |
 | --- | --- |
@@ -93,6 +95,9 @@ local name), and, in `b/`:
 | `b/poll.h` | `grcore_poll`, the runtime poll for natives, the four phases and their verdicts, and the phase-shuffle test mode |
 | `b/run.h` | `grcore_run`, `grcore_resume`, `grcore_context_wait`, and the pause's keys, location and unwind reason |
 | `b/budget.h` | fuel, memory (budget, reserve, refusals) and depth enforcement |
+| `a/engine.h` | `GRCORE_EngineDescriptor`: an engine's slot kinds, locator, inspector, scope interface and conservative decoder, registered per context; `free` |
+| `a/stack.h` | `GRCORE_Stack`: the context's guest stack of frames named by offset, growing by copy, with the depth budget counting frames; `grcore_stack_poll` records a poll identity; `free` |
+| `a/frame.h` | `GRCORE_AbstractFrame` and the frame walk: the one way any consumer reads a frame, its slots and its scopes, in readable states only; `free` |
 
 ```c
 GRCORE_Group * group;
@@ -135,6 +140,18 @@ if (outcome == GRCORE_OUTCOME_PAUSED) {
    * grcore_context_pause_location(context) */
   grcore_context_set_fuel(context, GRCORE_UNLIMITED);
   grcore_resume(context, &outcome);
+}
+```
+
+A paused guest's frames are read the same way whatever engine pushed them:
+
+```c
+GRCORE_FrameWalk walk;
+GRCORE_AbstractFrame frame;
+grcore_frame_walk_begin(context, &walk);        /* at-poll or paused, held */
+while (grcore_frame_walk_next(&walk, &frame)) { /* innermost first */
+  /* frame.descriptor->name, frame.identity, frame.location, ... */
+  grcore_frame_slot(&frame, 0, &kind, &value);
 }
 ```
 

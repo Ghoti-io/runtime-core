@@ -13,6 +13,7 @@
 
 #include <ghoti.io/runtime-core/runtime-core.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <string>
@@ -231,5 +232,171 @@ inline const GRCORE_Key kObserveKey = {"observe", GRCORE_CARDINALITY_MANY,
     GRCORE_PHASE_OBSERVE, nullptr, probe_handler};
 inline const GRCORE_Key kYieldKey = {"yield", GRCORE_CARDINALITY_MANY,
     GRCORE_PHASE_YIELD, nullptr, probe_handler};
+
+/* ---- Engines and frames ----------------------------------------------- */
+
+/* Two engine-free engines, which is what A's tests need: something that
+ * declares slot kinds, a locator, an inspector and scopes, and a second one
+ * that declares them differently, so a test can tell a consumer that reads
+ * through the descriptor from one that guessed.
+ *
+ * "alpha": slot i is RAW for even i and VALUE for odd. A poll identity
+ * (f, o) is the line f * 1000 + o in "alpha.src". A value prints as "a#N".
+ * Every frame has two scopes: "locals" (a LOCAL scope with one variable per
+ * slot, v0, v1, ...) and "captured" (a CLOSURE scope with one variable, the
+ * frame's slot 0, as a VALUE).
+ *
+ * "beta": every slot is a VALUE. (f, o) is line o in "beta.wasm". A value
+ * prints as "b:HEX". No scopes. Its decoder takes bits 4..19 and adds 0x1000.
+ *
+ * "gamma": declares nothing but a name, so every default shows. */
+inline const char * const kAlphaFile = "alpha.src";
+inline const char * const kBetaFile = "beta.wasm";
+
+inline GRCORE_SlotKind alpha_slot_kind(
+    const GRCORE_AbstractFrame *, size_t index) {
+  return index % 2 == 0 ? GRCORE_SLOT_RAW : GRCORE_SLOT_VALUE;
+}
+inline GRCORE_Location alpha_locate(
+    const GRCORE_Context *, uint64_t function, uint64_t offset) {
+  return GRCORE_Location{kAlphaFile, static_cast<int>(function * 1000 + offset)};
+}
+inline size_t alpha_inspect(const GRCORE_Context *, GRCORE_SlotKind,
+    uint64_t value, char * buffer, size_t size) {
+  int n = std::snprintf(buffer, size, "a#%llu",
+      static_cast<unsigned long long>(value));
+  return static_cast<size_t>(n);
+}
+inline size_t alpha_scope_count(const GRCORE_AbstractFrame *) { return 2; }
+inline const char * const kAlphaVarNames[] = {
+    "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7"};
+inline GRCORE_Result alpha_scope(const GRCORE_AbstractFrame * frame,
+    size_t index, GRCORE_ScopeInfo * out) {
+  if (index == 0) {
+    *out = GRCORE_ScopeInfo{GRCORE_SCOPE_LOCAL, "locals", frame->slot_count};
+    return GRCORE_OK;
+  }
+  if (index == 1) {
+    *out = GRCORE_ScopeInfo{GRCORE_SCOPE_CLOSURE, "captured", 1};
+    return GRCORE_OK;
+  }
+  return GRCORE_ERR_INVALID;
+}
+inline GRCORE_Result alpha_variable(const GRCORE_AbstractFrame * frame,
+    size_t scope, size_t index, GRCORE_Variable * out) {
+  GRCORE_Stack * stack = grcore_context_stack(frame->context);
+  uint64_t value;
+  if (scope == 0 && index < frame->slot_count && index < 8) {
+    if (grcore_stack_slot_get(stack, frame->frame, index, &value) != GRCORE_OK) {
+      return GRCORE_ERR_INVALID;
+    }
+    *out = GRCORE_Variable{kAlphaVarNames[index],
+        alpha_slot_kind(frame, index), value};
+    return GRCORE_OK;
+  }
+  if (scope == 1 && index == 0) {
+    if (grcore_stack_slot_get(stack, frame->frame, 0, &value) != GRCORE_OK) {
+      return GRCORE_ERR_INVALID;
+    }
+    *out = GRCORE_Variable{"captured0", GRCORE_SLOT_VALUE, value};
+    return GRCORE_OK;
+  }
+  return GRCORE_ERR_INVALID;
+}
+inline const GRCORE_EngineDescriptor kAlpha = {"alpha", alpha_slot_kind,
+    alpha_locate, alpha_inspect,
+    GRCORE_ScopeInterface{alpha_scope_count, alpha_scope, alpha_variable},
+    GRCORE_ConservativeDecoder{0, 0, 0}};
+
+inline GRCORE_SlotKind beta_slot_kind(
+    const GRCORE_AbstractFrame *, size_t) {
+  return GRCORE_SLOT_VALUE;
+}
+inline GRCORE_Location beta_locate(
+    const GRCORE_Context *, uint64_t, uint64_t offset) {
+  return GRCORE_Location{kBetaFile, static_cast<int>(offset)};
+}
+inline size_t beta_inspect(const GRCORE_Context *, GRCORE_SlotKind,
+    uint64_t value, char * buffer, size_t size) {
+  int n = std::snprintf(buffer, size, "b:%llx",
+      static_cast<unsigned long long>(value));
+  return static_cast<size_t>(n);
+}
+inline const GRCORE_EngineDescriptor kBeta = {"beta", beta_slot_kind,
+    beta_locate, beta_inspect, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
+    GRCORE_ConservativeDecoder{0xFFFF0, 4, 0x1000}};
+
+inline const GRCORE_EngineDescriptor kGamma = {"gamma", nullptr, nullptr,
+    nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
+    GRCORE_ConservativeDecoder{0, 0, 0}};
+
+/* A RunWorld with the two engines registered. */
+struct StackWorld : RunWorld {
+  GRCORE_EngineId alpha = 0;
+  GRCORE_EngineId beta = 0;
+  GRCORE_Stack * stack = nullptr;
+  explicit StackWorld(uint64_t fuel = GRCORE_UNLIMITED,
+      uint64_t memory = GRCORE_UNLIMITED,
+      uint64_t reserve = GRCORE_DEFAULT_MEMORY_RESERVE,
+      uint64_t guest_depth = GRCORE_UNLIMITED,
+      const GRCORE_Allocator * allocator = nullptr)
+      : RunWorld(fuel, memory, reserve, guest_depth, GRCORE_UNLIMITED,
+            allocator) {
+    EXPECT_EQ(grcore_engine_register(ctx, &kAlpha, &alpha), GRCORE_OK);
+    EXPECT_EQ(grcore_engine_register(ctx, &kBeta, &beta), GRCORE_OK);
+    stack = grcore_context_stack(ctx);
+  }
+};
+
+/* An engine-free guest whose position lives entirely on the guest stack. It
+ * pushes `n` alpha frames, slot 0 of frame i holding i, charging one unit of
+ * fuel and polling (function 1, offset = the frame count) after each push;
+ * then it pops them all, summing slot 0, charging and polling after each pop.
+ * A pause drops every C frame, and the entry picks up from the stack plus one
+ * flag (which half it is in), so `sum` is the same however often it is paused or whichever thread resumes it.
+ */
+struct FrameGuest {
+  uint64_t n = 10;
+  GRCORE_EngineId engine = 0;
+  uint64_t sum = 0;
+  GRCORE_Result failure = GRCORE_OK; // why a push stopped it, if one did
+  bool popping = false;              // the one thing besides the stack it keeps
+};
+inline GRCORE_Step frame_guest_entry(GRCORE_Context * c, void * state) {
+  auto * g = static_cast<FrameGuest *>(state);
+  GRCORE_Stack * stack = grcore_context_stack(c);
+  while (!g->popping && grcore_stack_frame_count(stack) < g->n) {
+    GRCORE_FrameRef f;
+    g->failure = grcore_stack_push(stack, g->engine, 2, &f);
+    if (g->failure != GRCORE_OK) {
+      return GRCORE_STEP_FINISHED; // the guest gives up; the host reads why
+    }
+    grcore_stack_slot_set(stack, f, 0, grcore_stack_frame_count(stack));
+    grcore_context_charge_fuel(c, 1);
+    GRCORE_Verdict v = grcore_stack_poll(c, 1, grcore_stack_frame_count(stack));
+    if (v == GRCORE_VERDICT_PAUSE) {
+      return GRCORE_STEP_PAUSED;
+    }
+    if (v == GRCORE_VERDICT_UNWIND) {
+      return GRCORE_STEP_UNWOUND;
+    }
+  }
+  g->popping = true;
+  while (grcore_stack_frame_count(stack) > 0) {
+    uint64_t value = 0;
+    grcore_stack_slot_get(stack, grcore_stack_top(stack), 0, &value);
+    g->sum += value;
+    grcore_stack_pop(stack);
+    grcore_context_charge_fuel(c, 1);
+    GRCORE_Verdict v = grcore_stack_poll(c, 2, grcore_stack_frame_count(stack));
+    if (v == GRCORE_VERDICT_PAUSE) {
+      return GRCORE_STEP_PAUSED;
+    }
+    if (v == GRCORE_VERDICT_UNWIND) {
+      return GRCORE_STEP_UNWOUND;
+    }
+  }
+  return GRCORE_STEP_FINISHED;
+}
 
 #endif /* GHOTI_IO_GRCORE_TEST_HELPERS_H */

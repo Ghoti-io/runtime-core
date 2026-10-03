@@ -32,7 +32,9 @@
  *
  * B is complete for now (`b/`: groups, contexts, options, keys, the page
  * provider with memory accounting behind them, requests and ports, the poll,
- * `run` and `resume`, and the budgets); A has none yet.
+ * `run` and `resume`, and the budgets). A has its first half (`a/`: engine
+ * descriptors, the guest stack, and the abstract frame with its walk and
+ * scopes); activation records, root sources and the unwinder come later.
  */
 
 #ifndef GHOTI_IO_GRCORE_RUNTIME_CORE_H
@@ -44,6 +46,9 @@
 #include <ghoti.io/runtime-core/core.h>
 #include <ghoti.io/runtime-core/libver.h>
 
+#include <ghoti.io/runtime-core/a/engine.h>
+#include <ghoti.io/runtime-core/a/frame.h>
+#include <ghoti.io/runtime-core/a/stack.h>
 #include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/group.h>

@@ -1,9 +1,11 @@
 # Design
 
-**Status:** In progress. Describes what exists (the scaffold and all of B:
+**Status:** In progress. Describes what exists (the scaffold, all of B:
 groups, contexts, options, keys, memory accounting, requests and ports, the
-poll, `run` and `resume`, and the budgets); the rest (A) is design, taken from
-the runtime stack's architecture spine (AD-1 to AD-26).
+poll, `run` and `resume`, and the budgets; and the first half of A: the guest
+stack, engine descriptors, the abstract frame, the frame walk and scopes); the
+rest of A (activation records, root sources, the unwinder) is design, taken
+from the runtime stack's architecture spine (AD-1 to AD-26).
 
 ## What this library is
 
@@ -295,16 +297,119 @@ compile with `-Wextra` flags the omission. The key is still a public
 fixed-layout struct that callers define statically; making it an accessor-built
 object is deferred until before the first release.
 
+## A, part 1: the guest stack, engine descriptors, the abstract frame and scopes
+
+The first half of A adds three headers under `a/` (`engine.h`, `stack.h` and
+`frame.h`), all labelled `free`: a consumer requires the exact version it was
+built against (AD-14). They may include `b/` and the top-level headers, and
+nothing in `b/` includes them; only the umbrella does. Before this a paused
+context had nowhere to keep its position, no consumer could read a frame
+without knowing the engine, and a poll could not say where in the guest it
+was.
+
+**The guest stack is a byte buffer of frames, named by offsets (AD-8, AD-17).**
+A call from guest code to guest code pushes a frame, so an interpreter never
+recurses in C to make it, and a pause is just a return: the whole position is
+data on the stack. A frame is a 40-byte header (the caller's offset, the poll
+identity, the engine id, the slot count, a tag) followed by 64-bit slots. A
+consumer holds a `GRCORE_FrameRef`, an offset, never an address, because the
+stack grows by allocating a bigger buffer, copying and freeing the old one.
+`grcore_stack_slots` hands out an address anyway, for an interpreter's inner
+loop, and the header says in one sentence when it dies: at the next push, pop,
+reserve or poll, each of which is a GC point. The interface is opaque
+(`GRCORE_Stack`, `GRCORE_FrameRef`, accessors), so a per-context native stack
+segment (option (c), reserved by AD-8) can later sit behind the same calls.
+
+Growth copies instead of calling `realloc` on purpose. `realloc` may extend in
+place, in which case a bug that holds a slot address across a push would pass
+every test and fail in production the first time the allocator moves the
+block. A copy always allocates the new buffer before freeing the old one, so a
+move always changes the address, and `grcore_stack_set_always_move` makes
+every push a move so that a test does not have to wait for growth to find the
+bug. A tag in each header, derived from the frame's offset, makes a
+reference that was never a frame (a stale offset, a number someone typed, the
+middle of a slot) fail the check with high probability. It is a guard against
+accidents, not against a hostile caller, and the header says so.
+
+**The stack is per-context state registered by key (AD-1, AD-19).** The first
+`grcore_engine_register` creates it and registers it under a cardinality-one
+key of A's whose destructor frees it, so B created a context without knowing A
+exists and B's headers do not include A's. It is created at engine
+registration because registration is refused while the context is running, and
+the stack must exist before the first push. Everything is allocated through
+the context's counting allocator, so it is charged to the context: a growth
+the memory budget refuses returns `ERR_LIMIT`, any other refusal `ERR_OOM`,
+and in both the stack and the depth are as they were. A push enters the
+guest-depth budget and a pop leaves it, so the depth limit counts frames, as
+ctang's does (AD-16, AD-21). The stack migrates with the context, so a context
+paused with frames can be released on one thread and resumed on another, and
+the migration test checks the output against an uninterrupted run.
+
+**An engine descriptor says what a frame means (AD-18).** Every frame header
+names its engine, and the engine registered one static descriptor: its name,
+the kind of each slot (`RAW`, or an engine `VALUE`), a locator that names a
+poll identity as a source location, an inspector that prints a value, a scope
+interface, and a conservative decoder (mask, shift, base) for its value
+encoding. A callback that is NULL means the engine has nothing to say, and the
+reader falls back (hexadecimal for an uninspected value). Fields that later
+stories need (root enumeration, unwinding, deoptimization) are trailing: C
+zero-fills a descriptor written before they existed. They are not in the struct
+yet because a field with no reader is a promise nobody has tested.
+
+**One abstract frame, one walk (AD-18, AD-20).** `grcore_frame_walk_*` yields
+a `GRCORE_AbstractFrame`: context, engine, descriptor, poll identity, the
+location the descriptor gives that identity, slot count and depth. Slots,
+scopes and variables are read through accessors that ask the descriptor, so the
+debugger, the collector, the frame-level differential and the recorder all read
+one thing. Reading is two-tier: the engine that owns the running context uses
+the stack accessors in any state; every other consumer uses the walk, which is
+refused unless the context is at-poll or paused and the caller holds it. The
+accessors repeat the check, so an abstract frame kept past a resume cannot be
+read through.
+
+**The poll names where it is (AD-18).** `grcore_stack_poll(context, function,
+offset)` records the identity in the top frame and polls. The descriptor's
+`locate` is called only when a request is pending, so the fast path is
+`grcore_poll`'s own load and branch plus a stack lookup and two stores. With no
+frame it polls as `grcore_poll` does, with the location `{NULL, 0}` and no
+identity. An engine records the call-site identity on a caller's frame with
+`grcore_stack_set_identity` before it pushes the callee, so a walk can say where
+each outer frame is.
+
+Alternatives considered and rejected:
+
+- **Frame pointers instead of offsets.** A pointer into a buffer that grows is
+  a dangling pointer in waiting, and AD-17 forbids raw pointers across a GC
+  point. Offsets are the only link that survives a copy, and they leave option
+  (c) open.
+- **`realloc` for growth.** See above: it hides the very bug the offsets exist
+  to prevent.
+- **One descriptor callback per consumer** (one for the collector, one for the
+  debugger, one for the differential). It would make the descriptor grow with
+  every consumer. One abstract frame with a few reads serves all of them, and a
+  new consumer needs no new callback.
+- **Engine-specific frame readers.** Then every consumer would know every
+  engine, which is the coupling AD-18 exists to prevent: the second engine
+  would have to be taught to each of them.
+- **The stack as a field of the context.** B would have to name A's type, and
+  B's headers would include A's. A keyed slot costs a linear lookup on a cold
+  path and keeps the direction one way, which the direction gate enforces.
+- **A heap-allocated frame per call.** An allocation per call, a free per
+  return, a pointer per link, and frames scattered where a walk and a copy
+  would have to chase them. A contiguous buffer is cache-friendly, is freed
+  with one call, and is what a native segment would also be.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and six real cases: creating and destroying a context, a
+was taken on, and nine real cases: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
-poll's slow path through one handler in each phase, and a post to a port. No
-budgets are recorded: the spine records them once a first measurement of a
-real case exists. The frame walk is the next case to add.
+poll's slow path through one handler in each phase, a post to a port, a push
+and pop of a guest frame, the engine-aware poll's fast path, and a walk of
+sixteen frames at a pause (reported per frame read). No budgets are recorded:
+the spine records them once a first measurement of a real case exists.
 
 ## Continuous integration
 

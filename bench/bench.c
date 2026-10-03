@@ -27,8 +27,8 @@
  * claim with a way to check it. Besides the calibration case it holds the
  * cases of the runtime: creating and destroying a context, a counting
  * malloc/free pair, a keyed slot lookup, the poll's fast path, its slow path
- * through four handlers, and a post to a port. Frame walks arrive in a later
- * story and bring their case here.
+ * through four handlers, a post to a port, a push and pop of a guest frame,
+ * the engine-aware poll's fast path, and a walk of sixteen frames at a pause.
  *
  * The calibration case is a fixed amount of integer work that touches no
  * library code, run the same way every real case will be, so a figure from a
@@ -297,6 +297,150 @@ static uint64_t port_post_run(uint64_t iterations) {
   return sink;
 }
 
+/* A static engine for the frame cases. It names nothing and reads nothing, so
+ * what is measured is the stack and the walk, not a descriptor. */
+static GRCORE_Location bench_locate(
+    const GRCORE_Context * context, uint64_t function, uint64_t offset) {
+  (void)context;
+  (void)function;
+  (void)offset;
+  GRCORE_Location where = {"bench", 1};
+  return where;
+}
+
+static const GRCORE_EngineDescriptor bench_engine = {"bench", NULL,
+    bench_locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}};
+
+/* A push and the matching pop of a four-slot frame on a warm stack: the price
+ * of a guest call's bookkeeping, depth budget included. */
+static uint64_t stack_push_pop_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK) {
+    setup_failed("group create");
+  }
+  if (grcore_context_create(group, NULL, &context) != GRCORE_OK) {
+    setup_failed("context create");
+  }
+  if (grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK) {
+    setup_failed("engine register");
+  }
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRCORE_FrameRef frame;
+    if (grcore_stack_push(stack, engine, 4, &frame) != GRCORE_OK) {
+      setup_failed("push");
+    }
+    sink += frame.offset;
+    if (grcore_stack_pop(stack) != GRCORE_OK) {
+      setup_failed("pop");
+    }
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
+/* The poll that records an identity: nothing pending, one frame, so it is
+ * grcore_poll's fast path plus the lookup of the stack and two stores. */
+static GRCORE_Step stack_poll_entry(GRCORE_Context * context, void * state) {
+  PollLoop * loop = state;
+  GRCORE_FrameRef frame;
+  if (grcore_stack_push(grcore_context_stack(context), 1, 1, &frame) !=
+      GRCORE_OK) {
+    setup_failed("push");
+  }
+  for (uint64_t i = 0; i < loop->iterations; i++) {
+    loop->sink += (uint64_t)grcore_stack_poll(context, 1, i);
+  }
+  return GRCORE_STEP_FINISHED;
+}
+
+static uint64_t stack_poll_fast_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK) {
+    setup_failed("group create");
+  }
+  if (grcore_context_create(group, NULL, &context) != GRCORE_OK) {
+    setup_failed("context create");
+  }
+  if (grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK ||
+      engine != 1) {
+    setup_failed("engine register");
+  }
+  PollLoop loop = {iterations, 0};
+  GRCORE_Outcome outcome;
+  if (grcore_run(context, stack_poll_entry, &loop, &outcome) != GRCORE_OK ||
+      outcome != GRCORE_OUTCOME_FINISHED) {
+    setup_failed("run");
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return loop.sink;
+}
+
+#define WALK_FRAMES 16u
+
+/* Sixteen frames, paused on fuel, then repeated walks of all of them reading
+ * every frame's location: the cost a debugger or a collector pays per pause.
+ * An iteration is one frame read, so the figure is per frame. */
+static GRCORE_Step walk_entry(GRCORE_Context * context, void * state) {
+  (void)state;
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  for (unsigned i = 0; i < WALK_FRAMES; i++) {
+    GRCORE_FrameRef frame;
+    if (grcore_stack_push(stack, 1, 2, &frame) != GRCORE_OK) {
+      setup_failed("push");
+    }
+  }
+  grcore_context_charge_fuel(context, 1);
+  return grcore_stack_poll(context, 1, 1) == GRCORE_VERDICT_PAUSE
+      ? GRCORE_STEP_PAUSED
+      : GRCORE_STEP_FINISHED;
+}
+
+static uint64_t frame_walk_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_Options * options;
+  GRCORE_EngineId engine;
+  if (grcore_options_create(NULL, &options) != GRCORE_OK ||
+      grcore_options_set_fuel(options, 0) != GRCORE_OK ||
+      grcore_group_create(NULL, NULL, &group) != GRCORE_OK ||
+      grcore_context_create(group, options, &context) != GRCORE_OK) {
+    setup_failed("setup");
+  }
+  grcore_options_destroy(options);
+  if (grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK) {
+    setup_failed("engine register");
+  }
+  GRCORE_Outcome outcome;
+  if (grcore_run(context, walk_entry, NULL, &outcome) != GRCORE_OK ||
+      outcome != GRCORE_OUTCOME_PAUSED) {
+    setup_failed("run");
+  }
+  uint64_t sink = 0;
+  uint64_t frames = 0;
+  while (frames < iterations) {
+    GRCORE_FrameWalk walk;
+    GRCORE_AbstractFrame frame;
+    if (grcore_frame_walk_begin(context, &walk) != GRCORE_OK) {
+      setup_failed("walk begin");
+    }
+    while (grcore_frame_walk_next(&walk, &frame)) {
+      sink += (uint64_t)frame.location.line + frame.depth;
+      frames++;
+    }
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"ctx-create", context_create_destroy_run, 1000u * 1000u, 1000u},
@@ -305,6 +449,9 @@ static const Case cases[] = {
     {"poll-fast", poll_fast_run, 200u * 1000u * 1000u, 100000u},
     {"poll-slow-4", poll_slow_run, 5u * 1000u * 1000u, 10000u},
     {"port-post", port_post_run, 10u * 1000u * 1000u, 10000u},
+    {"stack-pushpop", stack_push_pop_run, 50u * 1000u * 1000u, 100000u},
+    {"stack-poll", stack_poll_fast_run, 200u * 1000u * 1000u, 100000u},
+    {"frame-walk", frame_walk_run, 20u * 1000u * 1000u, 10000u},
 };
 
 #define REPEATS 7

@@ -25,6 +25,18 @@ TEST(Umbrella, ReachesTheResultVersionAndAllocatorDeclarations) {
   EXPECT_NE(grcore_allocator_default(), nullptr);
 }
 
+TEST(Umbrella, ReachesTheThreeAHeaders) {
+  // One symbol from each of engine.h, stack.h and frame.h, through the
+  // umbrella alone.
+  GRCORE_ConservativeDecoder d = {0xF0, 4, 1};
+  uint64_t address = 0;
+  ASSERT_TRUE(grcore_decoder_decode(&d, 0x30, &address));
+  EXPECT_EQ(address, 4u);
+  EXPECT_EQ(grcore_stack_frame_count(nullptr), 0u);
+  GRCORE_FrameWalk walk;
+  EXPECT_EQ(grcore_frame_walk_begin(nullptr, &walk), GRCORE_ERR_INVALID);
+}
+
 TEST(Umbrella, HeadersHaveExternCLinkageSoCppCanLinkTheSymbols) {
   /* A C++ translation unit that declared these without extern "C" would fail
    * to link; reaching this line at all is the check. */
@@ -35,7 +47,11 @@ TEST(Umbrella, EveryTypeRenameIsInEffectNotInsideAComment) {
   const char * renamed[] = {GRCORE_TEST_EXPAND(GRCORE_Allocator),
       GRCORE_TEST_EXPAND(GRCORE_Context), GRCORE_TEST_EXPAND(GRCORE_Port),
       GRCORE_TEST_EXPAND(GRCORE_PollCall), GRCORE_TEST_EXPAND(GRCORE_Verdict),
-      GRCORE_TEST_EXPAND(GRCORE_Location), GRCORE_TEST_EXPAND(GRCORE_Outcome)};
+      GRCORE_TEST_EXPAND(GRCORE_Location), GRCORE_TEST_EXPAND(GRCORE_Outcome),
+      GRCORE_TEST_EXPAND(GRCORE_Stack), GRCORE_TEST_EXPAND(GRCORE_FrameRef),
+      GRCORE_TEST_EXPAND(GRCORE_AbstractFrame),
+      GRCORE_TEST_EXPAND(GRCORE_EngineDescriptor),
+      GRCORE_TEST_EXPAND(GRCORE_PollIdentity)};
   for (const char * r : renamed) {
     EXPECT_NE(std::string(r).find("ghotiio_"), std::string::npos) << r;
   }
