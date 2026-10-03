@@ -42,6 +42,7 @@
 /// @cond HIDDEN_SYMBOLS
 
 /* Public types, and the private ones an internal header may name through a
+ * struct tag. GCU_* names are cutil's; cutil has already renamed them. */
 #define GRCORE_Allocator GHOTIIO_RUNTIME_CORE(GRCORE_Allocator)
 #define GRCORE_Cardinality GHOTIIO_RUNTIME_CORE(GRCORE_Cardinality)
 #define GRCORE_Context GHOTIIO_RUNTIME_CORE(GRCORE_Context)
@@ -67,7 +68,6 @@
 #define GRCORE_Step GHOTIIO_RUNTIME_CORE(GRCORE_Step)
 #define GRCORE_Verdict GHOTIIO_RUNTIME_CORE(GRCORE_Verdict)
 #define GRCORE_Vote GHOTIIO_RUNTIME_CORE(GRCORE_Vote)
- * struct tag. GCU_* names are cutil's; cutil has already renamed them. */
 
 /* Public functions, and the private ones the static archive carries. */
 #define grcore_allocator_default GHOTIIO_RUNTIME_CORE(grcore_allocator_default)

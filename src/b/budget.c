@@ -53,6 +53,7 @@ void grcore_context_refresh_derived(GRCORE_Context * context) {
   if (memory_over(context)) {
     __atomic_fetch_or(&context->request_word, MEMORY_BIT, __ATOMIC_RELEASE);
   } else {
+    context->reclaim_tried = false;
     __atomic_fetch_and(&context->request_word, ~MEMORY_BIT, __ATOMIC_ACQ_REL);
   }
 }

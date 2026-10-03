@@ -417,6 +417,15 @@ TEST(Wait, TimeoutReturnsNotWokenAndRunning) {
     EXPECT_EQ(grcore_context_wait(c, 5u * 1000u * 1000u, &woken), GRCORE_OK);
     auto took = std::chrono::steady_clock::now() - start;
     EXPECT_GE(took, std::chrono::milliseconds(4));
+    EXPECT_LT(took, std::chrono::seconds(2));
+    // 999999999 ns forces the carry from nanoseconds into seconds.
+    start = std::chrono::steady_clock::now();
+    bool again = true;
+    EXPECT_EQ(grcore_context_wait(c, 999999999u, &again), GRCORE_OK);
+    took = std::chrono::steady_clock::now() - start;
+    EXPECT_FALSE(again);
+    EXPECT_GE(took, std::chrono::milliseconds(900));
+    EXPECT_LT(took, std::chrono::seconds(2));
     during = grcore_context_state(c);
     return GRCORE_STEP_FINISHED;
   }};
@@ -424,6 +433,25 @@ TEST(Wait, TimeoutReturnsNotWokenAndRunning) {
   ASSERT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
   EXPECT_FALSE(woken);
   EXPECT_EQ(during, GRCORE_CONTEXT_RUNNING);
+}
+
+TEST(Wait, AStaleDerivedBitDoesNotEndTheWait) {
+  RunWorld w(GRCORE_UNLIMITED, 1000, 500);
+  const GRCORE_Allocator * a = grcore_context_allocator(w.ctx);
+  void * big = a->malloc_fn(a->ctx, 1200); // memory request raised
+  grcore_context_charge_fuel(w.ctx, 1);
+  ASSERT_EQ(grcore_context_set_fuel(w.ctx, 0), GRCORE_OK); // fuel raised
+  ASSERT_EQ(grcore_context_set_fuel(w.ctx, GRCORE_UNLIMITED), GRCORE_OK);
+  a->free_fn(a->ctx, big); // bit now stale: nothing refreshed it
+  EXPECT_NE(__atomic_load_n(&w.ctx->request_word, __ATOMIC_ACQUIRE), 0u);
+  bool woken = true;
+  Fn fn{[&](GRCORE_Context * c) {
+    EXPECT_EQ(grcore_context_wait(c, 5u * 1000u * 1000u, &woken), GRCORE_OK);
+    return GRCORE_STEP_FINISHED;
+  }};
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
+  EXPECT_FALSE(woken);
 }
 
 TEST(Wait, ReturnsAtOnceWhenARequestIsAlreadyPending) {

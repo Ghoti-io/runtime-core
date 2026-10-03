@@ -135,7 +135,6 @@ GRCORE_Result grcore_context_create(GRCORE_Group * group,
     return GRCORE_ERR_OOM;
   }
   scratch_install(c, &scratch, 0);
-  c->group = group;
   grcore_meter_init(&c->meter);
   grcore_counting_init(&c->counting, &c->meter, a, group->pages);
   c->counting.request_word = &c->request_word;

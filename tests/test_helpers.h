@@ -131,7 +131,7 @@ struct CountingGuest {
   uint64_t pos = 0;
   uint64_t sum = 0;
 };
-/* Where the poll in counting_entry is. kCountingPollLine is two lines above
+/* Where the poll in counting_entry is. kCountingPollLine is five lines above
  * the call; keep them together. */
 inline const char * const kCountingPollFile = __FILE__;
 inline const int kCountingPollLine = __LINE__ + 5;

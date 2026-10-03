@@ -87,14 +87,15 @@ typedef struct GRCORE_Port GRCORE_Port;
  *
  * Each call defines a new kind, numbered from ::GRCORE_REQUEST_FIRST_KEYED in
  * order. `key` need not be registered anywhere. The number of kinds is bounded
- * by memory alone.
+ * by memory and by the 32-bit numbering.
  *
  * @param context The context. The caller must own it, and it must not be
  *   running or being destroyed.
  * @param key The key the kind is attributed to.
  * @param out_kind Receives the kind. Written only on success.
- * @return ::GRCORE_OK, ::GRCORE_ERR_INVALID (nothing changes) or
- *   ::GRCORE_ERR_OOM (likewise).
+ * @return ::GRCORE_OK, ::GRCORE_ERR_INVALID (nothing changes),
+ *   ::GRCORE_ERR_OOM (likewise), or ::GRCORE_ERR_LIMIT (likewise) at the
+ *   ceiling of the 32-bit kind numbering.
  */
 GRCORE_API GRCORE_Result grcore_context_request_kind(GRCORE_Context * context,
     const GRCORE_Key * key, GRCORE_RequestKind * out_kind);

@@ -628,6 +628,40 @@ TEST(Poll, TheRuntimePollRefusesAPauseAndUnwindsWithALimitError) {
   EXPECT_EQ(grcore_context_fuel_used(w.ctx), 6u);
 }
 
+TEST(Poll, TheRuntimePollFromANonOwnerWritesNothing) {
+  RunWorld w(100);
+  GRCORE_Result got = GRCORE_OK;
+  std::thread([&] { got = grcore_runtime_poll(w.ctx, 50, GRCORE_HERE); }).join();
+  EXPECT_EQ(got, GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_context_fuel_used(w.ctx), 0u);
+}
+
+TEST(PollMemory, BudgetChangesThatClearTheBitAlsoClearTheReclaimMark) {
+  RunWorld w(GRCORE_UNLIMITED, 1000, 500);
+  const GRCORE_Allocator * a = grcore_context_allocator(w.ctx);
+  void * big = a->malloc_fn(a->ctx, 1200);
+  ASSERT_NE(big, nullptr);
+  CountingGuest g;
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, counting_entry, &g, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  ASSERT_TRUE(w.ctx->reclaim_tried);
+  ASSERT_EQ(grcore_context_set_memory_bytes(w.ctx, 2000), GRCORE_OK);
+  EXPECT_FALSE(w.ctx->reclaim_tried);
+  // A later overage gets its reclaim chance again.
+  ASSERT_EQ(grcore_context_set_memory_bytes(w.ctx, 1000), GRCORE_OK);
+  std::vector<bool> reclaim;
+  Probe act{"act"};
+  act.extra = [&](GRCORE_Context *, GRCORE_PollCall * c) {
+    reclaim.push_back(grcore_pollcall_reclaim_requested(c));
+  };
+  ASSERT_EQ(grcore_context_register(w.ctx, &kActKey, &act), GRCORE_OK);
+  ASSERT_EQ(grcore_resume(w.ctx, &outcome), GRCORE_OK);
+  ASSERT_FALSE(reclaim.empty());
+  EXPECT_TRUE(reclaim[0]);
+  a->free_fn(a->ctx, big);
+}
+
 TEST(Poll, TheRuntimePollChargesWorkAndContinuesWhileThereIsFuel) {
   RunWorld w(100);
   std::vector<GRCORE_Result> got;

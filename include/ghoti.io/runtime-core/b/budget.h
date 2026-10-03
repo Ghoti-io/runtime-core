@@ -98,7 +98,7 @@ GRCORE_API uint64_t grcore_context_fuel_limit(const GRCORE_Context * context);
  *   some amount buys exactly that much more.
  *
  * @param context The context. The caller must own it, and it must be parked
- *   outside `run`, at-poll or paused.
+ *   outside `run` (not in a host call), at-poll, or paused.
  * @param limit The new total, or ::GRCORE_UNLIMITED.
  * @return ::GRCORE_OK or ::GRCORE_ERR_INVALID (nothing changes).
  */
@@ -117,7 +117,7 @@ GRCORE_API uint64_t grcore_context_memory_limit(const GRCORE_Context * context);
  * @brief Sets the memory budget. The reserve stays what the options said.
  *
  * @param context The context. The caller must own it, and it must be parked
- *   outside `run`, at-poll or paused.
+ *   outside `run` (not in a host call), at-poll, or paused.
  * @param bytes The new budget, or ::GRCORE_UNLIMITED.
  * @return ::GRCORE_OK or ::GRCORE_ERR_INVALID (nothing changes).
  */
@@ -144,7 +144,8 @@ GRCORE_API uint64_t grcore_context_memory_refusals(
     const GRCORE_Context * context);
 
 /**
- * @brief Enters one level of depth.
+ * @brief Enters one level of depth. The depth budgets come from the options
+ *   only; there is no setter yet.
  *
  * @param context The context.
  * @param kind Which depth.

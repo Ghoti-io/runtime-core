@@ -231,6 +231,12 @@ TEST(Run, EveryWayAnEntryCanMisreportIsInternal) {
             GRCORE_POLL(c);
             return GRCORE_STEP_PAUSED;
           }},
+      {"finished after an unwind verdict",
+          [](GRCORE_Context * c) {
+            grcore_context_terminate(c);
+            GRCORE_POLL(c);
+            return GRCORE_STEP_FINISHED;
+          }},
       {"finished inside a host call",
           [](GRCORE_Context * c) {
             grcore_context_park(c);

@@ -328,7 +328,7 @@ GRCORE_Verdict grcore_poll(GRCORE_Context * context, GRCORE_Location location) {
 
 GRCORE_Result grcore_runtime_poll(
     GRCORE_Context * context, uint64_t work, GRCORE_Location location) {
-  if (context == NULL) {
+  if (context == NULL || !grcore_context_owned_by_caller(context)) {
     return GRCORE_ERR_INVALID;
   }
   grcore_context_charge_fuel(context, work);

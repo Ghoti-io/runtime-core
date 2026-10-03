@@ -63,7 +63,9 @@ static GRCORE_Result settle(
     GRCORE_Context * c, GRCORE_Step step, GRCORE_Outcome * out_outcome) {
   switch (step) {
     case GRCORE_STEP_FINISHED:
-      if (c->config != GRCORE_CONFIG_RUNNING) {
+      /* Finishing after an unwind verdict would swallow terminate. */
+      if (c->config != GRCORE_CONFIG_RUNNING ||
+          c->last_verdict == GRCORE_VERDICT_UNWIND) {
         return entry_lied(c);
       }
       end_run(c);
@@ -133,6 +135,13 @@ GRCORE_Result grcore_context_wait(
   GRCORE_Result r = grcore_context_port_ensure(context, &port);
   if (r != GRCORE_OK) {
     return r;
+  }
+  /* A derived bit left stale by a freed block or a raised budget would end
+   * the wait at once. */
+  grcore_context_refresh_derived(context);
+  if (__atomic_load_n(&context->request_word, __ATOMIC_ACQUIRE) != 0) {
+    *out_woken = true;
+    return GRCORE_OK;
   }
   grcore_context_park(context);
   bool woken = grcore_port_wait(port, context, timeout_ns);

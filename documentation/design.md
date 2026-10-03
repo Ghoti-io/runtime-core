@@ -169,8 +169,9 @@ once) is not in this interface yet.
 ## B, part 2: requests, the poll, `run`, budgets and migration
 
 The second half of B makes a context do something and lets the outside stop
-it. It adds six headers under `b/` (`request.h`, `poll.h`, `run.h`,
-`budget.h`, and the changes to `key.h` and `options.h`), all labelled `stable`.
+it. It adds four headers under `b/` (`request.h`, `poll.h`, `run.h` and
+`budget.h`), all labelled `stable`, and edits `key.h`, `options.h` and
+`group.h`.
 
 **Requests are the one cross-thread operation (AD-4).** Another thread never
 touches a context: it posts a *request kind* through a *port*. Five kinds are
