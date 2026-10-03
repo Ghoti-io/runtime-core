@@ -175,6 +175,8 @@ TEST(FuelScope, ExhaustedScopeUnwindsThroughTheFuelKeyAloneAndClosingItLetsRunFi
     EXPECT_EQ(grcore_context_fuel_scope_close(c, id), GRCORE_OK);
     unwinding_after = grcore_context_fuel_scope_unwinding(c);
     after_close = grcore_context_unwind_result(c);
+    EXPECT_EQ(grcore_context_pause_key_count(c), 0u);
+    EXPECT_EQ(grcore_context_pause_location(c).file, nullptr);
     return GRCORE_STEP_FINISHED;
   }};
   GRCORE_Outcome outcome = GRCORE_OUTCOME_PAUSED;
@@ -189,6 +191,9 @@ TEST(FuelScope, ExhaustedScopeUnwindsThroughTheFuelKeyAloneAndClosingItLetsRunFi
   EXPECT_EQ(grcore_context_fuel_used(w.ctx), 11u); // the ceiling counted it
   EXPECT_EQ(grcore_context_fuel_scope_depth(w.ctx), 0u);
   EXPECT_EQ(grcore_context_state(w.ctx), GRCORE_CONTEXT_PARKED);
+  // After the run too, the cleared unwind leaves no stale reason behind.
+  EXPECT_EQ(grcore_context_pause_key_count(w.ctx), 0u);
+  EXPECT_EQ(grcore_context_pause_location(w.ctx).file, nullptr);
 }
 
 TEST(FuelScope, ARunThatFinishesWithAScopedUnwindStillOpenIsAnEntryLie) {

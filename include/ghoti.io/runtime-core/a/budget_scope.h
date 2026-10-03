@@ -39,6 +39,12 @@
  * not left holding a terminal one. A scope that was *not* the cause (terminate,
  * or the ceiling) is not cleared, and the engine unwinds the whole run.
  *
+ * Closing or unwinding the scope that caused a scoped unwind ends that unwind,
+ * so a later ::GRCORE_STEP_UNWOUND from the entry reports
+ * ::GRCORE_ERR_INTERNAL: an engine that wants the run to end with the limit
+ * error must not close that scope. Engine hooks must not call these
+ * functions.
+ *
  * Threads: the context's owner.
  */
 

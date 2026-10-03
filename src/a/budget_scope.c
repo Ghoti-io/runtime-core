@@ -67,6 +67,12 @@ bool grcore_budget_scope_drop_top(GRCORE_Stack * stack) {
   }
   uint64_t id = stack->scopes[--stack->scope_count].id;
   GRCORE_Context * context = stack->context;
+  uint64_t held;
+  if (grcore_context_fuel_scope_used(context, id, &held) != GRCORE_OK) {
+    /* Already closed directly through B: close nothing else, or the loop
+     * below would take every enclosing scope with it. */
+    return true;
+  }
   /* A fuel scope opened straight through B inside this one is closed with it. */
   while (grcore_context_fuel_scope_depth(context) > 0 &&
       grcore_context_fuel_scope_top(context) != id) {

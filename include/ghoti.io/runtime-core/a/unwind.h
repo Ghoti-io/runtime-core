@@ -32,6 +32,13 @@
  * with each pop. It never crosses a host frame: it only edits data, and the
  * C frames above `run` unwind by returning.
  *
+ * Unwinding closes fuel scopes, and closing the scope that caused a scoped
+ * unwind ends that unwind: `run` then holds no unwind verdict, and a later
+ * ::GRCORE_STEP_UNWOUND from the entry reports ::GRCORE_ERR_INTERNAL. An engine
+ * that wants the run to end with the limit error must not close that scope
+ * (nor call ::grcore_unwind_all, which closes every scope). Engine hooks must
+ * not call anything in this header.
+ *
  * Threads: the context's owner, in any state.
  */
 

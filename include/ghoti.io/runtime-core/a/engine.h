@@ -174,8 +174,11 @@ typedef struct GRCORE_EngineDescriptor {
    *  upvalue, a pointer into the frame, a value held in a side table), to
    *  `visitor` as precise slots. A's root source has already reported every
    *  VALUE slot of the frame itself, so a hook reports each root once, not
-   *  twice. NULL means the VALUE slots are all there is. The hook may read
-   *  the frame's slots through stack.h but must not push, pop or poll, and
+   *  twice. NULL means the VALUE slots are all there is. The hook must test
+   *  `visitor->slot` and `visitor->range` for NULL before calling them, and
+   *  must not call the unwinder, the activation functions or the budget-scope
+   *  functions. It may read the frame's slots through stack.h but must not
+   *  push, pop or poll, and
    *  the frame's `location` is not filled in (a collector calls this on every
    *  frame at every collection). */
   void (*roots)(GRCORE_Context * context, const GRCORE_AbstractFrame * frame,
@@ -183,7 +186,8 @@ typedef struct GRCORE_EngineDescriptor {
   /** Called by the unwinder for each frame it pops, innermost first, while
    *  the frame is still on the stack: the engine releases what the frame
    *  holds (closes its open upvalues, drops a handler). It never runs guest
-   *  code, and must not push, pop or poll. NULL means nothing to release. The
+   *  code, and must not push, pop or poll, nor call the unwinder, the activation
+   *  functions or the budget-scope functions. NULL means nothing to release. The
    *  frame's `location` is not filled in. */
   void (*unwind)(GRCORE_Context * context, const GRCORE_AbstractFrame * frame);
 } GRCORE_EngineDescriptor;

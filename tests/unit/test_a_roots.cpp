@@ -136,6 +136,12 @@ TEST(ARoots, TheEnginesRootsHookIsCalledPerFrameAndReportsWhatItAdds) {
   // function is 3); frame 2's slot 0 and the hook's slot 1; frame 1's slot 0.
   EXPECT_EQ(seen.values, (std::vector<uint64_t>{30, 20, 21, 10}));
   EXPECT_EQ(w.log.root_functions, (std::vector<uint64_t>{3, 99, 1}));
+  // Innermost first, and the hook's frame carries no location.
+  EXPECT_EQ(w.log.root_depths, (std::vector<size_t>{0, 1, 2}));
+  for (const GRCORE_Location & l : w.log.root_locations) {
+    EXPECT_EQ(l.file, nullptr);
+    EXPECT_EQ(l.line, 0);
+  }
   EXPECT_EQ(w.log.contexts[0], w.ctx);
 }
 

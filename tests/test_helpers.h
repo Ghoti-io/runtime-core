@@ -360,6 +360,8 @@ struct HookLog {
   std::vector<size_t> unwound_depth;   // the abstract frame's depth each time
   std::vector<bool> on_stack;          // frame valid while the hook ran
   std::vector<uint64_t> root_functions; // function of each frame `roots` saw
+  std::vector<size_t> root_depths;      // the abstract frame's depth each time
+  std::vector<GRCORE_Location> root_locations; // and its location
   std::vector<const GRCORE_Context *> contexts; // where hooks were called
 };
 inline HookLog * g_hook_log = nullptr;
@@ -372,6 +374,8 @@ inline void delta_roots(GRCORE_Context * context,
     const GRCORE_AbstractFrame * frame, const GRCORE_RootVisitor * visitor) {
   if (g_hook_log != nullptr) {
     g_hook_log->root_functions.push_back(frame->identity.function);
+    g_hook_log->root_depths.push_back(frame->depth);
+    g_hook_log->root_locations.push_back(frame->location);
     g_hook_log->contexts.push_back(context);
   }
   if (frame->identity.function == 99 && frame->slot_count > 1 &&

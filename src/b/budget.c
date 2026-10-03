@@ -246,6 +246,10 @@ GRCORE_Result grcore_context_fuel_scope_close(
       context->last_verdict = GRCORE_VERDICT_CONTINUE;
     }
     context->unwind_result = GRCORE_OK;
+    /* The reason for the unwind is over with it. */
+    context->verdict_key_count = 0;
+    context->pause_location.file = NULL;
+    context->pause_location.line = 0;
   }
   grcore_context_refresh_derived(context);
   return GRCORE_OK;

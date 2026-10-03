@@ -151,6 +151,21 @@ TEST(BudgetScope, CloseRefusesAScopeOpenedStraightThroughBLeftOpenInsideIt) {
   EXPECT_EQ(grcore_budget_scope_count(w.stack), 0u);
 }
 
+TEST(BudgetScope, AScopeClosedDirectlyThroughBLeavesTheEnclosingScopeOpenWhenAClosesItToo) {
+  StackWorld w;
+  GRCORE_BudgetScope outer = open_scope(w.stack, 100);
+  GRCORE_BudgetScope inner = open_scope(w.stack, 50);
+  ASSERT_EQ(grcore_context_fuel_scope_close(w.ctx, inner.id), GRCORE_OK);
+  // A's close finds B no longer holds it, so B refuses the stale id.
+  EXPECT_EQ(grcore_budget_scope_close(w.stack, inner), GRCORE_ERR_INVALID);
+  // Unwinding to it closes A's record and nothing else of B's.
+  ASSERT_EQ(grcore_budget_scope_unwind(w.stack, inner, nullptr), GRCORE_OK);
+  EXPECT_EQ(grcore_budget_scope_count(w.stack), 1u);
+  EXPECT_EQ(grcore_context_fuel_scope_depth(w.ctx), 1u);
+  EXPECT_EQ(grcore_context_fuel_scope_top(w.ctx), outer.id);
+  ASSERT_EQ(grcore_budget_scope_close(w.stack, outer), GRCORE_OK);
+}
+
 TEST(BudgetScope, AnExhaustedScopeUnwindsToItsBoundaryAndRunFinishesOk) {
   HookWorld w(1000);
   GRCORE_Verdict verdict = GRCORE_VERDICT_CONTINUE;
