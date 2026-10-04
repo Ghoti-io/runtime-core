@@ -60,6 +60,12 @@ TEST(Umbrella, ReachesRefcountedCode) {
       GRCORE_ERR_INVALID);
 }
 
+TEST(Umbrella, ReachesTheNativeFrameReaderAndWriter) {
+  EXPECT_EQ(grcore_deopt_read(nullptr, nullptr, nullptr, 0), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_deopt_write_back(nullptr, nullptr, nullptr, 0),
+      GRCORE_ERR_INVALID);
+}
+
 TEST(Umbrella, ReachesTheCodeMetadataFormatAndTheLayoutDescriptor) {
   // This file includes the umbrella and nothing else, so a header the
   // umbrella omitted would not compile here.

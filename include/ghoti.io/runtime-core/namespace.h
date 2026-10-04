@@ -207,6 +207,8 @@
 #define grcore_counting_reserve GHOTIIO_RUNTIME_CORE(grcore_counting_reserve)
 #define grcore_counting_set_limit GHOTIIO_RUNTIME_CORE(grcore_counting_set_limit)
 #define grcore_decoder_decode GHOTIIO_RUNTIME_CORE(grcore_decoder_decode)
+#define grcore_deopt_read GHOTIIO_RUNTIME_CORE(grcore_deopt_read)
+#define grcore_deopt_write_back GHOTIIO_RUNTIME_CORE(grcore_deopt_write_back)
 #define grcore_engine_count GHOTIIO_RUNTIME_CORE(grcore_engine_count)
 #define grcore_engine_descriptor GHOTIIO_RUNTIME_CORE(grcore_engine_descriptor)
 #define grcore_engine_inspect GHOTIIO_RUNTIME_CORE(grcore_engine_inspect)

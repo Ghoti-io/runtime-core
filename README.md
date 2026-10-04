@@ -104,6 +104,7 @@ local name), and, in `b/` and `a/`:
 | `a/budget_scope.h` | budget scopes: a call boundary with its own fuel budget, unwound to when it runs out; `free` |
 | `a/layout.h` | the JIT layout descriptor: the offset of the request word a compiled poll loads; `free` |
 | `a/code.h` | `GRCORE_Code`: reference-counted compiled code, an opaque handle with a payload and a release callback; the count is atomic because compiled code is shared between contexts (AD-22); `free` |
+| `a/deopt.h` | `grcore_deopt_read` and `grcore_deopt_write_back`: a native frame read into, and its reference slots written back from, an array of interpreter slots by a site's frame state; `free` |
 | `a/codemeta.h` | the code-metadata format: stack maps and deopt records for compiled code, with a validator and a lookup; `free` |
 
 ```c

@@ -574,7 +574,7 @@ identities (the identity check scans earlier sites rather than allocate); the
 tables a code generator makes name one function. `grcore_codemeta_find` is a
 binary search for a site at exactly one offset. The descriptor in `engine.h`
 still has no deoptimization field: the metadata is a table the engine hands to
-whoever reads it, not a hook, and no reader exists yet (story 15).
+whoever reads it, not a hook, and the reader is `a/deopt.h`.
 
 **`a/layout.h`: what emitted code may know about a context.** Compiled code is
 shared between contexts and reaches state through a context register (AD-22),
@@ -601,6 +601,22 @@ allocator pointer need not outlive it. The rejected alternative is a count
 inside the code generator's own object: every generator would write the same
 atomic, and an engine that holds code from two generators would have two
 counting disciplines.
+
+**`a/deopt.h`: reading and writing a native frame by its metadata.** The
+frame-state half of a site says where each interpreter slot can be read, and
+`grcore_deopt_read` is the one function that does it: for a frame slot the word
+at `frame_base + offset`, for a constant the immediate, for a dead slot zero.
+`grcore_deopt_write_back` is its inverse for the reference slots only: it stores
+into a frame word named by a `FRAME_SLOT` location of kind `VALUE` and leaves raw
+words, constants, dead slots and every unnamed word alone. The pair exists so
+that an engine's poll can make the interpreter's own frame current from a
+compiled one (and the debugger and collector then see an ordinary frame),
+and then let a collector that updated a reference in that frame in place be
+honoured by the compiled code that continues. They are pure and trust a table
+that passed `grcore_codemeta_validate`. The rejected alternative is leaving the
+reader to each code generator or engine: the format is the core's (AD-14), and
+a reader written beside each writer is how a writer and a reader come to agree
+only with each other.
 
 ## Benchmarks
 
