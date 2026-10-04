@@ -761,6 +761,58 @@ TEST(Snapshot, AWriterRefusesNullDataWithBytesAndTheBlobStaysWhole) {
   EXPECT_EQ(grcore_snapshot_size(t.s), 0u);
 }
 
+TEST(Snapshot, AWriterPastTheCapIsALimitErrorAndTheBlobStaysWhole) {
+  struct W {
+    static GRCORE_Result snapshot(
+        GRCORE_Context *, void * value, GRCORE_SnapshotWriter * w) {
+      auto * out = static_cast<GRCORE_Result *>(value);
+      char c = 0;
+      /* The pointer is never read: the size is refused first. */
+      out[0] = grcore_snapshot_writer_write(
+          w, &c, (size_t)GRCORE_SNAPSHOT_MAX_BYTES + 1u);
+      out[1] = grcore_snapshot_writer_write(w, &c, 1);
+      out[2] = grcore_snapshot_writer_write(
+          w, &c, (size_t)GRCORE_SNAPSHOT_MAX_BYTES); // total + size past it
+      EXPECT_EQ(grcore_snapshot_writer_size(w), 1u);
+      return GRCORE_OK;
+    }
+    static GRCORE_Result restore(GRCORE_Context *, void *,
+        GRCORE_SnapshotReader *, void *, GRCORE_RestoreMode) {
+      return GRCORE_OK;
+    }
+    static GRCORE_Result settle(
+        GRCORE_Context *, void *, void *, GRCORE_SettleMode) {
+      return GRCORE_OK;
+    }
+  };
+  static const GRCORE_Key k = {"cap", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
+      nullptr, nullptr, W::snapshot, W::restore, W::settle};
+  GRCORE_Result seen[3] = {GRCORE_OK, GRCORE_OK, GRCORE_OK};
+  RunWorld a;
+  ASSERT_EQ(grcore_context_register(a.ctx, &k, seen), GRCORE_OK);
+  Taken t;
+  ASSERT_EQ(grcore_context_snapshot(a.ctx, nullptr, &t.s), GRCORE_OK);
+  EXPECT_EQ(seen[0], GRCORE_ERR_LIMIT);
+  EXPECT_EQ(seen[1], GRCORE_OK);
+  EXPECT_EQ(seen[2], GRCORE_ERR_LIMIT);
+  EXPECT_EQ(grcore_snapshot_size(t.s), 1u);
+}
+
+TEST(Snapshot, ADestinationKeyWithHooksAndNoNameIsRefusedNotDereferenced) {
+  ToyWorld src;
+  src.fill();
+  Taken t;
+  ASSERT_EQ(grcore_context_snapshot(src.w.ctx, nullptr, &t.s), GRCORE_OK);
+  Toy n;
+  ToyWorld w;
+  static const GRCORE_Key nameless = {nullptr, GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle};
+  n.context = w.w.ctx;
+  ASSERT_EQ(grcore_context_register(w.w.ctx, &nameless, &n), GRCORE_OK);
+  EXPECT_EQ(grcore_context_restore(w.w.ctx, t.s, nullptr), GRCORE_ERR_INVALID);
+  EXPECT_EQ(w.a.check + w.a.apply + w.b.check + w.b.apply, 0);
+}
+
 /* ---- Allocation failure ------------------------------------------------------ */
 
 TEST(Snapshot, EveryAllocationFailureDuringTakeIsACleanErrorWithNothingLeaked) {
@@ -895,6 +947,60 @@ TEST(Snapshot, ThePausedContextMigratesAfterTheSnapshotAndTheSnapshotIsUnaffecte
     sum = d.g.sum;
   }).join();
   EXPECT_EQ(sum, sum_below(120));
+}
+
+/* ---- Robustness: a nameless key, and the writer's cap ------------------------ */
+
+TEST(Snapshot, ANamelessHookedDestinationKeyIsRefusedNotDereferenced) {
+  ToyWorld src;
+  src.fill();
+  Taken t;
+  ASSERT_EQ(grcore_context_snapshot(src.w.ctx, nullptr, &t.s), GRCORE_OK);
+  static const GRCORE_Key nameless = {nullptr, GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle};
+  Toy n;
+  ToyWorld dst;
+  n.context = dst.w.ctx;
+  ASSERT_EQ(grcore_context_register(dst.w.ctx, &nameless, &n), GRCORE_OK);
+  EXPECT_EQ(grcore_context_restore(dst.w.ctx, t.s, nullptr), GRCORE_ERR_INVALID);
+  EXPECT_EQ(dst.a.check + dst.a.apply, 0);
+}
+
+TEST(Snapshot, TheWriterRefusesAWriteOverTheCapAndOneThatWouldOverflowTheTotal) {
+  struct Cap {
+    static GRCORE_Result snapshot(
+        GRCORE_Context *, void * value, GRCORE_SnapshotWriter * w) {
+      auto * out = static_cast<std::vector<GRCORE_Result> *>(value);
+      const char dummy = 0;
+      out->push_back(grcore_snapshot_writer_write(
+          w, &dummy, GRCORE_SNAPSHOT_MAX_BYTES + 1)); // larger than the cap
+      out->push_back(grcore_snapshot_writer_write(w, &dummy, 1));
+      // total + size would pass the cap: size alone is under it.
+      out->push_back(grcore_snapshot_writer_write(
+          w, &dummy, GRCORE_SNAPSHOT_MAX_BYTES));
+      return GRCORE_OK;
+    }
+    static GRCORE_Result restore(GRCORE_Context *, void *,
+        GRCORE_SnapshotReader *, void *, GRCORE_RestoreMode) {
+      return GRCORE_OK;
+    }
+    static GRCORE_Result settle(
+        GRCORE_Context *, void *, void *, GRCORE_SettleMode) {
+      return GRCORE_OK;
+    }
+  };
+  static const GRCORE_Key k = {"cap", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
+      nullptr, nullptr, Cap::snapshot, Cap::restore, Cap::settle};
+  std::vector<GRCORE_Result> seen;
+  RunWorld a;
+  ASSERT_EQ(grcore_context_register(a.ctx, &k, &seen), GRCORE_OK);
+  Taken t;
+  ASSERT_EQ(grcore_context_snapshot(a.ctx, nullptr, &t.s), GRCORE_OK);
+  ASSERT_EQ(seen.size(), 3u);
+  EXPECT_EQ(seen[0], GRCORE_ERR_LIMIT);
+  EXPECT_EQ(seen[1], GRCORE_OK);
+  EXPECT_EQ(seen[2], GRCORE_ERR_LIMIT);
+  EXPECT_EQ(grcore_snapshot_size(t.s), 1u);
 }
 
 int main(int argc, char ** argv) {

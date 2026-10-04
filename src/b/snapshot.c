@@ -364,7 +364,9 @@ static const GRCORE_Registration * find_by_name(
     const GRCORE_Context * c, const char * name) {
   for (size_t i = 0; i < c->registration_count; i++) {
     const GRCORE_Key * k = c->registrations[i].key;
-    if (hooked(k) && strcmp(k->name, name) == 0) {
+    /* A nameless hooked key matches nothing; the validation in restore refuses
+     * it, so it must not reach strcmp. */
+    if (hooked(k) && k->name != NULL && strcmp(k->name, name) == 0) {
       return &c->registrations[i];
     }
   }
@@ -446,8 +448,9 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
     abandon(context, snapshot, applied, env);
     return r;
   }
-  /* The destination's registration order, which is what a key that depends on
-   * another being registered first relies on. */
+  /* The destination's registration order, only so that the passes are
+   * deterministic: every APPLY has run, so no key may depend on which of the
+   * others is settled first. */
   for (size_t i = 0; i < context->registration_count && r == GRCORE_OK; i++) {
     const GRCORE_Registration * reg = &context->registrations[i];
     if (hooked(reg->key)) {

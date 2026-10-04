@@ -45,7 +45,8 @@
  * fresh run, registers the same keys, then calls ::grcore_context_restore.
  * The keys' `restore` hooks run in two passes in snapshot order (a CHECK that
  * changes nothing, then an APPLY), then every `settle` hook runs in the
- * destination's registration order in three passes (PREPARE, then COMMIT).
+ * destination's registration order in three modes (PREPARE, COMMIT, and ABANDON
+ * for a restore that failed before COMMIT).
  * Any failure before COMMIT undoes every APPLY and leaves the destination
  * exactly as it was: a fresh, runnable context. A snapshot of a paused context
  * leaves the destination paused, resumable with ::grcore_resume.
@@ -82,8 +83,13 @@ extern "C" {
 /** @brief An immutable, reference-counted image of a context. Opaque. */
 typedef struct GRCORE_Snapshot GRCORE_Snapshot;
 
-/** @brief The most bytes one snapshot holds in all its blobs together. */
-#define GRCORE_SNAPSHOT_MAX_BYTES ((size_t)1 << 40)
+/** @brief The most bytes one snapshot holds in all its blobs together: 2^40 where
+ *   `size_t` is 64 bits, half the address space where it is 32. */
+#if SIZE_MAX > UINT32_MAX
+#define GRCORE_SNAPSHOT_MAX_BYTES (SIZE_MAX >> 24)
+#else
+#define GRCORE_SNAPSHOT_MAX_BYTES (SIZE_MAX >> 1)
+#endif
 
 /**
  * @brief What the host supplies to a restore.

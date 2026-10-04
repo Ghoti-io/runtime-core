@@ -673,8 +673,9 @@ hook, is what makes it atomic:
 `settle` is a separate hook, run after every APPLY, because state that refers
 across keys (the heap writes root slots, which live in the frames and the
 engine's own tables) can only be finished once every key has built its part;
-the registration order decides nothing about restoring, so two keys need not
-know which was registered first. The three modes of `settle` exist because a
+no outcome depends on the registration order (PREPARE and COMMIT follow it only
+to be deterministic, after every APPLY), so two keys need not know which was
+registered first. The three modes of `settle` exist because a
 commit that can fail after another key has committed has nothing to roll back
 to: PREPARE is where it may fail, and COMMIT is final.
 
