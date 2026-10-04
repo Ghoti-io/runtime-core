@@ -55,7 +55,10 @@ this library:
 | `check-labels` | fail if a public header has no `@stability stable` or `free` label, or the wrong one for its directory |
 | `check-direction` | fail if a `b/` or top-level header includes an `a/` header (or the umbrella) |
 | `check-edges` | fail on any `#include` or shared-object dependency on a Ghoti library other than `cutil` |
-| `check-gates` | run each gate against a planted defect and a control, and against an empty tree, and fail unless each behaves |
+| `check-gates` | run each gate against a planted defect and a control, and against an empty tree, and fail unless each behaves; the gates are the three above, `check-symbols`, `check-stamps`, `check-version` and `check-wiring` |
+| `check-version` | build the generated header at 0.2.3 and fail unless the header, the packed number a consumer compares and the library's file name all say so, and the header carries its SPDX line |
+| `check-wiring` | fail if a gate is not in `TEST_GATES` or its target no longer runs its script |
+| `check-hook` | run `.githooks/commit-msg` over messages with assistant attribution and with human co-authors, and fail on any it strips or keeps wrongly |
 | `bench` | run the benchmark harness in full; it prints a calibration result first |
 | `test-asan`, `test-tsan`, `test-valgrind-quiet` | the same tests under ASan+UBSan, ThreadSanitizer and Valgrind |
 | `coverage` | instrumented run and line report; `COVERAGE_MIN=80` fails below the floor |
