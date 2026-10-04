@@ -134,6 +134,29 @@ GRCORE_API GRCORE_Result grcore_context_remove_root_source(
 GRCORE_API size_t grcore_context_root_source_count(const GRCORE_Context * context);
 
 /**
+ * @brief Reads root source `index`, in the order they were added.
+ *
+ * For a consumer that needs to say *which* source a root came from (a
+ * retention query names the source and the slot's ordinal in its
+ * enumeration), which ::grcore_context_enumerate_roots cannot tell it: that
+ * call hands every root to one visitor. The consumer calls the source's own
+ * `enumerate` with a visitor of its own, which is exactly what the
+ * enumeration does for each entry.
+ *
+ * @param context The context. The caller must own it.
+ * @param index From zero to the count minus one.
+ * @param out_source Receives the source, or may be NULL. Written only on
+ *   success.
+ * @param out_value Receives the value it was added with, or may be NULL.
+ *   Written only on success.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL, a non-owner or an
+ *   index out of range (nothing is written).
+ */
+GRCORE_API GRCORE_Result grcore_context_root_source(
+    const GRCORE_Context * context, size_t index,
+    const GRCORE_RootSource ** out_source, void ** out_value);
+
+/**
  * @brief Asks every root source for its roots, in the order they were added.
  *
  * Allowed in any state, since the collector runs at-poll and a host may

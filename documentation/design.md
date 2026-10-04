@@ -470,6 +470,13 @@ engine's decoder; engine zero has none, and its words are read as the
 addresses they are. JIT frames are not scanned conservatively and a record
 without a segment contributes nothing (AD-17).
 
+`grcore_context_root_source(index)` reads one entry of that table, because the
+all-at-once enumeration hands every root to one visitor and cannot say which
+source a root came from. A consumer that must say so (the heap's retention
+query names the source and a slot's ordinal in its enumeration) calls the
+source's own `enumerate` with a visitor of its own, which is what the
+enumeration does for each entry. It adds no new way to reach a root.
+
 **The unwinder (AD-5, AD-18).** `grcore_unwind_to_activation` and
 `grcore_unwind_all` pop frames innermost first, calling the engine's `unwind`
 hook while the frame is still on the stack, leave the deeper activations (which

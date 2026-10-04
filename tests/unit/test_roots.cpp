@@ -94,6 +94,49 @@ TEST(Roots, AddCountEnumerateAndRemoveInRegistrationOrder) {
   EXPECT_EQ(log, std::vector<std::string>{"b"});
 }
 
+TEST(Roots, ASourceCanBeReadByIndexAndEnumeratedOnItsOwn) {
+  RunWorld w;
+  Held a{"a", 11, nullptr}, b{"b", 22, nullptr};
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kSourceA, &a), GRCORE_OK);
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kSourceB, &b), GRCORE_OK);
+  const GRCORE_RootSource * source = nullptr;
+  void * value = nullptr;
+  ASSERT_EQ(grcore_context_root_source(w.ctx, 1, &source, &value), GRCORE_OK);
+  EXPECT_EQ(source, &kSourceB);
+  EXPECT_EQ(value, &b);
+  EXPECT_STREQ(source->name, "b");
+  // Either output may be omitted.
+  EXPECT_EQ(grcore_context_root_source(w.ctx, 0, nullptr, &value), GRCORE_OK);
+  EXPECT_EQ(value, &a);
+  EXPECT_EQ(grcore_context_root_source(w.ctx, 0, &source, nullptr), GRCORE_OK);
+  EXPECT_EQ(source, &kSourceA);
+  // Calling the source's own enumerate reports only its roots.
+  Seen seen;
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  source->enumerate(w.ctx, &a, &v);
+  ASSERT_EQ(seen.slots.size(), 1u);
+  EXPECT_EQ(seen.slots[0], &a.slot);
+}
+
+TEST(Roots, ReadingASourceOutOfRangeOrFromAnotherThreadIsRefusedAndWritesNothing) {
+  RunWorld w;
+  Held a{"a", 11, nullptr};
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kSourceA, &a), GRCORE_OK);
+  const GRCORE_RootSource * source = &kSourceB;
+  void * value = &a;
+  EXPECT_EQ(grcore_context_root_source(w.ctx, 1, &source, &value),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_context_root_source(nullptr, 0, &source, &value),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(source, &kSourceB);
+  EXPECT_EQ(value, &a);
+  GRCORE_Result r = GRCORE_OK;
+  std::thread([&] { r = grcore_context_root_source(w.ctx, 0, &source, &value); })
+      .join();
+  EXPECT_EQ(r, GRCORE_ERR_INVALID);
+  EXPECT_EQ(source, &kSourceB);
+}
+
 TEST(Roots, AVisitorMayRewriteAPreciseSlotAndLaterReadsSeeIt) {
   RunWorld w;
   Held a{"a", 5, nullptr};

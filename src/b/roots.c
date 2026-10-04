@@ -101,6 +101,21 @@ size_t grcore_context_root_source_count(const GRCORE_Context * context) {
   return context == NULL ? 0 : context->root_count;
 }
 
+GRCORE_Result grcore_context_root_source(const GRCORE_Context * context,
+    size_t index, const GRCORE_RootSource ** out_source, void ** out_value) {
+  if (context == NULL || !grcore_context_owned_by_caller(context) ||
+      index >= context->root_count) {
+    return GRCORE_ERR_INVALID;
+  }
+  if (out_source != NULL) {
+    *out_source = context->roots[index].source;
+  }
+  if (out_value != NULL) {
+    *out_value = context->roots[index].value;
+  }
+  return GRCORE_OK;
+}
+
 GRCORE_Result grcore_context_enumerate_roots(
     GRCORE_Context * context, const GRCORE_RootVisitor * visitor) {
   if (context == NULL || visitor == NULL ||
