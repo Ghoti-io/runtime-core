@@ -68,6 +68,18 @@ TEST(Umbrella, ReachesSnapshots) {
   EXPECT_EQ(grcore_context_restore(nullptr, nullptr, nullptr), GRCORE_ERR_INVALID);
 }
 
+TEST(Umbrella, ReachesTheProfilerAndTheRootSourceReader) {
+  // b/profile.h and the per-source reader of b/roots.h, through the umbrella
+  // alone, from C++.
+  EXPECT_EQ(grcore_profiler_of(nullptr), nullptr);
+  EXPECT_EQ(grcore_profiler_request(nullptr), GRCORE_ERR_INVALID);
+  EXPECT_FALSE(grcore_profiler_timer_running(nullptr));
+  GRCORE_Profiler * profiler = nullptr;
+  EXPECT_EQ(grcore_profiler_attach(nullptr, 0, &profiler), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_context_root_source(nullptr, 0, nullptr, nullptr),
+      GRCORE_ERR_INVALID);
+}
+
 TEST(Umbrella, ReachesTheNativeFrameReaderAndWriter) {
   EXPECT_EQ(grcore_deopt_read(nullptr, nullptr, nullptr, 0), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_deopt_write_back(nullptr, nullptr, nullptr, 0),
