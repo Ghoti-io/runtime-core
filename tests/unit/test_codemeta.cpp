@@ -190,6 +190,37 @@ TEST(CodeMeta, ADerivedPointerRoundTrips) {
   EXPECT_EQ(frame[7] + static_cast<uint64_t>(s->derived[0].delta), 0x4010u);
 }
 
+TEST(CodeMeta, ADerivedPointersBaseThatIsOnlyALiveRawSlotIsCorrupt) {
+  Built b = valid();
+  b.parts[1].live[0].slot_kind = GRCORE_SLOT_RAW; // slot -8, the base
+  b.finish(64, 100);
+  EXPECT_NE(std::strstr(refuse(b), "base is not a live"), nullptr);
+}
+
+TEST(CodeMeta, AnInvalidSlotKindIsCorruptInAStackMapAndInAFrameState) {
+  Built b = valid();
+  b.parts[0].live[1].slot_kind = static_cast<GRCORE_SlotKind>(9);
+  b.finish(64, 100);
+  EXPECT_NE(std::strstr(refuse(b), "slot kind"), nullptr);
+  b = valid();
+  b.parts[2].state[1].slot_kind = static_cast<GRCORE_SlotKind>(9);
+  b.finish(64, 100);
+  EXPECT_NE(std::strstr(refuse(b), "slot kind"), nullptr);
+}
+
+TEST(CodeMeta, ADerivedPointersOwnAndBaseSlotsAreRangeChecked) {
+  for (int64_t bad : {int64_t{-12}, int64_t{0}, int64_t{-72}, int64_t{8}}) {
+    Built own = valid();
+    own.parts[1].derived[0].slot = bad;
+    own.finish(64, 100);
+    EXPECT_NE(std::strstr(refuse(own), "derived pointer slot"), nullptr) << bad;
+    Built base = valid();
+    base.parts[1].derived[0].base_slot = bad;
+    base.finish(64, 100);
+    EXPECT_NE(std::strstr(refuse(base), "derived pointer slot"), nullptr) << bad;
+  }
+}
+
 TEST(CodeMeta, TwoSitesOfOneFunctionMustAgreeOnTheSlotCount) {
   Built b = valid();
   b.parts[2].state.push_back({GRCORE_LOC_DEAD, GRCORE_SLOT_RAW, 0});

@@ -49,6 +49,16 @@ TEST(Umbrella, ReachesTheNewAHeadersAndTheRootsHeaderOfB) {
   EXPECT_EQ(grcore_context_nested_depth(nullptr), 0u);
 }
 
+TEST(Umbrella, ReachesTheCodeMetadataFormatAndTheLayoutDescriptor) {
+  // This file includes the umbrella and nothing else, so a header the
+  // umbrella omitted would not compile here.
+  const GRCORE_JitLayout * layout = grcore_jit_layout();
+  ASSERT_NE(layout, nullptr);
+  EXPECT_EQ(layout->request_word_bytes, 8u);
+  EXPECT_EQ(grcore_codemeta_find(nullptr, 0), nullptr);
+  EXPECT_EQ(grcore_codemeta_validate(nullptr, 0, nullptr), GRCORE_ERR_INVALID);
+}
+
 TEST(Umbrella, HeadersHaveExternCLinkageSoCppCanLinkTheSymbols) {
   /* A C++ translation unit that declared these without extern "C" would fail
    * to link; reaching this line at all is the check. */

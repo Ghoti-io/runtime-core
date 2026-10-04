@@ -44,9 +44,11 @@ static bool slot_ok(int64_t offset, uint32_t frame_bytes) {
   return offset % 8 == 0 && offset >= -(int64_t)frame_bytes && offset <= -8;
 }
 
+/* A base must be a live *reference*: a RAW entry at the slot does not count. */
 static bool is_live(const GRCORE_CodeSite * site, int64_t slot) {
   for (size_t i = 0; i < site->live_count; i++) {
-    if (site->live[i].value == slot) {
+    if (site->live[i].value == slot &&
+        site->live[i].slot_kind == GRCORE_SLOT_VALUE) {
       return true;
     }
   }

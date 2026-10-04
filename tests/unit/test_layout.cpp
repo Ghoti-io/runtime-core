@@ -67,10 +67,6 @@ TEST(Layout, TheDescriptorIsTheSameStructOnEveryCall) {
   EXPECT_EQ(copy.request_word_offset, b->request_word_offset);
 }
 
-TEST(Layout, TheUmbrellaReachesTheHeader) {
-  EXPECT_EQ(sizeof(GRCORE_JitLayout::request_word_bytes), 4u);
-}
-
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
