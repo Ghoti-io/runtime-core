@@ -39,6 +39,18 @@ export PKG_CONFIG_PATH
 CC="${CC:-cc}"
 CXX="${CXX:-g++}"
 
+# On Windows the compiler appends .exe to whatever -o names, so the program it
+# wrote is not the path that was asked for; and a DLL is found through PATH
+# rather than through an rpath, so the prefix's bin/ goes on it.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    EXE=.exe
+    PATH="$PREFIX/bin:$PATH"
+    export PATH
+    ;;
+  *) EXE= ;;
+esac
+
 fail() {
   printf '\033[0;31mcheck-install: %s\033[0m\n' "$*" >&2
   exit 1
@@ -186,11 +198,11 @@ for tok in $flags; do
 done
 
 # shellcheck disable=SC2086
-$CC -std=c17 -Wall -Wextra -Werror -o "$work/consumer" "$work/consumer.c" \
+$CC -std=c17 -Wall -Wextra -Werror -o "$work/consumer$EXE" "$work/consumer.c" \
     $flags $rpath || fail "the consumer did not compile or link against the installed library"
 pass "a C consumer compiles and links"
 
-"$work/consumer" || fail "the consumer did not run"
+"$work/consumer$EXE" || fail "the consumer did not run"
 pass "the installed library answers through the installed headers"
 
 # The public headers are compiled as C++ in-tree because that is how the tests
@@ -199,7 +211,7 @@ pass "the installed library answers through the installed headers"
 # shellcheck disable=SC2086
 # -x c++ before the file, not after: it applies to the inputs that follow it,
 # and the suffix is .c.
-$CXX -std=c++20 -Wall -Wextra -Werror -o "$work/consumer++" \
+$CXX -std=c++20 -Wall -Wextra -Werror -o "$work/consumer++$EXE" \
     -x c++ "$work/consumer.c" $flags $rpath \
     || fail "the installed headers are not C++-consumable"
 pass "a C++ consumer compiles and links"
@@ -210,7 +222,7 @@ pass "a C++ consumer compiles and links"
 # They come from the same Makefile variables, so a disagreement means one of
 # the two was substituted from a stale value.
 # ---------------------------------------------------------------------------
-reported="$("$work/consumer" | tail -n 1)"
+reported="$("$work/consumer$EXE" | tail -n 1)"
 case "$reported" in
   "$version"*) ;;
   *)

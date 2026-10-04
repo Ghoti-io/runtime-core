@@ -172,8 +172,9 @@ NULL. A provider also has a trailing `protect` member, `grcore_page_protect`
 being the checked call: it flips a mapping between read-write and read-execute
 (never both, AD-13), which is what a JIT does once after filling its pages.
 NULL means unsupported and is `ERR_INVALID`; a provider that reports failure is
-`ERR_IO`. The default uses `mprotect` (`VirtualProtect` on Windows, written and
-not run, marked `TODO(windows)`), and the counting provider forwards the call
+`ERR_IO`. The default uses `mprotect` (`VirtualProtect` on Windows, which has
+run under wine and not yet on a Windows machine), and the counting provider
+forwards the call
 unchanged and charges nothing, since protection moves no bytes. The member is
 an addition to a `stable` header, made because a JIT cannot exist without it;
 nothing was released, and a provider written before it has it zero-filled.
@@ -213,6 +214,18 @@ last release frees the port. A context that is waiting (`grcore_context_wait`)
 sleeps on that same condition variable, and a post sets its bit under the same
 mutex, so a wake cannot be missed. The group refuses to be destroyed while a
 port is live. The mutex is the reason this library now links `-pthread`.
+
+**The clock a timeout is measured on.** A timed wait is
+`pthread_cond_timedwait`, which takes an absolute time on the clock the
+condition variable was made with. On POSIX that is `CLOCK_MONOTONIC`, so a
+timeout does not move when the wall clock does. winpthreads (MinGW) accepts
+only `CLOCK_REALTIME` for a condition and answers `EINVAL` for
+`CLOCK_MONOTONIC`; port creation used to read that as out of memory and so
+failed outright. On Windows the condition and its deadline are therefore both
+on `CLOCK_REALTIME` (`src/b/cond_clock_internal.h` is the one place the choice
+is made), and a timeout that is pending when the system clock is stepped is
+shortened or lengthened by the step. The profiler's timer thread is the other
+user and has the same property.
 
 **Rejected: a mutex or a condition variable on the poll.** The poll runs at
 every loop back-edge and function entry. A lock there would cost on a path

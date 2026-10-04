@@ -31,7 +31,7 @@
  */
 
 /* pthread_condattr_setclock and CLOCK_MONOTONIC are POSIX, and -std=c17 hides
- * them. */
+ * them (see cond_clock_internal.h for the clock a timeout is measured on). */
 #define _POSIX_C_SOURCE 200809L
 
 #include <ghoti.io/runtime-core/macros.h>
@@ -39,6 +39,7 @@
 #include <ghoti.io/runtime-core/a/frame.h>
 #include <ghoti.io/runtime-core/b/profile.h>
 
+#include "cond_clock_internal.h"
 #include "context_internal.h"
 
 #include <errno.h>
@@ -194,14 +195,7 @@ static void * timer_main(void * arg) {
   pthread_mutex_lock(&t->mutex);
   while (!t->stop) {
     struct timespec deadline;
-    clock_gettime(CLOCK_MONOTONIC, &deadline);
-    uint64_t ns = t->interval_us * UINT64_C(1000);
-    deadline.tv_sec += (time_t)(ns / UINT64_C(1000000000));
-    deadline.tv_nsec += (long)(ns % UINT64_C(1000000000));
-    if (deadline.tv_nsec >= 1000000000L) {
-      deadline.tv_sec++;
-      deadline.tv_nsec -= 1000000000L;
-    }
+    grcore_cond_deadline(&deadline, t->interval_us * UINT64_C(1000));
     int rc = 0;
     while (!t->stop && rc != ETIMEDOUT) {
       rc = pthread_cond_timedwait(&t->cond, &t->mutex, &deadline);
@@ -345,18 +339,11 @@ GRCORE_Result grcore_profiler_timer_start(
   if (t == NULL) {
     return GRCORE_ERR_OOM;
   }
-  pthread_condattr_t attr;
-  bool cond_ok = false;
   if (pthread_mutex_init(&t->mutex, NULL) != 0) {
     a->free_fn(a->ctx, t);
     return GRCORE_ERR_OOM;
   }
-  if (pthread_condattr_init(&attr) == 0) {
-    cond_ok = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) == 0 &&
-        pthread_cond_init(&t->cond, &attr) == 0;
-    pthread_condattr_destroy(&attr);
-  }
-  if (!cond_ok) {
+  if (grcore_cond_init(&t->cond) != 0) {
     pthread_mutex_destroy(&t->mutex);
     a->free_fn(a->ctx, t);
     return GRCORE_ERR_OOM;

@@ -30,11 +30,12 @@
  */
 
 /* pthread_condattr_setclock and CLOCK_MONOTONIC are POSIX, and -std=c17 hides
- * them. A timeout must not move when the wall clock does. */
+ * them (see cond_clock_internal.h for the clock a timeout is measured on). */
 #define _POSIX_C_SOURCE 200809L
 
 #include <ghoti.io/runtime-core/macros.h>
 
+#include "cond_clock_internal.h"
 #include "context_internal.h"
 #include "group_internal.h"
 
@@ -112,22 +113,11 @@ static GRCORE_Result port_create(GRCORE_Context * context, GRCORE_Port ** out) {
   if (p == NULL) {
     return GRCORE_ERR_OOM;
   }
-  pthread_condattr_t attr;
   if (pthread_mutex_init(&p->mutex, NULL) != 0) {
     a->free_fn(a->ctx, p);
     return GRCORE_ERR_OOM;
   }
-  if (pthread_condattr_init(&attr) != 0) {
-    pthread_mutex_destroy(&p->mutex);
-    a->free_fn(a->ctx, p);
-    return GRCORE_ERR_OOM;
-  }
-  int bad = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-  if (bad == 0) {
-    bad = pthread_cond_init(&p->cond, &attr);
-  }
-  pthread_condattr_destroy(&attr);
-  if (bad != 0) {
+  if (grcore_cond_init(&p->cond) != 0) {
     pthread_mutex_destroy(&p->mutex);
     a->free_fn(a->ctx, p);
     return GRCORE_ERR_OOM;
@@ -342,19 +332,7 @@ bool grcore_port_wait(
     GRCORE_Port * port, const GRCORE_Context * context, uint64_t timeout_ns) {
   struct timespec deadline = {0, 0};
   if (timeout_ns != UINT64_MAX) {
-    clock_gettime(CLOCK_MONOTONIC, &deadline);
-    uint64_t secs = timeout_ns / 1000000000u;
-    uint64_t nanos = timeout_ns % 1000000000u + (uint64_t)deadline.tv_nsec;
-    if (nanos >= 1000000000u) {
-      secs++;
-      nanos -= 1000000000u;
-    }
-    /* Far enough ahead to be forever, and short of overflowing time_t. */
-    if (secs > (uint64_t)INT32_MAX * 8u) {
-      secs = (uint64_t)INT32_MAX * 8u;
-    }
-    deadline.tv_sec += (time_t)secs;
-    deadline.tv_nsec = (long)nanos;
+    grcore_cond_deadline(&deadline, timeout_ns);
   }
   pthread_mutex_lock(&port->mutex);
   while (__atomic_load_n(&context->request_word, __ATOMIC_ACQUIRE) == 0) {

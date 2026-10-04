@@ -36,8 +36,8 @@
 #include <stdint.h>
 
 #ifdef _WIN32
-/* TODO(windows): VirtualAlloc/VirtualFree branch, unverified; see
- * notes/suite/WINDOWS-TODO.md. */
+/* The VirtualAlloc/VirtualFree/VirtualProtect branch has run: the tests and
+ * tools/xwin's probe pass under wine. It has not run on a Windows machine. */
 #include <windows.h>
 #else
 #include <sys/mman.h>
@@ -107,8 +107,6 @@ static bool default_protect(
     return false;
   }
 #ifdef _WIN32
-  /* TODO(windows): VirtualProtect branch, unverified; see
-   * notes/suite/WINDOWS-TODO.md. */
   DWORD want = access == GRCORE_PAGE_READ_EXECUTE ? PAGE_EXECUTE_READ
                                                   : PAGE_READWRITE;
   DWORD old;

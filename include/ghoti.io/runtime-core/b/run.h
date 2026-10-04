@@ -121,7 +121,9 @@ GRCORE_API GRCORE_Result grcore_resume(
  *
  * @param context The context. The caller must own it, and it must be running.
  * @param timeout_ns How long to wait, in nanoseconds; ::GRCORE_UNLIMITED
- *   waits without a time limit.
+ *   waits without a time limit. The timeout is measured on a monotonic clock,
+ *   except on Windows, where it is measured on the system clock and a step of
+ *   that clock while the wait is pending shortens or lengthens it.
  * @param out_woken Receives true if a request is pending, false on timeout.
  *   Written only on success.
  * @return ::GRCORE_OK, ::GRCORE_ERR_INVALID (nothing changes) or

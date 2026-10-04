@@ -11,6 +11,9 @@
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 TEST(Page, DefaultIsAPowerOfTwoGranuleWithAllThreeCalls) {
   const GRCORE_PageProvider * p = grcore_page_provider_default();
@@ -156,6 +159,44 @@ TEST(Page, ACustomProviderWithItsOwnGranuleIsHonoured) {
 /* Whether a write to `*p` faults. The fault is caught in this process rather
  * than in a forked child: a sanitizer's own SEGV handler turns the signal into
  * an exit status a parent cannot tell from an ordinary failure. */
+#ifdef _WIN32
+/* Windows has no signal to catch, and mingw's GCC has no __try. A vectored
+ * handler sees the access violation first; it cannot resume the faulting
+ * thread, so the write is made on a thread of its own and the handler ends
+ * that thread (the same shape tools/xwin/probe-runtime.c uses). The handler is
+ * installed first in the chain so that nothing else claims the exception. */
+static volatile LONG g_faulted;
+static LONG CALLBACK on_fault(EXCEPTION_POINTERS * e) {
+  if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) {
+    return EXCEPTION_CONTINUE_SEARCH;
+  }
+  g_faulted = 1;
+  /* Enter ExitThread as if it had been called: argument in RCX, and the stack
+   * 16-byte aligned with room for the return address and the shadow space. */
+  e->ContextRecord->Rip = (DWORD64)(uintptr_t)ExitThread;
+  e->ContextRecord->Rcx = 0;
+  e->ContextRecord->Rsp = (e->ContextRecord->Rsp & ~(DWORD64)15) - 8 - 32;
+  return EXCEPTION_CONTINUE_EXECUTION;
+}
+static DWORD WINAPI write_one(void * p) {
+  *static_cast<volatile unsigned char *>(p) = 1;
+  return 0;
+}
+static bool write_faults(volatile unsigned char * p) {
+  void * handler = AddVectoredExceptionHandler(1, on_fault);
+  EXPECT_NE(handler, nullptr);
+  g_faulted = 0;
+  HANDLE t = CreateThread(nullptr, 0, write_one,
+      const_cast<unsigned char *>(p), 0, nullptr);
+  EXPECT_NE(t, nullptr);
+  if (t != nullptr) {
+    WaitForSingleObject(t, 10000);
+    CloseHandle(t);
+  }
+  RemoveVectoredExceptionHandler(handler);
+  return g_faulted != 0;
+}
+#else
 static sigjmp_buf g_fault;
 static void on_fault(int) {
   siglongjmp(g_fault, 1);
@@ -177,6 +218,7 @@ static bool write_faults(volatile unsigned char * p) {
   sigaction(SIGSEGV, &old, nullptr);
   return faulted;
 }
+#endif
 
 static void exercise_protect(const GRCORE_PageProvider * p) {
   size_t size = p->page_size;
