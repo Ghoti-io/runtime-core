@@ -66,6 +66,7 @@
 #include <ghoti.io/runtime-core/b/options.h>
 #include <ghoti.io/runtime-core/b/page.h>
 #include <ghoti.io/runtime-core/b/poll.h>
+#include <ghoti.io/runtime-core/b/profile.h>
 #include <ghoti.io/runtime-core/b/request.h>
 #include <ghoti.io/runtime-core/b/roots.h>
 #include <ghoti.io/runtime-core/b/run.h>

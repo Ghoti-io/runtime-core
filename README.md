@@ -96,6 +96,7 @@ local name), and, in `b/` and `a/`:
 | `b/run.h` | `grcore_run`, `grcore_resume`, `grcore_context_wait`, and the pause's keys, location and unwind reason |
 | `b/budget.h` | fuel, memory (budget, reserve, refusals) and depth enforcement; fuel scopes, an exclusive budget under the request's ceiling |
 | `b/snapshot.h` | `GRCORE_Snapshot`: an immutable, reference-counted image of a paused or idle context, made of one named blob per key that has hooks; `grcore_context_snapshot` and `grcore_context_restore`, which is atomic (a destination that cannot take it is left as it was); a bounded writer and reader for a hook's bytes |
+| `b/profile.h` | `GRCORE_Profiler`: a sampling profiler, one OBSERVE registration and one request kind; a request makes the next poll walk the frames and count the locations (self and inclusive) into a fixed table; an optional timer thread; no allocation in the handler; biased to safepoints |
 | `b/roots.h` | root sources: how a collector finds a context's roots (precise slots and conservative ranges) through B's types alone |
 | `a/engine.h` | `GRCORE_EngineDescriptor`: an engine's slot kinds, locator, inspector, scope interface and conservative decoder, registered per context; `free` |
 | `a/stack.h` | `GRCORE_Stack`: the context's guest stack of frames named by offset, growing by copy, with the depth budget counting frames; `grcore_stack_poll` records a poll identity; `free` |

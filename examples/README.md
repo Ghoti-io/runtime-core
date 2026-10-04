@@ -17,6 +17,7 @@ an example that stops working fails the build. Run them with the same
 | Read how much of its own budget a scope used, and how the parent's clock stops while a child runs | [`scoped_pages.c`](scoped_pages.c), `main` |
 | Freeze a paused context into a snapshot, restore it into two fresh contexts (one on another thread) and finish all three the same way | [`snapshot_resume.c`](snapshot_resume.c), `main` |
 | Give a key snapshot hooks: write its state, rebuild it in a CHECK then an APPLY pass, undo it on ABANDON | [`snapshot_resume.c`](snapshot_resume.c), `loop_snapshot`, `loop_restore`, `loop_settle` |
+| Profile a guest by sampling: attach a profiler, ask for samples by hand and with the timer, read self and inclusive counts by location | [`profile_toy.c`](profile_toy.c), `main` |
 | Write an entry function that can be paused and resumed without keeping a C frame | [`pause_resume.c`](pause_resume.c), `loop_entry` |
 
 The examples use no engine. In `pause_resume.c` the "guest" is a counting loop

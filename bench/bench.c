@@ -632,6 +632,72 @@ static uint64_t snapshot_restore_run(uint64_t iterations) {
   return sink;
 }
 
+/* One profiler sample at a given stack depth: a request posted through the
+ * port, then the poll that takes it (a frame walk counted into the table, the
+ * request cleared). The figure is per sample, post included. Locations come
+ * from `bench_locate`, so every frame is one location: the cost is the walk
+ * and the lookups, not the table growing. */
+typedef struct {
+  uint64_t iterations;
+  uint64_t sink;
+  unsigned depth;
+  GRCORE_Profiler * profiler;
+} SampleLoop;
+
+static GRCORE_Step profile_sample_entry(GRCORE_Context * context, void * state) {
+  SampleLoop * loop = state;
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  for (unsigned i = 0; i < loop->depth; i++) {
+    GRCORE_FrameRef frame;
+    if (grcore_stack_push(stack, 1, 1, &frame) != GRCORE_OK) {
+      setup_failed("push");
+    }
+  }
+  for (uint64_t i = 0; i < loop->iterations; i++) {
+    if (grcore_profiler_request(loop->profiler) != GRCORE_OK) {
+      setup_failed("request");
+    }
+    loop->sink += (uint64_t)grcore_stack_poll(context, 1, i);
+  }
+  return GRCORE_STEP_FINISHED;
+}
+
+static uint64_t profile_sample_run(uint64_t iterations, unsigned depth) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  GRCORE_Profiler * profiler;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK ||
+      grcore_context_create(group, NULL, &context) != GRCORE_OK ||
+      grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK ||
+      engine != 1 ||
+      grcore_profiler_attach(context, 0, &profiler) != GRCORE_OK) {
+    setup_failed("setup");
+  }
+  SampleLoop loop = {iterations, 0, depth, profiler};
+  GRCORE_Outcome outcome;
+  if (grcore_run(context, profile_sample_entry, &loop, &outcome) != GRCORE_OK ||
+      outcome != GRCORE_OUTCOME_FINISHED) {
+    setup_failed("run");
+  }
+  GRCORE_ProfileTotals totals;
+  if (grcore_profiler_report(profiler, NULL, 0, NULL, &totals) != GRCORE_OK ||
+      totals.samples != iterations) {
+    setup_failed("every request must have taken one sample");
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return loop.sink + totals.samples;
+}
+
+static uint64_t profile_sample_1_run(uint64_t iterations) {
+  return profile_sample_run(iterations, 1);
+}
+
+static uint64_t profile_sample_32_run(uint64_t iterations) {
+  return profile_sample_run(iterations, 32);
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"ctx-create", context_create_destroy_run, 1000u * 1000u, 1000u},
@@ -648,6 +714,8 @@ static const Case cases[] = {
     {"roots-16", roots_run, 50u * 1000u * 1000u, 10000u},
     {"snapshot-take", snapshot_take_run, 1u * 1000u * 1000u, 1000u},
     {"snapshot-restore", snapshot_restore_run, 2u * 1000u * 1000u, 1000u},
+    {"profile-sample-1", profile_sample_1_run, 5u * 1000u * 1000u, 10000u},
+    {"profile-sample-32", profile_sample_32_run, 2u * 1000u * 1000u, 10000u},
 };
 
 #define REPEATS 7

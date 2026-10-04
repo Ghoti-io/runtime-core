@@ -6,7 +6,7 @@ and `resume`, the budgets with their fuel scopes, and root sources); and all of
 A (the guest stack, engine descriptors, the abstract frame, the frame walk and
 scopes, activation records, the unwinder and budget scopes), and context
 snapshots (the snapshot object and the hooks on keys, and the guest stack's own
-hooks). What is not here is the collector, the JIT and the debugger, each a
+hooks), and the sampling profiler (an OBSERVE service with an optional timer). What is not here is the collector, the JIT and the debugger, each a
 library of its own, taken from the runtime stack's architecture spine (AD-1 to
 AD-26).
 
@@ -739,18 +739,102 @@ setting three counters has one place to fail.
   blob, is a context that would be partly restored; it is refused as the
   mismatch it is.
 
+## B, part 4: the sampling profiler
+
+`b/profile.h` answers CAP-12: where a guest's time goes. It is one keyed
+registration, phase OBSERVE (AD-5, AD-19), with one request kind that belongs to
+that key, and it is the one service the core adds to the poll.
+
+**A sample.** Anything that posts the kind makes the *next poll* take one sample.
+The OBSERVE handler sees its own kind pending, clears it (the debugger and the
+JIT clear theirs the same way), and walks the frames innermost first through
+`grcore_frame_walk_begin` and `_next`, which is legal because `poll_slow` leaves
+the context at-poll for the whole poll. The innermost frame's location gets a
+*self* hit; every distinct location in the walk gets an *inclusive* hit, so a
+recursive function counts once per sample. A poll with an empty guest stack is a
+sample counted in `no_frame` (a subset of `samples`) that adds no entry.
+
+The profiler knows no engine. It reads a frame only through the engine
+descriptor's `locate`, so one profiler serves Tang, a later Wasm engine and the
+JIT, and because a poll identity is the same on every tier (AD-18) the profile
+of an interpreted run and the profile of a JIT run of one program agree. It
+includes nothing from `runtime-heap`, `runtime-jit`, an engine or the debugger.
+
+**What the handler may do.** It votes nothing, charges no fuel, changes nothing
+the guest can see and allocates nothing. The location table is a fixed capacity
+(512 by default) set at attach and taken then through the context's counting
+allocator as one block each for the entries and the hash index; a location that
+does not fit is counted in `dropped` and never allocated for. Locations are keyed
+by the *text* of the file and the line, not by pointer, because an engine may
+hand out two pointers to equal strings; the profiler keeps the first pointer it
+saw, which `GRCORE_Location` already says must outlive the context's use of it.
+It commutes with every other OBSERVE and DECIDE handler, which the phase-shuffle
+test checks over many seeds.
+
+**Triggers.** `grcore_profiler_request` posts the kind through the context's port
+from any thread. `grcore_profiler_timer_start(interval_us)` runs a thread that
+calls it every interval. The timer holds only a retained port and the kind and
+touches no guest state (AD-4, AD-6); the key's `destroy` stops it and joins it
+before the profiler is freed, so a context destroyed while the timer runs is safe
+(the TSan target exercises this). A zero interval and a second start are refused.
+The sample rate is the host's: a tick that finds a sample already pending merges
+with it, so a guest that polls rarely is sampled at its poll rate.
+
+This is the one place the core starts a thread of its own. It is an opt-in
+convenience over `grcore_port_post`, which any host thread could call, and it is
+the only part of the library that sleeps.
+
+**Safepoint bias, stated.** A sample is taken at the next poll after the request,
+so time between polls is charged to the poll that ends it: in a loop, to the
+loop's back-edge poll. The bias is the same on every tier. It is the price of
+reading a guest stack only where it is consistent (AD-4: another thread acts on a
+context only by a request), and it means a profile says "where the guest was when
+it next could be asked", not "where the CPU was".
+
+**Reading.** `grcore_profiler_report` copies entries (file, line, self,
+inclusive) into a caller array, ordered by self descending, then inclusive
+descending, then file text and line, so a report is deterministic; it fills a
+smaller array with the first entries of that order by insertion, with no scratch
+memory. It and `grcore_profiler_reset` (which empties the table, so its locations
+are free again) are the owner's and are refused inside a poll. Neither allocates.
+
+**Snapshots.** The key has no `snapshot` hook, so the profiler is part of no
+snapshot: a context with one snapshots and restores, and the restored context has
+none, as the host attaches again on the destination.
+
+**The fast path.** Nothing here is on the poll's fast path: a context with no
+profiler, or no sample pending, runs exactly the code it ran before. The poll
+benchmark agrees (`poll-fast` 1.51 ns and `stack-poll` 2.65 ns with the profiler
+compiled in, 1.58 and 2.68 without, run-to-run noise). A sample itself costs
+about 100 ns at depth one and about 30 ns per further frame (`profile-sample-1`,
+`profile-sample-32`), post included, so a 1 kHz timer costs on the order of a
+ten-thousandth of the guest's time.
+
+*Rejected:*
+
+- *SIGPROF with a program-counter sample.* A signal handler cannot walk a guest
+  stack that may be mid-push, and AD-4 allows another thread to act on a context
+  only by a request.
+- *A sampler thread that reads the guest stack.* The stack belongs to the owner
+  (AD-6); a thread reading it races every push.
+- *Counting at every poll.* That is instrumentation, not sampling, and it adds to
+  the fast path every guest pays.
+- *Allocating a new entry in the handler.* A handler is read-only and is given no
+  allocating API; a fixed table, with a counted overflow, keeps that true and
+  makes a full table a measurement rather than a failure.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and fourteen real cases: creating and destroying a context, a
+was taken on, and sixteen real cases: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
 poll's slow path through one handler in each phase, a post to a port, a push
 and pop of a guest frame, the engine-aware poll's fast path, a walk of
 sixteen frames at a pause (reported per frame read), an activation record
 entered and left, a budget scope opened, charged and closed, and the
-enumeration of the roots of sixteen frames (reported per frame), a snapshot taken of a context holding one 8 KiB blob (and released), and the restore of it. No budgets
+enumeration of the roots of sixteen frames (reported per frame), a snapshot taken of a context holding one 8 KiB blob (and released), and the restore of it, and one profiler sample at depth one and at depth thirty-two (a request posted, then the poll that takes it). No budgets
 are recorded: the spine records them once a first measurement of a real case
 exists.
 
