@@ -133,8 +133,10 @@ TEST(Context, ConfiguredOptionsAreCopiedNotShared) {
 }
 
 TEST(Context, CardinalityOneRefusesASecondAndKeepsTheFirst) {
-  World w;
+  // Declared before the world: the world's teardown reads the registered
+  // payload (log_destroy), so it must still be alive then.
   char a[] = "a", b[] = "b";
+  World w;
   EXPECT_EQ(grcore_context_register(w.ctx, &kOne, a), GRCORE_OK);
   EXPECT_EQ(grcore_context_register(w.ctx, &kOne, b), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_slot(w.ctx, &kOne), a);
@@ -142,8 +144,8 @@ TEST(Context, CardinalityOneRefusesASecondAndKeepsTheFirst) {
 }
 
 TEST(Context, CardinalityManyKeepsBothInOrder) {
-  World w;
   char a[] = "a", b[] = "b";
+  World w;
   EXPECT_EQ(grcore_context_register(w.ctx, &kMany, a), GRCORE_OK);
   EXPECT_EQ(grcore_context_register(w.ctx, &kMany, b), GRCORE_OK);
   EXPECT_EQ(grcore_context_registration_count(w.ctx), 2u);
@@ -158,10 +160,10 @@ TEST(Context, CardinalityManyKeepsBothInOrder) {
 }
 
 TEST(Context, KeysAreIdentifiedByAddressNotName) {
+  char a[] = "a", b[] = "b";  // before the world: its teardown reads them
   World w;
   static const GRCORE_Key twin = {"one", GRCORE_CARDINALITY_ONE,
       GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr};
-  char a[] = "a", b[] = "b";
   EXPECT_EQ(grcore_context_register(w.ctx, &kOne, a), GRCORE_OK);
   EXPECT_EQ(grcore_context_register(w.ctx, &twin, b), GRCORE_OK);
   EXPECT_EQ(grcore_context_slot(w.ctx, &twin), b);
@@ -169,8 +171,8 @@ TEST(Context, KeysAreIdentifiedByAddressNotName) {
 }
 
 TEST(Context, RegisterRefusalsLeaveTheTableUnchanged) {
-  World w;
   char a[] = "a";
+  World w;
   EXPECT_EQ(grcore_context_register(w.ctx, &kMany, nullptr), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_register(w.ctx, nullptr, a), GRCORE_ERR_INVALID);
   GRCORE_Key bad_card = {"x", static_cast<GRCORE_Cardinality>(9),
@@ -187,8 +189,8 @@ TEST(Context, RegisterRefusalsLeaveTheTableUnchanged) {
 }
 
 TEST(Context, RegisterFromAnotherThreadIsRefused) {
-  World w;
   char a[] = "a";
+  World w;
   EXPECT_EQ(on_other_thread([&] {
     return grcore_context_register(w.ctx, &kMany, a);
   }), GRCORE_ERR_INVALID);
@@ -196,8 +198,8 @@ TEST(Context, RegisterFromAnotherThreadIsRefused) {
 }
 
 TEST(Context, RegisterIsAllowedWhileParkedAtPollOrPaused) {
-  World w;
   char a[] = "a";
+  World w;
   w.ctx->config = GRCORE_CONFIG_PARKED_INSIDE;
   EXPECT_EQ(grcore_context_register(w.ctx, &kMany, a), GRCORE_OK);
   w.ctx->config = GRCORE_CONFIG_AT_POLL;
