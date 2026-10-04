@@ -4,9 +4,11 @@
 contexts, options, keys, memory accounting, requests and ports, the poll, `run`
 and `resume`, the budgets with their fuel scopes, and root sources); and all of
 A (the guest stack, engine descriptors, the abstract frame, the frame walk and
-scopes, activation records, the unwinder and budget scopes). What is not here is
-the collector, the JIT and the debugger, each a library of its own, taken from
-the runtime stack's architecture spine (AD-1 to AD-26).
+scopes, activation records, the unwinder and budget scopes), and context
+snapshots (the snapshot object and the hooks on keys, and the guest stack's own
+hooks). What is not here is the collector, the JIT and the debugger, each a
+library of its own, taken from the runtime stack's architecture spine (AD-1 to
+AD-26).
 
 ## What this library is
 
@@ -618,18 +620,104 @@ reader to each code generator or engine: the format is the core's (AD-14), and
 a reader written beside each writer is how a writer and a reader come to agree
 only with each other.
 
+## B, part 3: context snapshots
+
+A snapshot (`b/snapshot.h`) is the first thing in this library that outlives
+the context it describes. It is the spine's reserved seam for CAP-11: a context
+started from a frozen, pre-initialised image gives the output of one
+initialised from scratch (AD-12, AD-19, AD-20).
+
+**What a snapshot is.** A list of named byte blobs, one per registered key that
+has snapshot hooks, written by the keys; the core does not know what is in
+them. It stores no host pointer and no address (a reference a key writes is an
+index, a host function is a name), is immutable once made, counts references
+with an atomic (retain relaxed, the release that reaches zero acquire-release,
+as `GRCORE_Code` does), keeps its own copy of the allocator it was made with
+(it is not the context's, since a snapshot may outlive the context), and may be
+restored any number of times, into contexts on any thread, concurrently. It is
+an in-memory object. A byte format or a file is **not done** (the spine defers
+it); the blobs' contents are deliberately in native byte order and host sizes,
+and `reader_string` hands out pointers into the snapshot, because nothing here
+is parsed from outside the process.
+
+**When one may be taken (AD-20).** By the owning thread only, with the context
+paused or parked outside `run`, with no fuel scope open and no nested
+activation; the guest stack's own hook adds "no activation record and no budget
+scope record" (the next story's commit). Every refusal is `ERR_INVALID` and
+changes nothing: the keys' shape is checked before anything is allocated (a key
+with `snapshot` but no `restore` or `settle`, no name, more than one
+registration or a name another hooked key has), and a hook that refuses frees the
+partial snapshot. Reading a running or at-poll context is never allowed, which
+is AD-20's rule for reading guest state and not a restriction added here.
+
+**Restore is create-then-fill, and atomic.** The host builds the destination as
+it would for a fresh run, registers the same keys, and calls
+`grcore_context_restore`. The structure of the call, and not the care of each
+hook, is what makes it atomic:
+
+1. The key set must be the snapshot's exactly: every blob has a destination key
+   of its name, and the destination has no hooked key without a blob. (A key
+   without hooks is not part of any snapshot and the host registers it again.)
+2. **CHECK**: every key, in snapshot order, is asked whether the blob fits,
+   and must change nothing. A mismatch (an engine table, a program, a heap
+   codec, a root layout) is refused here, before any change.
+3. **APPLY**: every key builds its state, in snapshot order. A failure (the
+   destination's budget, an allocation) undoes the keys applied before it,
+   newest first, through their ABANDON settle.
+4. **PREPARE**, in the destination's registration order: each key proves that
+   COMMIT cannot fail and allocates whatever it needs; a failure abandons
+   everything.
+5. **COMMIT**, same order, cannot fail; then a paused snapshot makes the
+   destination paused.
+
+`settle` is a separate hook, run after every APPLY, because state that refers
+across keys (the heap writes root slots, which live in the frames and the
+engine's own tables) can only be finished once every key has built its part;
+the registration order decides nothing about restoring, so two keys need not
+know which was registered first. The three modes of `settle` exist because a
+commit that can fail after another key has committed has nothing to roll back
+to: PREPARE is where it may fail, and COMMIT is final.
+
+**What the core itself captures.** Only whether the context was paused, and the
+line it paused at. Restoring a paused snapshot leaves the destination paused, so
+`grcore_resume` continues it, with the entry function and its state the host
+supplies in the restore environment (a function address cannot be in a
+snapshot); the pause location's file is borrowed from the host the same way.
+Not captured, supplied again as for a fresh run: the group, the options and
+budgets (fuel used starts at zero, the limits are the destination's), the page
+provider and allocator, the request port, the keys that have no hooks, and the
+keys that paused it (a restored context reports none).
+
+**Rejected alternatives.**
+
+- *Copying the context's memory.* The page provider picks addresses, so a byte
+  copy needs the same addresses, ties a snapshot to one process layout and
+  cannot be shared; and it carries every function pointer into a "frozen"
+  object, which the seam forbids (AD-12).
+- *A registry of serialisers in the core.* The core would then know what a heap
+  and an engine are (AD-1). Keys already name who owns what; the hooks are one
+  more field of the thing that already identifies them.
+- *Hooks that restore in one pass.* The heap restores before the engine has
+  rebuilt its frames if it was registered first, and the order a host registers
+  in must not decide what a restore means; two passes (apply, settle) remove the
+  dependence. A rollback needs a PREPARE that cannot be skipped, so settle has
+  three modes rather than a second hook.
+- *A snapshot that refuses nothing.* A blob with no key, or a key with no
+  blob, is a context that would be partly restored; it is refused as the
+  mismatch it is.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and twelve real cases: creating and destroying a context, a
+was taken on, and fourteen real cases: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
 poll's slow path through one handler in each phase, a post to a port, a push
 and pop of a guest frame, the engine-aware poll's fast path, a walk of
 sixteen frames at a pause (reported per frame read), an activation record
 entered and left, a budget scope opened, charged and closed, and the
-enumeration of the roots of sixteen frames (reported per frame). No budgets
+enumeration of the roots of sixteen frames (reported per frame), a snapshot taken of a context holding one 8 KiB blob (and released), and the restore of it. No budgets
 are recorded: the spine records them once a first measurement of a real case
 exists.
 

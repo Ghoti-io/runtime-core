@@ -20,9 +20,9 @@
 namespace {
 
 const GRCORE_Key kSvc = {"svc", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_NONE,
-    nullptr, nullptr};
+    nullptr, nullptr, nullptr, nullptr, nullptr};
 const GRCORE_Key kOther = {"other", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_NONE, nullptr, nullptr};
+    GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr};
 
 uint64_t word_of(const GRCORE_Context * c) {
   return __atomic_load_n(&c->request_word, __ATOMIC_ACQUIRE);

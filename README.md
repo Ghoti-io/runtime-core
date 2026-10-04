@@ -89,12 +89,13 @@ local name), and, in `b/` and `a/`:
 | `b/group.h` | `GRCORE_Group`: created by the host, owns the allocator and page provider its contexts draw on; refuses to be destroyed while it has contexts |
 | `b/context.h` | `GRCORE_Context`: four states (parked, running, at-poll, paused), one owning thread, `acquire`/`release` to migrate, keyed registration, a counting allocator and page provider, memory getters |
 | `b/options.h` | `GRCORE_Options`: opaque, set through setters; four budgets that are `GRCORE_UNLIMITED` until set, plus keyed byte options |
-| `b/key.h` | `GRCORE_Key`: a static object with a cardinality, a phase and a destructor; identity is its address |
+| `b/key.h` | `GRCORE_Key`: a static object with a cardinality, a phase, a destructor, a poll handler and three optional snapshot hooks (`snapshot`, `restore`, `settle`); identity is its address |
 | `b/page.h` | `GRCORE_PageProvider`: the pages `runtime-heap` and `runtime-jit` ask for, and `grcore_page_protect`, which flips a mapping between read-write and read-execute |
 | `b/request.h` | request kinds, and `GRCORE_Port`: the only way another thread acts on a context, reference-counted and valid after its context is gone |
 | `b/poll.h` | `grcore_poll`, the runtime poll for natives, the four phases and their verdicts, `grcore_pollcall_pause_allowed` (whether a pause vote would return to the host, which a debugger asks before voting one), and the phase-shuffle test mode |
 | `b/run.h` | `grcore_run`, `grcore_resume`, `grcore_context_wait`, and the pause's keys, location and unwind reason |
 | `b/budget.h` | fuel, memory (budget, reserve, refusals) and depth enforcement; fuel scopes, an exclusive budget under the request's ceiling |
+| `b/snapshot.h` | `GRCORE_Snapshot`: an immutable, reference-counted image of a paused or idle context, made of one named blob per key that has hooks; `grcore_context_snapshot` and `grcore_context_restore`, which is atomic (a destination that cannot take it is left as it was); a bounded writer and reader for a hook's bytes |
 | `b/roots.h` | root sources: how a collector finds a context's roots (precise slots and conservative ranges) through B's types alone |
 | `a/engine.h` | `GRCORE_EngineDescriptor`: an engine's slot kinds, locator, inspector, scope interface and conservative decoder, registered per context; `free` |
 | `a/stack.h` | `GRCORE_Stack`: the context's guest stack of frames named by offset, growing by copy, with the depth budget counting frames; `grcore_stack_poll` records a poll identity; `free` |

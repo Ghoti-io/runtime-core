@@ -237,13 +237,13 @@ inline void probe_handler(GRCORE_Context * c, void * value, GRCORE_PollCall * ca
   }
 }
 inline const GRCORE_Key kDecideKey = {"decide", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_DECIDE, nullptr, probe_handler};
+    GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
 inline const GRCORE_Key kActKey = {"act", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_ACT, nullptr, probe_handler};
+    GRCORE_PHASE_ACT, nullptr, probe_handler, nullptr, nullptr, nullptr};
 inline const GRCORE_Key kObserveKey = {"observe", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_OBSERVE, nullptr, probe_handler};
+    GRCORE_PHASE_OBSERVE, nullptr, probe_handler, nullptr, nullptr, nullptr};
 inline const GRCORE_Key kYieldKey = {"yield", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_YIELD, nullptr, probe_handler};
+    GRCORE_PHASE_YIELD, nullptr, probe_handler, nullptr, nullptr, nullptr};
 
 /* ---- Engines and frames ----------------------------------------------- */
 

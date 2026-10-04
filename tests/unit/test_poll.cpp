@@ -228,9 +228,9 @@ TEST(Poll, TheStrongestVerdictWinsAndOnlyItsVotersAreReported) {
 
 TEST(Poll, ThePausingKeysAreInCanonicalOrderBuiltInsByKindThenRegistration) {
   static const GRCORE_Key kA = {"A", GRCORE_CARDINALITY_MANY,
-      GRCORE_PHASE_DECIDE, nullptr, probe_handler};
+      GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
   static const GRCORE_Key kB = {"B", GRCORE_CARDINALITY_MANY,
-      GRCORE_PHASE_DECIDE, nullptr, probe_handler};
+      GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
   RunWorld w(0);
   Probe a{"a"}, b{"b"};
   a.vote = b.vote = GRCORE_VERDICT_PAUSE;
@@ -253,7 +253,7 @@ TEST(Poll, ThePausingKeysAreInCanonicalOrderBuiltInsByKindThenRegistration) {
 
 TEST(Poll, TheLowestRegistrationIndexAmongUnwindersChoosesTheResult) {
   static const GRCORE_Key kA = {"A", GRCORE_CARDINALITY_MANY,
-      GRCORE_PHASE_DECIDE, nullptr, probe_handler};
+      GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
   for (int swap = 0; swap < 2; swap++) {
     RunWorld w;
     Probe guest{"guest"}, limit{"limit"};

@@ -156,13 +156,13 @@ static void decide_memory(
 
 static const GRCORE_Key core_keys[CORE] = {
     {"terminate", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
-        decide_terminate},
-    {"time", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_time},
+        decide_terminate, NULL, NULL, NULL},
+    {"time", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_time, NULL, NULL, NULL},
     {"interrupt", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
-        decide_interrupt},
-    {"fuel", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_fuel},
+        decide_interrupt, NULL, NULL, NULL},
+    {"fuel", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_fuel, NULL, NULL, NULL},
     {"memory", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
-        decide_memory},
+        decide_memory, NULL, NULL, NULL},
 };
 
 const GRCORE_Key * grcore_core_key(GRCORE_RequestKind kind) {

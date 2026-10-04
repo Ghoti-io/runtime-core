@@ -80,10 +80,10 @@ Outcome poll_once(uint64_t seed, bool shuffle,
 }
 
 /* A key per voter, so the names of the keys that voted can be told apart. */
-const GRCORE_Key kV0 = {"v0", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler};
-const GRCORE_Key kV1 = {"v1", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler};
-const GRCORE_Key kV2 = {"v2", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler};
-const GRCORE_Key kV3 = {"v3", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler};
+const GRCORE_Key kV0 = {"v0", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
+const GRCORE_Key kV1 = {"v1", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
+const GRCORE_Key kV2 = {"v2", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
+const GRCORE_Key kV3 = {"v3", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
 const GRCORE_Key * const kVoters[] = {&kV0, &kV1, &kV2, &kV3};
 
 /* Like poll_once, but the DECIDE voters are registered under their own keys,

@@ -246,7 +246,7 @@ TEST(Engine, DestroyRunsTheGuestKeyInReverseRegistrationOrder) {
       [](GRCORE_Context * c, void *) {
         stack_gone_when_ours_ran = grcore_context_stack(c) == nullptr;
       },
-      nullptr};
+      nullptr, nullptr, nullptr, nullptr};
   RunWorld w;
   int token = 0;
   ASSERT_EQ(grcore_context_register(w.ctx, &kEarly, &token), GRCORE_OK);

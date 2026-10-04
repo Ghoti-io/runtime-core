@@ -34,6 +34,8 @@
 
 #include <ghoti.io/runtime-core/macros.h>
 
+#include <ghoti.io/runtime-core/core.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,6 +61,94 @@ typedef struct GRCORE_PollCall GRCORE_PollCall;
  */
 typedef void (*GRCORE_PollHandler)(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call);
+
+/**
+ * @brief Where a snapshot hook writes its bytes. Opaque; valid only for the
+ *   duration of the hook. Its calls are in snapshot.h.
+ */
+typedef struct GRCORE_SnapshotWriter GRCORE_SnapshotWriter;
+
+/**
+ * @brief Where a restore hook reads its bytes. Opaque; valid only for the
+ *   duration of the hook. Its calls are in snapshot.h.
+ */
+typedef struct GRCORE_SnapshotReader GRCORE_SnapshotReader;
+
+/** @brief What a `restore` hook is being asked to do. */
+typedef enum {
+  /** Validate only: say whether the blob fits this destination, change
+   *  nothing. Run for every key before any key is applied. */
+  GRCORE_RESTORE_CHECK = 0,
+  /** Build the state. Whatever it builds is undone by an ABANDON settle. */
+  GRCORE_RESTORE_APPLY
+} GRCORE_RestoreMode;
+
+/** @brief What a `settle` hook is being asked to do. */
+typedef enum {
+  /** Every key has applied: verify that COMMIT cannot fail, allocate whatever
+   *  it needs, change nothing visible. May fail. */
+  GRCORE_SETTLE_PREPARE = 0,
+  /** Make the restored state final. Cannot fail. */
+  GRCORE_SETTLE_COMMIT,
+  /** Undo this key's APPLY, leaving the destination as it was fresh. Called
+   *  only when the restore ended before any COMMIT, and only for a key whose
+   *  APPLY succeeded. Cannot fail. */
+  GRCORE_SETTLE_ABANDON
+} GRCORE_SettleMode;
+
+/**
+ * @brief Writes a registration's state into a snapshot (AD-19).
+ *
+ * Called by `grcore_context_snapshot` with the context paused or parked
+ * outside `run`. It must not change the context. The bytes it writes must
+ * hold no host address: a heap reference is an index, a host function a name.
+ *
+ * @param context The context.
+ * @param value The value this key was registered with.
+ * @param writer Where the bytes go.
+ * @return ::GRCORE_OK, or the refusal: ::GRCORE_ERR_INVALID for state that
+ *   cannot be captured (the snapshot is then not made), ::GRCORE_ERR_OOM or
+ *   ::GRCORE_ERR_LIMIT from the writer.
+ */
+typedef GRCORE_Result (*GRCORE_SnapshotHook)(
+    GRCORE_Context * context, void * value, GRCORE_SnapshotWriter * writer);
+
+/**
+ * @brief Rebuilds a registration's state from a snapshot.
+ *
+ * Called twice by `grcore_context_restore` for each blob: once in
+ * ::GRCORE_RESTORE_CHECK, which must change nothing, and then in
+ * ::GRCORE_RESTORE_APPLY, in snapshot order. The reader starts at the blob's
+ * first byte each time.
+ *
+ * @param context The destination context.
+ * @param value The value this key is registered with in the destination.
+ * @param reader The blob.
+ * @param env What the host's environment lookup returned for this key's name.
+ * @param mode CHECK or APPLY.
+ * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID when the destination does not
+ *   match the blob (CHECK only, ideally); ::GRCORE_ERR_LIMIT or
+ *   ::GRCORE_ERR_OOM when APPLY ran out of room, having released whatever it
+ *   had built.
+ */
+typedef GRCORE_Result (*GRCORE_RestoreHook)(GRCORE_Context * context,
+    void * value, GRCORE_SnapshotReader * reader, void * env,
+    GRCORE_RestoreMode mode);
+
+/**
+ * @brief Finishes a restore, in the destination's registration order.
+ *
+ * Runs once every key has applied, so that state that refers across keys (the
+ * heap writes root slots, which live in other keys' frames) can be completed.
+ *
+ * @param context The destination context.
+ * @param value The value this key is registered with.
+ * @param env What the host's environment lookup returned for this key's name.
+ * @param mode PREPARE, COMMIT or ABANDON.
+ * @return ::GRCORE_OK, or the refusal (PREPARE only).
+ */
+typedef GRCORE_Result (*GRCORE_SettleHook)(GRCORE_Context * context,
+    void * value, void * env, GRCORE_SettleMode mode);
 
 /**
  * @brief The poll phase a registration belongs to.
@@ -100,10 +190,25 @@ typedef struct GRCORE_Key {
    * NULL, and is then never run. A key whose phase is ::GRCORE_PHASE_NONE
    * is never polled whatever this holds.
    *
-   * This field is last, so a static key written before it existed keeps
-   * working: C zero-fills the omitted initialiser.
+   * A static key written before this field existed keeps working: C
+   * zero-fills the omitted initialiser.
    */
   GRCORE_PollHandler poll;
+  /**
+   * Writes the registration's state into a snapshot (snapshot.h). May be
+   * NULL, and the key is then not part of any snapshot: the host registers it
+   * again on the destination. A key with `snapshot` must also have `restore`
+   * and `settle`, or taking a snapshot of a context that holds it is refused.
+   * It must have cardinality one.
+   *
+   * The three snapshot fields are last, so a static key written before them
+   * keeps working: C zero-fills the omitted initialisers.
+   */
+  GRCORE_SnapshotHook snapshot;
+  /** Rebuilds the state on a destination context. See ::GRCORE_RestoreHook. */
+  GRCORE_RestoreHook restore;
+  /** Completes a restore across keys. See ::GRCORE_SettleHook. */
+  GRCORE_SettleHook settle;
 } GRCORE_Key;
 
 #ifdef __cplusplus

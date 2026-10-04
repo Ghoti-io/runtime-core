@@ -145,14 +145,14 @@ static uint64_t counting_malloc_free_run(uint64_t iterations) {
 }
 
 static const GRCORE_Key bench_keys[8] = {
-    {"k0", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
-    {"k1", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
-    {"k2", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
-    {"k3", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
-    {"k4", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
-    {"k5", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
-    {"k6", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
-    {"k7", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL},
+    {"k0", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
+    {"k1", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
+    {"k2", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
+    {"k3", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
+    {"k4", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
+    {"k5", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
+    {"k6", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
+    {"k7", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, NULL, NULL, NULL, NULL, NULL},
 };
 
 /* A keyed slot lookup with eight registrations, asking for the last: the
@@ -231,10 +231,10 @@ static void nothing(GRCORE_Context * c, void * value, GRCORE_PollCall * call) {
 }
 
 static const GRCORE_Key slow_keys[4] = {
-    {"b-decide", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, NULL, nothing},
-    {"b-act", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_ACT, NULL, nothing},
-    {"b-observe", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_OBSERVE, NULL, nothing},
-    {"b-yield", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_YIELD, NULL, nothing},
+    {"b-decide", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, NULL, nothing, NULL, NULL, NULL},
+    {"b-act", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_ACT, NULL, nothing, NULL, NULL, NULL},
+    {"b-observe", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_OBSERVE, NULL, nothing, NULL, NULL, NULL},
+    {"b-yield", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_YIELD, NULL, nothing, NULL, NULL, NULL},
 };
 
 /* The slow path with one handler in each phase and a request pending that
@@ -547,6 +547,91 @@ static uint64_t roots_run(uint64_t iterations) {
   return sink;
 }
 
+/* A key with snapshot hooks whose state is a block of words, so that a take
+ * and a restore each move a known number of bytes through B's writer and
+ * reader. The state is plain memory; nothing here is an engine. */
+#define SNAP_WORDS 1024u
+static uint64_t snap_block[SNAP_WORDS];
+
+static GRCORE_Result snap_write(
+    GRCORE_Context * context, void * value, GRCORE_SnapshotWriter * writer) {
+  (void)context;
+  return grcore_snapshot_writer_write(writer, value, SNAP_WORDS * 8u);
+}
+
+static GRCORE_Result snap_read(GRCORE_Context * context, void * value,
+    GRCORE_SnapshotReader * reader, void * env, GRCORE_RestoreMode mode) {
+  (void)context;
+  (void)env;
+  if (mode == GRCORE_RESTORE_CHECK) {
+    return GRCORE_OK;
+  }
+  return grcore_snapshot_reader_read(reader, value, SNAP_WORDS * 8u);
+}
+
+static GRCORE_Result snap_settle(
+    GRCORE_Context * context, void * value, void * env, GRCORE_SettleMode mode) {
+  (void)context;
+  (void)value;
+  (void)env;
+  (void)mode;
+  return GRCORE_OK;
+}
+
+static const GRCORE_Key snap_key = {"bench-snapshot", GRCORE_CARDINALITY_ONE,
+    GRCORE_PHASE_NONE, NULL, NULL, snap_write, snap_read, snap_settle};
+
+static GRCORE_Context * snap_context(GRCORE_Group ** out_group) {
+  GRCORE_Context * context;
+  if (grcore_group_create(NULL, NULL, out_group) != GRCORE_OK ||
+      grcore_context_create(*out_group, NULL, &context) != GRCORE_OK ||
+      grcore_context_register(context, &snap_key, snap_block) != GRCORE_OK) {
+    setup_failed("setup");
+  }
+  return context;
+}
+
+/* One take of a context holding one 8 KiB blob, and the release of it. */
+static uint64_t snapshot_take_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context = snap_context(&group);
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRCORE_Snapshot * snapshot;
+    snap_block[0] = i;
+    if (grcore_context_snapshot(context, NULL, &snapshot) != GRCORE_OK) {
+      setup_failed("snapshot");
+    }
+    sink += grcore_snapshot_size(snapshot);
+    grcore_snapshot_release(snapshot);
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
+/* One restore of that snapshot into a context (the same one each time, which
+ * the keys allow: the toy state is plain memory). */
+static uint64_t snapshot_restore_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context = snap_context(&group);
+  GRCORE_Snapshot * snapshot;
+  if (grcore_context_snapshot(context, NULL, &snapshot) != GRCORE_OK) {
+    setup_failed("snapshot");
+  }
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    if (grcore_context_restore(context, snapshot, NULL) != GRCORE_OK) {
+      setup_failed("restore");
+    }
+    sink += snap_block[i % SNAP_WORDS];
+  }
+  grcore_snapshot_release(snapshot);
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"ctx-create", context_create_destroy_run, 1000u * 1000u, 1000u},
@@ -561,6 +646,8 @@ static const Case cases[] = {
     {"activation", activation_pair_run, 50u * 1000u * 1000u, 100000u},
     {"fuel-scope", fuel_scope_run, 50u * 1000u * 1000u, 100000u},
     {"roots-16", roots_run, 50u * 1000u * 1000u, 10000u},
+    {"snapshot-take", snapshot_take_run, 1u * 1000u * 1000u, 1000u},
+    {"snapshot-restore", snapshot_restore_run, 2u * 1000u * 1000u, 1000u},
 };
 
 #define REPEATS 7
@@ -605,7 +692,7 @@ int main(int argc, char ** argv) {
           cases[c].name);
       return 1;
     }
-    printf("%-12s best %8.3f ns/op  median %8.3f ns/op  (%llu ops x %d, "
+    printf("%-16s best %8.3f ns/op  median %8.3f ns/op  (%llu ops x %d, "
            "check %016llx)\n",
         cases[c].name, best, median, (unsigned long long)n, repeats,
         (unsigned long long)sink);

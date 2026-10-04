@@ -13,7 +13,7 @@
 namespace {
 
 const GRCORE_Key kSvc = {"svc", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_NONE,
-    nullptr, nullptr};
+    nullptr, nullptr, nullptr, nullptr, nullptr};
 
 /* What a poll's fast path does when compiled: load through the offset. */
 uint64_t load_request_word(const GRCORE_Context * c) {

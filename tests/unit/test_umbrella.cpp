@@ -60,6 +60,14 @@ TEST(Umbrella, ReachesRefcountedCode) {
       GRCORE_ERR_INVALID);
 }
 
+TEST(Umbrella, ReachesSnapshots) {
+  // b/snapshot.h through the umbrella alone, from C++.
+  EXPECT_EQ(grcore_snapshot_refcount(nullptr), 0u);
+  EXPECT_EQ(grcore_snapshot_retain(nullptr), nullptr);
+  EXPECT_EQ(grcore_context_snapshot(nullptr, nullptr, nullptr), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_context_restore(nullptr, nullptr, nullptr), GRCORE_ERR_INVALID);
+}
+
 TEST(Umbrella, ReachesTheNativeFrameReaderAndWriter) {
   EXPECT_EQ(grcore_deopt_read(nullptr, nullptr, nullptr, 0), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_deopt_write_back(nullptr, nullptr, nullptr, 0),
@@ -97,7 +105,8 @@ TEST(Umbrella, EveryTypeRenameIsInEffectNotInsideAComment) {
       GRCORE_TEST_EXPAND(GRCORE_RootSource),
       GRCORE_TEST_EXPAND(GRCORE_RootVisitor),
       GRCORE_TEST_EXPAND(GRCORE_ConservativeRange),
-      GRCORE_TEST_EXPAND(GRCORE_CSegment)};
+      GRCORE_TEST_EXPAND(GRCORE_CSegment), GRCORE_TEST_EXPAND(GRCORE_Snapshot),
+      GRCORE_TEST_EXPAND(GRCORE_RestoreEnv)};
   for (const char * r : renamed) {
     EXPECT_NE(std::string(r).find("ghotiio_"), std::string::npos) << r;
   }

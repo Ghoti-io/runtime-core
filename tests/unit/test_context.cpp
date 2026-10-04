@@ -26,11 +26,11 @@ void log_destroy(GRCORE_Context *, void * value) {
 }
 
 const GRCORE_Key kOne = {"one", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
-    log_destroy, nullptr};
+    log_destroy, nullptr, nullptr, nullptr, nullptr};
 const GRCORE_Key kMany = {"many", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_DECIDE, log_destroy, nullptr};
+    GRCORE_PHASE_DECIDE, log_destroy, nullptr, nullptr, nullptr, nullptr};
 const GRCORE_Key kQuiet = {"quiet", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_YIELD, nullptr, nullptr};
+    GRCORE_PHASE_YIELD, nullptr, nullptr, nullptr, nullptr, nullptr};
 
 struct World {
   GRCORE_Group * group = nullptr;
@@ -160,7 +160,7 @@ TEST(Context, CardinalityManyKeepsBothInOrder) {
 TEST(Context, KeysAreIdentifiedByAddressNotName) {
   World w;
   static const GRCORE_Key twin = {"one", GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_NONE, nullptr, nullptr};
+      GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr};
   char a[] = "a", b[] = "b";
   EXPECT_EQ(grcore_context_register(w.ctx, &kOne, a), GRCORE_OK);
   EXPECT_EQ(grcore_context_register(w.ctx, &twin, b), GRCORE_OK);
@@ -174,9 +174,9 @@ TEST(Context, RegisterRefusalsLeaveTheTableUnchanged) {
   EXPECT_EQ(grcore_context_register(w.ctx, &kMany, nullptr), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_register(w.ctx, nullptr, a), GRCORE_ERR_INVALID);
   GRCORE_Key bad_card = {"x", static_cast<GRCORE_Cardinality>(9),
-      GRCORE_PHASE_NONE, nullptr, nullptr};
+      GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr};
   GRCORE_Key bad_phase = {"x", GRCORE_CARDINALITY_MANY,
-      static_cast<GRCORE_Phase>(9), nullptr, nullptr};
+      static_cast<GRCORE_Phase>(9), nullptr, nullptr, nullptr, nullptr, nullptr};
   EXPECT_EQ(grcore_context_register(w.ctx, &bad_card, a), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_register(w.ctx, &bad_phase, a), GRCORE_ERR_INVALID);
   ASSERT_EQ(grcore_context_transition(w.ctx, GRCORE_CONFIG_RUNNING), GRCORE_OK);
@@ -248,7 +248,7 @@ void free_through_context(GRCORE_Context * c, void * value) {
   g_blocks_at_last_destroy = static_cast<int>(grcore_context_memory_blocks(c));
 }
 const GRCORE_Key kHeld = {"held", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_NONE,
-    free_through_context, nullptr};
+    free_through_context, nullptr, nullptr, nullptr, nullptr};
 } // namespace
 
 TEST(Context, MeterBlocksEqualWhatRegistrantsStillHoldAtTheEnd) {
@@ -461,7 +461,7 @@ const GRCORE_Key kProbe = {"probe", GRCORE_CARDINALITY_MANY,
       td->slot_seen = grcore_context_slot(c, &kOne);
       td->count_seen = grcore_context_registration_count(c);
       (void)value;
-    }, nullptr};
+    }, nullptr, nullptr, nullptr, nullptr};
 } // namespace
 
 TEST(Context, ADestructorCannotChangeTheContextOrSeeDestroyedValues) {
