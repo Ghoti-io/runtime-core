@@ -159,6 +159,105 @@ else
 fi
 expect_fail 'links/empty' 'measuring nothing' "$E" --links "$work/empty"
 
+printf 'check-stamps\n'
+S="$HERE/check-stamps.py"
+expect_pass 'stamps/control' python3 "$S" "$FIX/stamps/control.mk"
+expect_fail 'stamps/planted-no-stamp' 'names no flag stamp' \
+  python3 "$S" "$FIX/stamps/planted-no-stamp.mk"
+expect_fail 'stamps/planted-unrecorded-flag' 'EXTRA_CFLAGS' \
+  python3 "$S" "$FIX/stamps/planted-unrecorded-flag.mk"
+expect_fail 'stamps/planted-link-unrecorded' 'LINK_EXTRA' \
+  python3 "$S" "$FIX/stamps/planted-link-unrecorded.mk"
+expect_fail 'stamps/planted-no-printf' 'does not printf' \
+  python3 "$S" "$FIX/stamps/planted-no-printf.mk"
+expect_fail 'stamps/planted-no-stamps' 'no flag stamps at all' \
+  python3 "$S" "$FIX/stamps/planted-no-stamps.mk"
+expect_fail 'stamps/planted-no-compile' 'no compile rules' \
+  python3 "$S" "$FIX/stamps/planted-no-compile.mk"
+expect_fail 'stamps/planted-no-link' 'no link lines' \
+  python3 "$S" "$FIX/stamps/planted-no-link.mk"
+
+printf 'check-version\n'
+V="$HERE/check-version.sh"
+MK="$ROOT/Makefile"
+expect_pass 'version/control' "$V" "$MK" "$ROOT"
+sed -e 's/VERSION_MINOR \$(VERSION_MINOR_ONLY)/VERSION_MINOR $(VERSION_PATCH_ONLY)/' \
+    -e 's/VERSION_PATCH \$(VERSION_PATCH_ONLY)/VERSION_PATCH $(VERSION_MINOR_ONLY)/' \
+    "$MK" > "$work/swapped.mk"
+expect_fail 'version/planted-minor-and-patch-swapped' 'MINOR 2' \
+  "$V" "$work/swapped.mk" "$ROOT"
+sed -e 's/VERSION_PATCH \$(VERSION_PATCH_ONLY)/VERSION_PATCH 0/' \
+    "$MK" > "$work/nopatch.mk"
+expect_fail 'version/planted-patch-dropped' 'PATCH 3' \
+  "$V" "$work/nopatch.mk" "$ROOT"
+grep -v "SPDX-License-Identifier" "$MK" > "$work/nospdx.mk"
+expect_fail 'version/planted-no-spdx' 'an SPDX identifier' \
+  "$V" "$work/nospdx.mk" "$ROOT"
+expect_fail 'version/no-makefile' 'could not generate' \
+  "$V" "$work/absent.mk" "$ROOT"
+
+printf 'check-wiring\n'
+W="$HERE/check-wiring.py"
+expect_pass 'wiring/control' python3 "$W" "$FIX/wiring/control.mk"
+expect_pass 'wiring/the real Makefile' python3 "$W" "$ROOT/Makefile"
+expect_fail 'wiring/planted-gate-dropped' 'check-gates is not in TEST_GATES' \
+  python3 "$W" "$FIX/wiring/planted-gate-dropped.mk"
+expect_fail 'wiring/planted-test-ignores-gates' 'does not depend on $(TEST_GATES)' \
+  python3 "$W" "$FIX/wiring/planted-test-ignores-gates.mk"
+expect_fail 'wiring/planted-recipe-empty' 'check-labels recipe never runs' \
+  python3 "$W" "$FIX/wiring/planted-recipe-empty.mk"
+expect_fail 'wiring/planted-edges-no-links' 'check-edges.sh --links' \
+  python3 "$W" "$FIX/wiring/planted-edges-no-links.mk"
+expect_fail 'wiring/planted-no-target' 'check-gates has no target' \
+  python3 "$W" "$FIX/wiring/planted-no-target.mk"
+expect_fail 'wiring/planted-no-list' 'measuring nothing' \
+  python3 "$W" "$FIX/wiring/planted-no-list.mk"
+
+# check-symbols reads a built shared object's dynamic symbol table, which is
+# nm -D and so Linux only (the Makefile skips it elsewhere too).
+if [ "$(uname -s)" = Linux ]; then
+  printf 'check-symbols\n'
+  Y="$HERE/check-symbols.sh"
+  tok=ghotiio_runtime_core_0
+  sym="$work/sym"
+  mkdir -p "$sym"
+  printf 'int %s_grcore_ctx_make(void) { return 1; }\n' "$tok" > "$sym/good.c"
+  printf 'int grcore_leaked(void) { return 1; }\n' > "$sym/bad.c"
+  printf 'int %s_grcore_missing(void);\nint %s_grcore_user(void) { return %s_grcore_missing(); }\n' \
+    "$tok" "$tok" "$tok" > "$sym/split.c"
+  printf 'static int hidden(void) { return 1; }\n' > "$sym/empty.c"
+  built=1
+  {
+    $CC -shared -fPIC -o "$sym/good.so" "$sym/good.c" &&
+    $CC -shared -fPIC -o "$sym/bad.so" "$sym/bad.c" &&
+    $CC -shared -fPIC -o "$sym/split.so" "$sym/split.c" &&
+    $CC -shared -fPIC -o "$sym/empty.so" "$sym/empty.c"
+  } >"$sym/build.log" 2>&1 || built=0
+  if [ "$built" -eq 0 ]; then
+    fail "could not build the symbol fixtures:
+$(cat "$sym/build.log")"
+  else
+    expect_pass 'symbols/control' "$Y" "$sym/good.so" "$tok" "$FIX/symbols/control"
+    expect_fail 'symbols/planted-unnamespaced-export' 'grcore_leaked' \
+      "$Y" "$sym/bad.so" "$tok" "$FIX/symbols/control"
+    expect_fail 'symbols/planted-split-symbol' 'split symbol' \
+      "$Y" "$sym/split.so" "$tok" "$FIX/symbols/control"
+    expect_fail 'symbols/planted-no-api' 'grcore_ctx_make' \
+      "$Y" "$sym/good.so" "$tok" "$FIX/symbols/planted-no-api"
+    expect_fail 'symbols/planted-no-macros' 'ctx_internal.h' \
+      "$Y" "$sym/good.so" "$tok" "$FIX/symbols/planted-no-macros"
+    expect_fail 'symbols/planted-bad-guard' 'MY_OWN_GUARD_H' \
+      "$Y" "$sym/good.so" "$tok" "$FIX/symbols/planted-bad-guard"
+    expect_fail 'symbols/planted-dup-guard' 'sharing an include guard' \
+      "$Y" "$sym/good.so" "$tok" "$FIX/symbols/planted-dup-guard"
+    expect_fail 'symbols/exports-nothing' 'measuring nothing' \
+      "$Y" "$sym/empty.so" "$tok" "$FIX/symbols/control"
+    expect_fail 'symbols/no-library' 'measuring nothing' \
+      "$Y" "$sym/absent.so" "$tok" "$FIX/symbols/control"
+  fi
+fi
+
+
 if [ "$failures" -ne 0 ]; then
   printf 'check-gates: %d of %d checks failed\n' "$failures" "$checks" >&2
   exit 1
