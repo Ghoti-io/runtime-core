@@ -101,7 +101,10 @@ typedef struct GRCORE_Profiler GRCORE_Profiler;
 
 /** @brief One source location's counts. */
 typedef struct GRCORE_ProfileEntry {
-  const char * file;     ///< The pointer the engine's `locate` gave first.
+  const char * file;     ///< The pointer the engine's `locate` gave first: it
+                         ///< is the engine's string, valid for as long as the
+                         ///< engine's program is. A profile kept past that copies
+                         ///< the names.
   int line;              ///< The line.
   uint64_t self;         ///< Samples whose innermost frame was here.
   uint64_t inclusive;    ///< Samples with a frame here, each counted once.
