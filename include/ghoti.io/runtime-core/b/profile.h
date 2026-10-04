@@ -66,6 +66,11 @@
  * of its own. It holds only a retained port and the kind, touches no guest
  * state, and is stopped and joined by the key's destructor before the
  * profiler is freed, so destroying a context whose timer is running is safe.
+ * The thread starts with every signal blocked, so a signal sent to the process
+ * is never run on it; and a process that forks while a timer runs leaves the
+ * child with a profiler that believes in a thread it does not have, so the
+ * timer is stopped before a fork (::grcore_profiler_timer_stop) and started
+ * again after it, in whichever process keeps profiling.
  *
  * **Snapshots.** The key has no snapshot hook, so a profiler is not part of
  * any snapshot: a context with one still snapshots, and the host attaches
