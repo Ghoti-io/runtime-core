@@ -42,8 +42,13 @@
  * nothing (the location table is a fixed size, allocated once at attach
  * through the context's counting allocator; a location that does not fit is
  * counted in `dropped`). It commutes with every other DECIDE and OBSERVE
- * handler, which the phase-shuffle test mode checks. The one change it makes
- * is to clear its own request kind, as every service that owns a kind does.
+ * handler that does not look at the profiler's own request kind, which the
+ * phase-shuffle test mode checks. The one change it makes is to clear that kind,
+ * as every service that owns a kind does, and `grcore_pollcall_pending` is
+ * live: an OBSERVE handler that asks about the profiler's kind sees it cleared
+ * if it runs after the profiler (registration order, unshuffled), so it must be
+ * registered before the profiler or not ask. The tests' oracle is registered
+ * first for this reason.
  *
  * **Safepoint bias.** A sample is taken at the next poll after the request,
  * not at the instant of the request. Time that passes between polls is
@@ -54,9 +59,10 @@
  *
  * **Threads.** Everything is the context owner's except ::grcore_profiler_request
  * and the kind: a post is safe from any thread while the profiler is alive
- * (a thread that may outlive the context holds a retained ::GRCORE_Port and
- * posts ::grcore_profiler_kind through it, which is refused cleanly after the
- * context is destroyed). The timer is the one place the core starts a thread
+ * (the profiler is freed with its context, so the profiler *pointer* is invalid
+ * after the context is destroyed; a thread that may outlive the context holds a
+ * retained ::GRCORE_Port and posts ::grcore_profiler_kind through it, and only
+ * that post is refused cleanly after the context is destroyed). The timer is the one place the core starts a thread
  * of its own. It holds only a retained port and the kind, touches no guest
  * state, and is stopped and joined by the key's destructor before the
  * profiler is freed, so destroying a context whose timer is running is safe.
@@ -101,10 +107,14 @@ typedef struct GRCORE_Profiler GRCORE_Profiler;
 
 /** @brief One source location's counts. */
 typedef struct GRCORE_ProfileEntry {
-  const char * file;     ///< The pointer the engine's `locate` gave first: it
-                         ///< is the engine's string, valid for as long as the
-                         ///< engine's program is. A profile kept past that copies
-                         ///< the names.
+  const char * file;     ///< The pointer the engine's `locate` gave first. It
+                         ///< is the engine's string and must outlive the
+                         ///< profiler's use of it (the ::GRCORE_Location
+                         ///< contract): the profiler compares stored pointers by
+                         ///< text on later samples and in a report. A host
+                         ///< resets or discards the profiler before freeing a
+                         ///< program whose names it holds; a copy of a report
+                         ///< entry's name is the host's to make.
   int line;              ///< The line.
   uint64_t self;         ///< Samples whose innermost frame was here.
   uint64_t inclusive;    ///< Samples with a frame here, each counted once.
@@ -162,14 +172,15 @@ GRCORE_API GRCORE_RequestKind grcore_profiler_kind(
 
 /**
  * @brief Asks for a sample at the next poll. Any thread, while the profiler
- *   is alive.
+ *   (and so its context) is alive; the pointer is invalid after the context is
+ *   destroyed. Use a retained port for a post that may outlive it.
  *
  * Posting while a sample is already pending is not an error and still takes
  * one sample.
  *
  * @param profiler The profiler.
- * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL or a context that has
- *   been destroyed.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL, or when the port
+ *   refuses the post.
  */
 GRCORE_API GRCORE_Result grcore_profiler_request(const GRCORE_Profiler * profiler);
 

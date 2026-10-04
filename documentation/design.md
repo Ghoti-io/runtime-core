@@ -813,7 +813,9 @@ none, as the host attaches again on the destination.
 **The fast path.** Nothing here is on the poll's fast path: a context with no
 profiler, or no sample pending, runs exactly the code it ran before. The poll
 benchmark agrees (`poll-fast` 1.51 ns and `stack-poll` 2.65 ns with the profiler
-compiled in, 1.58 and 2.68 without, run-to-run noise). A sample itself costs
+compiled in, 1.58 and 2.68 without: best of 7 repeats each, one build of each; the
+difference is within the noise of the machine, a few percent, and the profiler
+puts nothing on the path). A sample itself costs
 about 100 ns at depth one and about 30 ns per further frame (`profile-sample-1`,
 `profile-sample-32`), post included, so a 1 kHz timer costs on the order of a
 ten-thousandth of the guest's time.

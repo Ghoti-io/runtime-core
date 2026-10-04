@@ -205,6 +205,13 @@ static void * timer_main(void * arg) {
     int rc = 0;
     while (!t->stop && rc != ETIMEDOUT) {
       rc = pthread_cond_timedwait(&t->cond, &t->mutex, &deadline);
+      if (rc != 0 && rc != ETIMEDOUT) {
+        /* A hard error (EINVAL, ...) would spin here, and the destructor's
+         * join would wait on a thread that never looks at `stop` again. The
+         * timer ends; the profiler keeps working with posts from the host. */
+        pthread_mutex_unlock(&t->mutex);
+        return NULL;
+      }
     }
     if (t->stop) {
       break;
