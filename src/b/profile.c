@@ -44,6 +44,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -351,7 +352,23 @@ GRCORE_Result grcore_profiler_timer_start(
   t->interval_us = interval_us;
   t->kind = profiler->kind;
   t->port = grcore_port_retain(profiler->port);
-  if (pthread_create(&t->thread, NULL, timer_main, t) != 0) {
+  /* The timer thread starts with every signal blocked, so a process-directed
+   * signal (SIGINT, SIGTERM, a host's SIGUSR1) is delivered to a thread the
+   * host chose and never runs the host's handler on this one. The new thread
+   * inherits the mask in effect at pthread_create; the caller's is restored
+   * straight after. */
+#ifndef _WIN32
+  sigset_t all, previous;
+  sigfillset(&all);
+  bool masked = pthread_sigmask(SIG_BLOCK, &all, &previous) == 0;
+#endif
+  int created = pthread_create(&t->thread, NULL, timer_main, t);
+#ifndef _WIN32
+  if (masked) {
+    pthread_sigmask(SIG_SETMASK, &previous, NULL);
+  }
+#endif
+  if (created != 0) {
     grcore_port_release(t->port);
     pthread_cond_destroy(&t->cond);
     pthread_mutex_destroy(&t->mutex);

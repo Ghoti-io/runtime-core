@@ -143,6 +143,11 @@ GRCORE_API size_t grcore_context_root_source_count(const GRCORE_Context * contex
  * `enumerate` with a visitor of its own, which is exactly what the
  * enumeration does for each entry.
  *
+ * Added for the retention query (runtime-heap, CAP-13), which the original
+ * root-source surface could not serve; it is part of this header's `stable`
+ * surface. The index is a position in the table, so removing a source moves
+ * every source after it down by one.
+ *
  * @param context The context. The caller must own it.
  * @param index From zero to the count minus one.
  * @param out_source Receives the source, or may be NULL. Written only on

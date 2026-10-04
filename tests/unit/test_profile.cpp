@@ -13,6 +13,11 @@
 
 #include "test_helpers.h"
 
+#ifndef _WIN32
+#include <signal.h>
+#include <unistd.h>
+#endif
+
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -633,6 +638,53 @@ TEST(ProfilerTimer, DestroyingTheContextWhileTheTimerRunsIsClean) {
     EXPECT_EQ(tracker.live, 0);
   }
 }
+
+#ifndef _WIN32
+namespace {
+volatile sig_atomic_t g_signal_seen = 0;
+volatile pthread_t g_signal_thread;
+void on_signal(int) {
+  g_signal_thread = pthread_self();
+  g_signal_seen = 1;
+}
+} // namespace
+
+TEST(ProfilerTimer, AProcessSignalIsNeverDeliveredToTheTimerThread) {
+  // The timer starts while SIGUSR1 is unblocked here. Only then is this thread
+  // blocked, so the one place left that could run the handler is the timer
+  // thread, unless it starts with every signal blocked.
+  struct sigaction act, old_act;
+  memset(&act, 0, sizeof act);
+  act.sa_handler = on_signal;
+  sigemptyset(&act.sa_mask);
+  ASSERT_EQ(sigaction(SIGUSR1, &act, &old_act), 0);
+  sigset_t usr1, previous;
+  sigemptyset(&usr1);
+  sigaddset(&usr1, SIGUSR1);
+  g_signal_seen = 0;
+  {
+    RunWorld w;
+    GRCORE_Profiler * p = nullptr;
+    ASSERT_EQ(grcore_profiler_attach(w.ctx, 0, &p), GRCORE_OK);
+    ASSERT_EQ(grcore_profiler_timer_start(p, 1000), GRCORE_OK);
+    ASSERT_EQ(pthread_sigmask(SIG_BLOCK, &usr1, &previous), 0);
+    ASSERT_EQ(kill(getpid(), SIGUSR1), 0);
+    for (int i = 0; i < 100 && !g_signal_seen; i++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_EQ(g_signal_seen, 0) << "the handler ran on the timer thread";
+    // The thread that blocked it gets it when it unblocks.
+    pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+    for (int i = 0; i < 100 && !g_signal_seen; i++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_EQ(g_signal_seen, 1);
+    EXPECT_TRUE(pthread_equal(g_signal_thread, pthread_self()));
+  }
+  pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+  sigaction(SIGUSR1, &old_act, nullptr);
+}
+#endif
 
 TEST(ProfilerTimer, ARequestFromAnotherThreadWhileTheProfilerLivesIsAccepted) {
   RunWorld w;
