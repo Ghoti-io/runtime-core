@@ -212,6 +212,14 @@ static void counted_unmap(void * ctx, void * ptr, size_t size) {
   meter_sub(c->meter, size, 1);
 }
 
+/* Protection changes no byte count, so nothing is charged; the call goes to
+ * the provider that made the mapping. */
+static bool counted_protect(
+    void * ctx, void * ptr, size_t size, GRCORE_PageAccess access) {
+  GRCORE_Counting * c = ctx;
+  return c->base_pages->protect(c->base_pages->ctx, ptr, size, access);
+}
+
 void grcore_counting_init(GRCORE_Counting * counting, GRCORE_Meter * meter,
     const GRCORE_Allocator * base_allocator,
     const GRCORE_PageProvider * base_pages) {
@@ -233,6 +241,8 @@ void grcore_counting_init(GRCORE_Counting * counting, GRCORE_Meter * meter,
   counting->pages.page_size = counting->base_pages->page_size;
   counting->pages.map = counted_map;
   counting->pages.unmap = counted_unmap;
+  counting->pages.protect =
+      counting->base_pages->protect != NULL ? counted_protect : NULL;
 }
 
 void grcore_counting_set_limit(

@@ -166,8 +166,15 @@ nested-budget story's decision.
 the provider the context hands them (AD-13), so their memory is counted
 without either library knowing how. The default is anonymous `mmap`,
 zero-filled and read-write. A size that is zero or not a page multiple returns
-NULL. Changing protection (needed for JIT, never writable and executable at
-once) is not in this interface yet.
+NULL. A provider also has a trailing `protect` member, `grcore_page_protect`
+being the checked call: it flips a mapping between read-write and read-execute
+(never both, AD-13), which is what a JIT does once after filling its pages.
+NULL means unsupported and is `ERR_INVALID`; a provider that reports failure is
+`ERR_IO`. The default uses `mprotect` (`VirtualProtect` on Windows, written and
+not run, marked `TODO(windows)`), and the counting provider forwards the call
+unchanged and charges nothing, since protection moves no bytes. The member is
+an addition to a `stable` header, made because a JIT cannot exist without it;
+nothing was released, and a provider written before it has it zero-filled.
 
 ## B, part 2: requests, the poll, `run`, budgets and migration
 

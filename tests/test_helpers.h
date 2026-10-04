@@ -82,8 +82,10 @@ struct TrackingAllocator {
 
 /* A page provider over the default one that counts and can be told to fail. */
 struct FakePages {
-  GRCORE_PageProvider vtable;
+  GRCORE_PageProvider vtable{};
   bool fail = false;
+  bool fail_protect = false;
+  long protects = 0;
   long live = 0;
 
   FakePages(const FakePages &) = delete;
@@ -107,6 +109,16 @@ struct FakePages {
       const GRCORE_PageProvider * d = grcore_page_provider_default();
       d->unmap(d->ctx, p, n);
       static_cast<FakePages *>(c)->live--;
+    };
+    vtable.protect = [](void * c, void * p, size_t n,
+                         GRCORE_PageAccess a) -> bool {
+      auto * f = static_cast<FakePages *>(c);
+      f->protects++;
+      if (f->fail_protect) {
+        return false;
+      }
+      const GRCORE_PageProvider * d = grcore_page_provider_default();
+      return d->protect(d->ctx, p, n, a);
     };
   }
 };

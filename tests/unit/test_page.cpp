@@ -8,7 +8,11 @@
 
 #include "test_helpers.h"
 
+#include <csignal>
 #include <cstring>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 TEST(Page, DefaultIsAPowerOfTwoGranuleWithAllThreeCalls) {
   const GRCORE_PageProvider * p = grcore_page_provider_default();
@@ -17,6 +21,7 @@ TEST(Page, DefaultIsAPowerOfTwoGranuleWithAllThreeCalls) {
   EXPECT_EQ(p->page_size & (p->page_size - 1), 0u);
   EXPECT_NE(p->map, nullptr);
   EXPECT_NE(p->unmap, nullptr);
+  EXPECT_NE(p->protect, nullptr);
 }
 
 TEST(Page, DefaultMapsZeroFilledWritablePages) {
@@ -145,6 +150,130 @@ TEST(Page, ACustomProviderWithItsOwnGranuleIsHonoured) {
   const GRCORE_PageProvider * p = grcore_group_page_provider(g);
   EXPECT_EQ(p->page_size, base.vtable.page_size);
   EXPECT_EQ(p->map(p->ctx, grcore_page_provider_default()->page_size), nullptr);
+  EXPECT_EQ(grcore_group_destroy(g), GRCORE_OK);
+}
+
+/* ---- protect ------------------------------------------------------------ */
+
+/* Runs `body` in a forked child and returns the signal that killed it, or 0
+ * when it exited normally. A write to a read-execute page must be SIGSEGV. */
+template <typename F>
+static int child_signal(F body) {
+  pid_t pid = fork();
+  if (pid == 0) {
+    body();
+    _exit(0);
+  }
+  int status = 0;
+  waitpid(pid, &status, 0);
+  return WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+}
+
+static void exercise_protect(const GRCORE_PageProvider * p) {
+  size_t size = p->page_size;
+  auto * m = static_cast<unsigned char *>(p->map(p->ctx, size));
+  ASSERT_NE(m, nullptr);
+  m[0] = 0xC3; /* ret */
+  ASSERT_EQ(grcore_page_protect(p, m, size, GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_OK);
+  EXPECT_EQ(m[0], 0xC3); /* still readable */
+  EXPECT_EQ(child_signal([&] { m[1] = 1; }), SIGSEGV);
+  ASSERT_EQ(grcore_page_protect(p, m, size, GRCORE_PAGE_READ_WRITE),
+      GRCORE_OK);
+  m[1] = 7;
+  EXPECT_EQ(m[1], 7);
+  EXPECT_EQ(child_signal([&] { m[2] = 1; }), 0);
+  p->unmap(p->ctx, m, size);
+}
+
+TEST(Page, DefaultFlipsAMappingToReadExecuteAndBack) {
+  exercise_protect(grcore_page_provider_default());
+}
+
+TEST(Page, CountingProviderFlipsAMappingAndChargesNothing) {
+  GRCORE_Group * g;
+  ASSERT_EQ(grcore_group_create(nullptr, nullptr, &g), GRCORE_OK);
+  GRCORE_Context * c;
+  ASSERT_EQ(grcore_context_create(g, nullptr, &c), GRCORE_OK);
+  const GRCORE_PageProvider * p = grcore_context_page_provider(c);
+  ASSERT_NE(p->protect, nullptr);
+  void * m = p->map(p->ctx, p->page_size);
+  ASSERT_NE(m, nullptr);
+  uint64_t in_use = grcore_context_memory_in_use(c);
+  uint64_t blocks = grcore_context_memory_blocks(c);
+  uint64_t peak = grcore_context_memory_peak(c);
+  p->unmap(p->ctx, m, p->page_size);
+  exercise_protect(p);
+  EXPECT_EQ(grcore_context_memory_in_use(c), 0u);
+  m = p->map(p->ctx, p->page_size);
+  ASSERT_EQ(grcore_page_protect(p, m, p->page_size, GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_OK);
+  EXPECT_EQ(grcore_context_memory_in_use(c), in_use);
+  EXPECT_EQ(grcore_context_memory_blocks(c), blocks);
+  EXPECT_EQ(grcore_context_memory_peak(c), peak);
+  ASSERT_EQ(grcore_page_protect(p, m, p->page_size, GRCORE_PAGE_READ_WRITE),
+      GRCORE_OK);
+  p->unmap(p->ctx, m, p->page_size);
+  EXPECT_EQ(grcore_context_destroy(c), GRCORE_OK);
+  EXPECT_EQ(grcore_group_destroy(g), GRCORE_OK);
+}
+
+TEST(Page, ProtectIsInvalidWithoutAProtectMember) {
+  GRCORE_PageProvider none = *grcore_page_provider_default();
+  none.protect = nullptr;
+  void * m = none.map(none.ctx, none.page_size);
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(grcore_page_protect(&none, m, none.page_size,
+                GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_ERR_INVALID);
+  /* A counting wrapper over a provider that cannot protect cannot either. */
+  GRCORE_Group * g;
+  ASSERT_EQ(grcore_group_create(nullptr, &none, &g), GRCORE_OK);
+  const GRCORE_PageProvider * gp = grcore_group_page_provider(g);
+  EXPECT_EQ(gp->protect, nullptr);
+  EXPECT_EQ(grcore_page_protect(gp, m, none.page_size, GRCORE_PAGE_READ_WRITE),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_group_destroy(g), GRCORE_OK);
+  none.unmap(none.ctx, m, none.page_size);
+}
+
+TEST(Page, ProtectRefusesBadArgumentsAndLeavesTheMappingAlone) {
+  const GRCORE_PageProvider * p = grcore_page_provider_default();
+  auto * m = static_cast<unsigned char *>(p->map(p->ctx, p->page_size * 2));
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(grcore_page_protect(nullptr, m, p->page_size,
+                GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_page_protect(p, nullptr, p->page_size,
+                GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_page_protect(p, m + 1, p->page_size,
+                GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_page_protect(p, m, p->page_size + 1,
+                GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_page_protect(p, m, 0, GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_page_protect(p, m, p->page_size,
+                static_cast<GRCORE_PageAccess>(2)),
+      GRCORE_ERR_INVALID);
+  m[0] = 1; /* still writable: nothing above changed it */
+  p->unmap(p->ctx, m, p->page_size * 2);
+}
+
+TEST(Page, ProtectReportsAProviderFailureAsIo) {
+  FakePages base;
+  base.fail_protect = true;
+  GRCORE_Group * g;
+  ASSERT_EQ(grcore_group_create(nullptr, &base.vtable, &g), GRCORE_OK);
+  const GRCORE_PageProvider * p = grcore_group_page_provider(g);
+  void * m = p->map(p->ctx, p->page_size);
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(grcore_page_protect(p, m, p->page_size, GRCORE_PAGE_READ_EXECUTE),
+      GRCORE_ERR_IO);
+  EXPECT_EQ(base.protects, 1);
+  p->unmap(p->ctx, m, p->page_size);
   EXPECT_EQ(grcore_group_destroy(g), GRCORE_OK);
 }
 
