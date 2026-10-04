@@ -64,6 +64,43 @@ GRCORE_Result on_other_thread(F f) {
 
 } // namespace
 
+// key.h promises that a static key written before the poll handler and the
+// three snapshot hooks existed - four initialisers - keeps working, because C
+// zero-fills the rest. This is such a key, as a client built against the older
+// header would have it: a missing-field warning is exactly what it provokes,
+// so the warning is silenced here and nowhere else.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+const GRCORE_Key kFourFields = {"four", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_OBSERVE, log_destroy};
+#pragma GCC diagnostic pop
+
+TEST(Context, AKeyWithOnlyItsFirstFourFieldsRegistersPollsAndDestroys) {
+  World w;
+  ASSERT_EQ(kFourFields.poll, nullptr);
+  ASSERT_EQ(kFourFields.snapshot, nullptr);
+  ASSERT_EQ(kFourFields.restore, nullptr);
+  ASSERT_EQ(kFourFields.settle, nullptr);
+  ASSERT_EQ(grcore_context_register(w.ctx, &kFourFields, const_cast<char *>("v")), GRCORE_OK);
+  EXPECT_EQ(grcore_context_slot(w.ctx, &kFourFields), const_cast<char *>("v"));
+  // Not polled (no handler) and not part of a snapshot (no hooks), and the
+  // destructor still runs.
+  GRCORE_Port * port = nullptr;
+  ASSERT_EQ(grcore_context_port(w.ctx, &port), GRCORE_OK);
+  GRCORE_RequestKind kind;
+  ASSERT_EQ(grcore_context_request_kind(w.ctx, &kFourFields, &kind), GRCORE_OK);
+  ASSERT_EQ(grcore_port_post(port, kind), GRCORE_OK);
+  EXPECT_EQ(grcore_poll(w.ctx, GRCORE_HERE), GRCORE_VERDICT_UNWIND) << "outside run";
+  grcore_port_release(port);
+  GRCORE_Snapshot * snapshot = nullptr;
+  ASSERT_EQ(grcore_context_snapshot(w.ctx, nullptr, &snapshot), GRCORE_OK);
+  EXPECT_EQ(grcore_snapshot_blob_count(snapshot), 0u);
+  grcore_snapshot_release(snapshot);
+  g_log.clear();
+  ASSERT_EQ(grcore_context_destroy(w.ctx), GRCORE_OK);
+  w.ctx = nullptr;
+  EXPECT_EQ(g_log, (std::vector<std::string>{"v"}));
+}
+
 TEST(Context, CreateGivesAParkedOwnedUnlimitedContext) {
   World w;
   EXPECT_EQ(grcore_context_state(w.ctx), GRCORE_CONTEXT_PARKED);

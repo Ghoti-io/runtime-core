@@ -146,6 +146,21 @@ done
 pass "every -I and -L directory exists"
 
 # ---------------------------------------------------------------------------
+# 5b. The threads flag is there.
+#
+# The library locks a mutex and starts a thread (the port and the profiler's
+# timer). The Makefile adds -pthread to every in-tree link itself, so a .pc
+# that lost it fails no in-tree build; and on a libc that has folded libpthread
+# into libc it fails no consumer either, until one meets a libc that has not.
+# ---------------------------------------------------------------------------
+case " $flags " in
+  *' -pthread '*) ;;
+  *) fail "the installed .pc does not ask for -pthread, which the library needs:
+  $flags" ;;
+esac
+pass "the .pc asks for -pthread"
+
+# ---------------------------------------------------------------------------
 # 6. A consumer compiles, links, runs, and gets its answers back.
 #
 # The in-tree tests cannot see a symbol the shared library fails to export:

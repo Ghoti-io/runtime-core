@@ -79,6 +79,11 @@ static void * default_map(void * ctx, size_t size) {
     return NULL;
   }
 #ifdef _WIN32
+  /* The size is charged as asked, which is right for what the budget counts.
+   * VirtualAlloc starts a region on a 64 KiB boundary, so a small request
+   * strands the rest of its 64 KiB block of address space; but it commits
+   * (and the system charges) whole pages, and the block's tail is address
+   * space, not memory. The memory budget is a count of memory. */
   return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
   void * p = mmap(
