@@ -36,10 +36,11 @@
  * reader exists before any one writer does.
  *
  * Nothing here knows an engine, a service or a register. The *frame base* is
- * whatever the code generator calls it: `rbp` for the x86-64 baseline. The
+ * whatever the code generator calls it: `rbp` for the x86-64 baseline, `x29` for
+ * the arm64 one. The
  * frame lies below the base, and a slot is named by the signed byte offset of
- * its lowest byte from the base (so a slot of the x86-64 baseline is `-8`,
- * `-16`, ...).
+ * its lowest byte from the base (so a slot of either baseline is `-8`, `-16`,
+ * ...).
  *
  * A table is immutable once built and owned by whoever built it: the
  * functions here only read it. It is also untrusted input to the readers, so

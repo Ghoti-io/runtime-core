@@ -570,8 +570,9 @@ code, frame push, nested entry) or a guard. A site carries the poll identity
 frame-slot locations with their slot kind), derived pointers as `(slot, base
 slot, delta)` triples (AD-12), and the deopt frame state: one location per
 interpreter slot, a frame slot, a 64-bit constant or dead. The format says
-*frame base*, never a register: the x86-64 baseline's is `rbp`, and a backend
-that keeps its frame elsewhere fills the same table. The frame lies below the
+*frame base*, never a register: the x86-64 baseline's is `rbp` and the arm64
+baseline's is `x29` (the table is the same for both, byte for byte), and a
+backend that keeps its frame elsewhere fills the same table. The frame lies below the
 base, a slot is named by the byte offset of its lowest byte (`-8`, `-16`,
 ...), and a table's `frame_bytes` bounds them. A table is immutable and owned
 by its builder; `grcore_codemeta_validate` is the one parser of it. It checks

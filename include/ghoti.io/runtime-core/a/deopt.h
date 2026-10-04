@@ -72,7 +72,8 @@ extern "C" {
  * immediate, for `DEAD` zero.
  *
  * @param site The site; its `frame_state` is read.
- * @param frame_base The frame base (`rbp` on the x86-64 baseline).
+ * @param frame_base The frame base (`rbp` on the x86-64 baseline, `x29` on the
+ *   arm64 one).
  * @param slots Receives `slot_count` words. Written only on success.
  * @param slot_count Must equal `site->frame_state_count`.
  * @return `GRCORE_OK`, or `GRCORE_ERR_INVALID` for a NULL pointer or a count
