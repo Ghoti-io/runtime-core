@@ -34,8 +34,9 @@
  * provider with memory accounting behind them, requests and ports, the poll,
  * `run` and `resume`, the budgets with their fuel scopes, and root sources).
  * A is complete for now too (`a/`: engine descriptors, the guest stack, the
- * abstract frame with its walk and scopes, activation records, the unwinder
- * and budget scopes). What comes next is the collector, the JIT and the
+ * abstract frame with its walk and scopes, activation records, the unwinder,
+ * budget scopes, the code-metadata format and the JIT layout descriptor).
+ * What comes next is the collector, the JIT and the
  * debugger, each in a library of its own.
  */
 
@@ -53,6 +54,7 @@
 #include <ghoti.io/runtime-core/a/codemeta.h>
 #include <ghoti.io/runtime-core/a/engine.h>
 #include <ghoti.io/runtime-core/a/frame.h>
+#include <ghoti.io/runtime-core/a/layout.h>
 #include <ghoti.io/runtime-core/a/stack.h>
 #include <ghoti.io/runtime-core/a/unwind.h>
 #include <ghoti.io/runtime-core/b/budget.h>

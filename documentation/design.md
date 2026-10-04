@@ -576,6 +576,17 @@ binary search for a site at exactly one offset. The descriptor in `engine.h`
 still has no deoptimization field: the metadata is a table the engine hands to
 whoever reads it, not a hook, and no reader exists yet (story 15).
 
+**`a/layout.h`: what emitted code may know about a context.** Compiled code is
+shared between contexts and reaches state through a context register (AD-22),
+so the offsets it may bake in must be stated, not inferred from a shared
+header (AD-19). `grcore_jit_layout` returns a static struct with one entry:
+the byte offset and width of the request word the poll's fast path loads, and
+the rule that non-zero means slow. It is computed in `src/b/` from the real
+`offsetof`, and a test reads the word through the offset on a live context.
+There is no keyed-slot offset, on purpose: keyed state is found by key. A code
+generator reads the descriptor when it compiles and stores the offset it used,
+so code is valid for exactly the build that produced it.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This

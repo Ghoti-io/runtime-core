@@ -102,6 +102,7 @@ local name), and, in `b/` and `a/`:
 | `a/activation.h` | activation records: every crossing between host, interpreter, JIT code and C, entered and left in LIFO order, with the native depth budget and the nesting that forbids a pause; `free` |
 | `a/unwind.h` | the unwinder: pops frames innermost first with their engine's hook, leaves deeper activations, closes deeper scopes; `free` |
 | `a/budget_scope.h` | budget scopes: a call boundary with its own fuel budget, unwound to when it runs out; `free` |
+| `a/layout.h` | the JIT layout descriptor: the offset of the request word a compiled poll loads; `free` |
 | `a/codemeta.h` | the code-metadata format: stack maps and deopt records for compiled code, with a validator and a lookup; `free` |
 
 ```c
