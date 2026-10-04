@@ -720,6 +720,337 @@ TEST(Stack, AnAbandonedPausedContextWithFramesDestroysClean) {
   EXPECT_EQ(t.live, 0);
 }
 
+/* ---- Snapshots: the stack's own hooks ------------------------------------ */
+
+namespace {
+
+constexpr uint64_t kSecretA = 0xDEADBEEFCAFEF00Dull; // goes in a VALUE slot
+constexpr uint64_t kSecretB = 0xBADC0FFEE0DDF00Dull;
+constexpr uint64_t kRaw0 = 0x1111, kRaw2 = 0x2222;
+
+/* Two frames: an alpha one of four slots (even RAW, odd VALUE) and a beta one
+ * of two (all VALUE), with identities. */
+void fill_stack(StackWorld & w) {
+  GRCORE_FrameRef f1 = push_ok(w.stack, w.alpha, 4);
+  grcore_stack_slot_set(w.stack, f1, 0, kRaw0);
+  grcore_stack_slot_set(w.stack, f1, 1, kSecretA);
+  grcore_stack_slot_set(w.stack, f1, 2, kRaw2);
+  grcore_stack_slot_set(w.stack, f1, 3, kSecretB);
+  grcore_stack_set_identity(w.stack, f1, GRCORE_PollIdentity{7, 9});
+  GRCORE_FrameRef f2 = push_ok(w.stack, w.beta, 2);
+  grcore_stack_slot_set(w.stack, f2, 0, kSecretA);
+  grcore_stack_slot_set(w.stack, f2, 1, kSecretB);
+  grcore_stack_set_identity(w.stack, f2, GRCORE_PollIdentity{3, 4});
+}
+
+bool contains_word(const void * data, size_t size, uint64_t word) {
+  const unsigned char * p = static_cast<const unsigned char *>(data);
+  for (size_t i = 0; i + 8 <= size; i++) {
+    uint64_t w;
+    std::memcpy(&w, p + i, 8);
+    if (w == word) {
+      return true;
+    }
+  }
+  return false;
+}
+
+size_t count_root_slots(GRCORE_Context * c) {
+  size_t n = 0;
+  GRCORE_RootVisitor v = {};
+  v.user = &n;
+  v.slot = [](void * u, uint64_t *) { ++*static_cast<size_t *>(u); };
+  EXPECT_EQ(grcore_context_enumerate_roots(c, &v), GRCORE_OK);
+  return n;
+}
+
+struct Snap {
+  GRCORE_Snapshot * s = nullptr;
+  ~Snap() { grcore_snapshot_release(s); }
+};
+
+} // namespace
+
+TEST(StackSnapshot, FramesRoundTripAtTheSameOffsetsAndValueSlotsAreWrittenAsZero) {
+  StackWorld src;
+  fill_stack(src);
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+
+  // The bytes hold no reference: a VALUE slot is never written as it is.
+  const void * blob = nullptr;
+  size_t size = 0;
+  ASSERT_EQ(grcore_snapshot_blob(snap.s, "runtime-core.guest", &blob, &size), GRCORE_OK);
+  EXPECT_FALSE(contains_word(blob, size, kSecretA));
+  EXPECT_FALSE(contains_word(blob, size, kSecretB));
+  EXPECT_TRUE(contains_word(blob, size, kRaw0));
+  EXPECT_TRUE(contains_word(blob, size, kRaw2));
+
+  StackWorld dst;
+  ASSERT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_OK);
+  EXPECT_EQ(grcore_stack_frame_count(dst.stack), 2u);
+  EXPECT_EQ(grcore_stack_top(dst.stack).offset, grcore_stack_top(src.stack).offset);
+  EXPECT_EQ(grcore_stack_bytes_used(dst.stack), grcore_stack_bytes_used(src.stack));
+  EXPECT_EQ(grcore_context_depth(dst.ctx, GRCORE_DEPTH_GUEST), 2u)
+      << "the depth budget counts the restored frames";
+  GRCORE_FrameRef a = grcore_stack_top(dst.stack);
+  GRCORE_FrameRef b = grcore_stack_caller(dst.stack, a);
+  EXPECT_EQ(b.offset, 8u);
+  EXPECT_EQ(grcore_stack_caller(dst.stack, b).offset, 0u);
+  GRCORE_EngineId e;
+  ASSERT_EQ(grcore_stack_engine(dst.stack, a, &e), GRCORE_OK);
+  EXPECT_EQ(e, dst.beta);
+  ASSERT_EQ(grcore_stack_engine(dst.stack, b, &e), GRCORE_OK);
+  EXPECT_EQ(e, dst.alpha);
+  GRCORE_PollIdentity id;
+  ASSERT_EQ(grcore_stack_identity(dst.stack, b, &id), GRCORE_OK);
+  EXPECT_EQ(id.function, 7u);
+  EXPECT_EQ(id.offset, 9u);
+  ASSERT_EQ(grcore_stack_identity(dst.stack, a, &id), GRCORE_OK);
+  EXPECT_EQ(id.function, 3u);
+  EXPECT_EQ(id.offset, 4u);
+  uint64_t v;
+  uint64_t want_alpha[] = {kRaw0, 0, kRaw2, 0};
+  for (size_t i = 0; i < 4; i++) {
+    ASSERT_EQ(grcore_stack_slot_get(dst.stack, b, i, &v), GRCORE_OK);
+    EXPECT_EQ(v, want_alpha[i]) << "alpha slot " << i;
+  }
+  for (size_t i = 0; i < 2; i++) {
+    ASSERT_EQ(grcore_stack_slot_get(dst.stack, a, i, &v), GRCORE_OK);
+    EXPECT_EQ(v, 0u) << "beta slot " << i;
+  }
+  // The root layout is the same, so a heap can write its slots back.
+  EXPECT_EQ(count_root_slots(dst.ctx), count_root_slots(src.ctx));
+  // The source is untouched.
+  ASSERT_EQ(grcore_stack_slot_get(src.stack, grcore_stack_top(src.stack), 0, &v), GRCORE_OK);
+  EXPECT_EQ(v, kSecretA);
+
+  // The restored stack is a working one: pop, and push again.
+  ASSERT_EQ(grcore_stack_pop(dst.stack), GRCORE_OK);
+  ASSERT_EQ(grcore_stack_pop(dst.stack), GRCORE_OK);
+  EXPECT_EQ(grcore_stack_frame_count(dst.stack), 0u);
+  EXPECT_EQ(grcore_context_depth(dst.ctx, GRCORE_DEPTH_GUEST), 0u);
+  GRCORE_FrameRef again = push_ok(dst.stack, dst.alpha, 1);
+  EXPECT_EQ(again.offset, 8u);
+}
+
+TEST(StackSnapshot, AnEmptyStackRestoresEmpty) {
+  StackWorld src;
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+  StackWorld dst;
+  ASSERT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_OK);
+  EXPECT_EQ(grcore_stack_frame_count(dst.stack), 0u);
+  EXPECT_EQ(grcore_stack_top(dst.stack).offset, 0u);
+  GRCORE_FrameRef f = push_ok(dst.stack, dst.alpha, 2);
+  EXPECT_EQ(f.offset, 8u);
+}
+
+TEST(StackSnapshot, TakeIsRefusedWithAnActivationRecordOrABudgetScopeOpen) {
+  StackWorld w;
+  fill_stack(w);
+  GRCORE_ActivationRef host;
+  ASSERT_EQ(grcore_activation_enter(w.stack, GRCORE_ACTIVATION_HOST, 0, false,
+                nullptr, &host),
+      GRCORE_OK);
+  Snap snap;
+  EXPECT_EQ(grcore_context_snapshot(w.ctx, nullptr, &snap.s), GRCORE_ERR_INVALID);
+  EXPECT_EQ(snap.s, nullptr);
+  ASSERT_EQ(grcore_activation_leave(w.stack, host), GRCORE_OK);
+
+  GRCORE_BudgetScope scope;
+  ASSERT_EQ(grcore_budget_scope_open(
+                w.stack, 100, GRCORE_SCOPE_POLICY_UNWIND, &scope),
+      GRCORE_OK);
+  EXPECT_EQ(grcore_context_snapshot(w.ctx, nullptr, &snap.s), GRCORE_ERR_INVALID);
+  EXPECT_EQ(snap.s, nullptr);
+  ASSERT_EQ(grcore_budget_scope_close(w.stack, scope), GRCORE_OK);
+  EXPECT_EQ(grcore_context_snapshot(w.ctx, nullptr, &snap.s), GRCORE_OK);
+}
+
+TEST(StackSnapshot, ADifferentEngineTableIsRefusedBeforeAnythingChanges) {
+  StackWorld src;
+  fill_stack(src);
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+
+  { // the same engines in the other order
+    RunWorld w;
+    GRCORE_EngineId b, a;
+    ASSERT_EQ(grcore_engine_register(w.ctx, &kBeta, &b), GRCORE_OK);
+    ASSERT_EQ(grcore_engine_register(w.ctx, &kAlpha, &a), GRCORE_OK);
+    EXPECT_EQ(grcore_context_restore(w.ctx, snap.s, nullptr), GRCORE_ERR_INVALID);
+    EXPECT_EQ(grcore_stack_frame_count(grcore_context_stack(w.ctx)), 0u);
+  }
+  { // a subset
+    RunWorld w;
+    GRCORE_EngineId a;
+    ASSERT_EQ(grcore_engine_register(w.ctx, &kAlpha, &a), GRCORE_OK);
+    EXPECT_EQ(grcore_context_restore(w.ctx, snap.s, nullptr), GRCORE_ERR_INVALID);
+  }
+  { // a superset
+    HookWorld w;
+    EXPECT_EQ(grcore_context_restore(w.ctx, snap.s, nullptr), GRCORE_ERR_INVALID);
+    EXPECT_EQ(grcore_stack_frame_count(w.stack), 0u);
+  }
+  { // a different engine under the same position
+    RunWorld w;
+    GRCORE_EngineId a, g;
+    ASSERT_EQ(grcore_engine_register(w.ctx, &kAlpha, &a), GRCORE_OK);
+    ASSERT_EQ(grcore_engine_register(w.ctx, &kGamma, &g), GRCORE_OK);
+    EXPECT_EQ(grcore_context_restore(w.ctx, snap.s, nullptr), GRCORE_ERR_INVALID);
+  }
+  { // no engine at all: no stack, so the key set differs
+    RunWorld w;
+    EXPECT_EQ(grcore_context_restore(w.ctx, snap.s, nullptr), GRCORE_ERR_INVALID);
+  }
+}
+
+TEST(StackSnapshot, ADestinationThatHasFramesIsNotFreshAndIsRefused) {
+  StackWorld src;
+  fill_stack(src);
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+  StackWorld dst;
+  push_ok(dst.stack, dst.alpha, 1);
+  EXPECT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_stack_frame_count(dst.stack), 1u);
+}
+
+TEST(StackSnapshot, ADepthBudgetSmallerThanTheSnapshotIsALimitAndLeavesTheStackFresh) {
+  StackWorld src;
+  fill_stack(src);
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+  StackWorld dst(GRCORE_UNLIMITED, GRCORE_UNLIMITED,
+      GRCORE_DEFAULT_MEMORY_RESERVE, 1);
+  EXPECT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_ERR_LIMIT);
+  EXPECT_EQ(grcore_stack_frame_count(dst.stack), 0u);
+  EXPECT_EQ(grcore_context_depth(dst.ctx, GRCORE_DEPTH_GUEST), 0u);
+  push_ok(dst.stack, dst.alpha, 1); // still usable, and within its own limit
+}
+
+TEST(StackSnapshot, ABlobThatIsNotAStackIsCorruptNotATrap) {
+  // A source whose key of the guest's name writes nonsense, restored into a
+  // real stack: the reader's checks refuse it, nothing is applied.
+  struct Fake {
+    static GRCORE_Result snapshot(
+        GRCORE_Context *, void * v, GRCORE_SnapshotWriter * w) {
+      GRCORE_Result r = GRCORE_OK;
+      for (uint64_t word : *static_cast<std::vector<uint64_t> *>(v)) {
+        r = r != GRCORE_OK ? r : grcore_snapshot_writer_u64(w, word);
+      }
+      return r;
+    }
+    static GRCORE_Result restore(GRCORE_Context *, void *,
+        GRCORE_SnapshotReader *, void *, GRCORE_RestoreMode) {
+      return GRCORE_OK;
+    }
+    static GRCORE_Result settle(
+        GRCORE_Context *, void *, void *, GRCORE_SettleMode) {
+      return GRCORE_OK;
+    }
+  };
+  static const GRCORE_Key fake = {"runtime-core.guest", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, Fake::snapshot, Fake::restore,
+      Fake::settle};
+  const uint64_t magic = 0x3130304B54534752ull;
+  // magic, 2 engines named alpha and beta, 1 frame, top 8, used 48, then 40
+  // bytes that are not a frame (all zero: no tag).
+  std::vector<std::vector<uint64_t>> blobs = {
+      {},                                  // empty: past the end
+      {123456},                            // the wrong magic
+      {magic, 99},                         // an engine count nobody has
+  };
+  for (auto & words : blobs) {
+    RunWorld a;
+    ASSERT_EQ(grcore_context_register(a.ctx, &fake, &words), GRCORE_OK);
+    Snap snap;
+    ASSERT_EQ(grcore_context_snapshot(a.ctx, nullptr, &snap.s), GRCORE_OK);
+    StackWorld dst;
+    GRCORE_Result r = grcore_context_restore(dst.ctx, snap.s, nullptr);
+    EXPECT_TRUE(r == GRCORE_ERR_CORRUPT || r == GRCORE_ERR_INVALID) << r;
+    EXPECT_EQ(grcore_stack_frame_count(dst.stack), 0u);
+  }
+}
+
+TEST(StackSnapshot, EveryAllocationFailureDuringRestoreLeavesTheStackFreshAndLeaksNothing) {
+  StackWorld src;
+  fill_stack(src);
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+  long total = 0;
+  {
+    TrackingAllocator probe;
+    StackWorld dst(GRCORE_UNLIMITED, GRCORE_UNLIMITED,
+        GRCORE_DEFAULT_MEMORY_RESERVE, GRCORE_UNLIMITED, probe.get());
+    long before = probe.calls;
+    ASSERT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_OK);
+    total = probe.calls - before;
+  }
+  ASSERT_GE(total, 1) << "growing the buffer allocates";
+  for (long k = 1; k <= total; k++) {
+    TrackingAllocator mem;
+    {
+      StackWorld dst(GRCORE_UNLIMITED, GRCORE_UNLIMITED,
+          GRCORE_DEFAULT_MEMORY_RESERVE, GRCORE_UNLIMITED, mem.get());
+      mem.fail_at = mem.calls + k;
+      EXPECT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_ERR_OOM)
+          << "failing allocation " << k;
+      EXPECT_EQ(grcore_stack_frame_count(dst.stack), 0u);
+      EXPECT_EQ(grcore_context_depth(dst.ctx, GRCORE_DEPTH_GUEST), 0u);
+      mem.fail_at = 0;
+      EXPECT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_OK);
+      EXPECT_EQ(grcore_stack_frame_count(dst.stack), 2u);
+    }
+    EXPECT_EQ(mem.live, 0) << "leak when allocation " << k << " failed";
+  }
+}
+
+TEST(StackSnapshot, AMemoryBudgetTooSmallForTheBufferIsALimit) {
+  StackWorld src;
+  for (int i = 0; i < 20; i++) {
+    push_ok(src.stack, src.alpha, 8);
+  }
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+  StackWorld dst(GRCORE_UNLIMITED, 256, 0);
+  EXPECT_EQ(grcore_context_restore(dst.ctx, snap.s, nullptr), GRCORE_ERR_LIMIT);
+  EXPECT_EQ(grcore_stack_frame_count(dst.stack), 0u);
+  EXPECT_EQ(grcore_context_depth(dst.ctx, GRCORE_DEPTH_GUEST), 0u);
+}
+
+TEST(StackSnapshot, APausedGuestKeepingItsPositionOnTheStackFinishesInAnotherContext) {
+  // The guest pushes n frames and pops them, its only state besides the stack
+  // being one flag. Pause it mid-way, snapshot, restore into a context that
+  // has the engine registered the same way, and finish there.
+  FrameGuest src_guest;
+  src_guest.n = 12;
+  RunWorld src(7);
+  ASSERT_EQ(grcore_engine_register(src.ctx, &kAlpha, &src_guest.engine), GRCORE_OK);
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(src.ctx, frame_guest_entry, &src_guest, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  Snap snap;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &snap.s), GRCORE_OK);
+  size_t depth_at_pause = grcore_stack_frame_count(grcore_context_stack(src.ctx));
+  ASSERT_GT(depth_at_pause, 0u);
+
+  FrameGuest dst_guest = src_guest; // the guest's own flag, carried by the host
+  dst_guest.sum = 0;
+  RunWorld dst;
+  ASSERT_EQ(grcore_engine_register(dst.ctx, &kAlpha, &dst_guest.engine), GRCORE_OK);
+  GRCORE_RestoreEnv env = {};
+  env.entry = frame_guest_entry;
+  env.entry_state = &dst_guest;
+  ASSERT_EQ(grcore_context_restore(dst.ctx, snap.s, &env), GRCORE_OK);
+  EXPECT_EQ(grcore_stack_frame_count(grcore_context_stack(dst.ctx)), depth_at_pause);
+  ASSERT_EQ(grcore_resume(dst.ctx, &outcome), GRCORE_OK);
+  EXPECT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
+  // Frame i holds i in slot 0 (a RAW slot in alpha), and 1..12 sum to 78.
+  EXPECT_EQ(dst_guest.sum, 78u);
+}
+
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

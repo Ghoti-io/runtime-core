@@ -113,6 +113,15 @@ struct GRCORE_Stack {
   size_t scope_capacity;
 };
 
+/** @brief The stack's snapshot hooks (stack.c): the frames, with VALUE slots
+ *   written as zero, and the engine table by name. */
+GRCORE_Result grcore_guest_snapshot(
+    GRCORE_Context * context, void * value, GRCORE_SnapshotWriter * writer);
+GRCORE_Result grcore_guest_restore(GRCORE_Context * context, void * value,
+    GRCORE_SnapshotReader * reader, void * env, GRCORE_RestoreMode mode);
+GRCORE_Result grcore_guest_settle(GRCORE_Context * context, void * value,
+    void * env, GRCORE_SettleMode mode);
+
 /** @brief The key the state is registered under (cardinality one). */
 extern const GRCORE_Key grcore_guest_key;
 

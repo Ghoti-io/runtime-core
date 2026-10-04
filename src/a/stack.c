@@ -41,6 +41,7 @@
 #include "../b/context_internal.h"
 
 #include <ghoti.io/runtime-core/b/budget.h>
+#include <ghoti.io/runtime-core/b/snapshot.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -384,4 +385,220 @@ GRCORE_Result grcore_context_poll_identity(
   }
   GRCORE_FrameRef top = {stack->top};
   return grcore_stack_identity(stack, top, out_identity);
+}
+
+/* ---- Snapshots (AD-12, AD-19, AD-20) -------------------------------------
+ *
+ * The stack's blob is its frames, byte for byte, with the engine table by
+ * name. Frames are position independent (links are offsets, and the header's
+ * tag is a function of the frame's own offset), so the bytes land at the same
+ * offsets in the destination and every link stays true. The one thing that is
+ * not data is a VALUE slot: it holds a reference into somebody's heap, so it
+ * is written as zero, and the keys that own the references (the heap's
+ * `settle`) write them back once every key has its frames. RAW slots are
+ * written as they are, and the frame header's poll identity with them.
+ */
+
+#define GRCORE_GUEST_BLOB_MAGIC UINT64_C(0x3130304B54534752) /* "RGSTK001" */
+
+GRCORE_Result grcore_guest_snapshot(
+    GRCORE_Context * context, void * value, GRCORE_SnapshotWriter * writer) {
+  (void)context;
+  const GRCORE_Stack * stack = value;
+  /* AD-20: an activation record is a C segment or a host frame somewhere above
+   * the guest frames, and a budget scope is a boundary somebody is inside. */
+  if (stack->activation_count != 0 || stack->scope_count != 0) {
+    return GRCORE_ERR_INVALID;
+  }
+  GRCORE_Result r = grcore_snapshot_writer_u64(writer, GRCORE_GUEST_BLOB_MAGIC);
+  if (r == GRCORE_OK) {
+    r = grcore_snapshot_writer_u64(writer, stack->engine_count);
+  }
+  for (size_t i = 0; r == GRCORE_OK && i < stack->engine_count; i++) {
+    r = grcore_snapshot_writer_string(writer, stack->engines[i]->name);
+  }
+  if (r == GRCORE_OK) {
+    r = grcore_snapshot_writer_u64(writer, stack->frame_count);
+  }
+  if (r == GRCORE_OK) {
+    r = grcore_snapshot_writer_u64(writer, stack->top);
+  }
+  if (r == GRCORE_OK) {
+    r = grcore_snapshot_writer_u64(writer, stack->used);
+  }
+  size_t offset = GRCORE_STACK_BASE;
+  while (r == GRCORE_OK && offset < stack->used) {
+    GRCORE_AbstractFrame frame;
+    GRCORE_FrameHeader h;
+    if (!grcore_stack_hook_frame(stack, (GRCORE_FrameRef){offset}, 0, &frame, &h)) {
+      return GRCORE_ERR_INTERNAL; /* the stack's own invariant */
+    }
+    r = grcore_snapshot_writer_write(writer, stack->buffer + offset, sizeof h);
+    for (size_t i = 0; r == GRCORE_OK && i < h.slot_count; i++) {
+      uint64_t word;
+      memcpy(&word, stack->buffer + offset + GRCORE_FRAME_HEADER + 8u * i,
+          sizeof word);
+      const GRCORE_EngineDescriptor * d = frame.descriptor;
+      if (d->slot_kind != NULL && d->slot_kind(&frame, i) == GRCORE_SLOT_VALUE) {
+        word = 0;
+      }
+      r = grcore_snapshot_writer_u64(writer, word);
+    }
+    offset += h.size;
+  }
+  if (r == GRCORE_OK && offset != stack->used) {
+    return GRCORE_ERR_INTERNAL;
+  }
+  return r;
+}
+
+typedef struct GuestBlob {
+  uint64_t frame_count;
+  uint64_t top;
+  uint64_t used;
+  const unsigned char * bytes; ///< `used - GRCORE_STACK_BASE` bytes of frames.
+} GuestBlob;
+
+/* Reads the blob and checks it against the destination's engine table and
+ * against itself: every frame well formed, linked to the one before it, tagged
+ * for its own offset, and the counts true. A blob that fails the second kind
+ * of check is corrupt; one that fails the first is a mismatch. */
+static GRCORE_Result guest_parse(const GRCORE_Stack * stack,
+    GRCORE_SnapshotReader * reader, GuestBlob * out) {
+  uint64_t magic, engines;
+  GRCORE_Result r = grcore_snapshot_reader_u64(reader, &magic);
+  if (r == GRCORE_OK) {
+    r = grcore_snapshot_reader_u64(reader, &engines);
+  }
+  if (r != GRCORE_OK) {
+    return r;
+  }
+  if (magic != GRCORE_GUEST_BLOB_MAGIC) {
+    return GRCORE_ERR_CORRUPT;
+  }
+  /* The engine table is named in the frame headers by position, so the
+   * destination must have the same engines in the same order. */
+  bool same = engines == stack->engine_count;
+  for (uint64_t i = 0; i < engines; i++) {
+    const char * name;
+    r = grcore_snapshot_reader_string(reader, &name, NULL);
+    if (r != GRCORE_OK) {
+      return r;
+    }
+    if (same && strcmp(name, stack->engines[i]->name) != 0) {
+      same = false;
+    }
+  }
+  if (!same) {
+    return GRCORE_ERR_INVALID;
+  }
+  GuestBlob b;
+  r = grcore_snapshot_reader_u64(reader, &b.frame_count);
+  if (r == GRCORE_OK) {
+    r = grcore_snapshot_reader_u64(reader, &b.top);
+  }
+  if (r == GRCORE_OK) {
+    r = grcore_snapshot_reader_u64(reader, &b.used);
+  }
+  if (r != GRCORE_OK) {
+    return r;
+  }
+  if (b.used < GRCORE_STACK_BASE || b.used > SIZE_MAX / 2) {
+    return GRCORE_ERR_CORRUPT;
+  }
+  const void * view;
+  r = grcore_snapshot_reader_view(
+      reader, (size_t)(b.used - GRCORE_STACK_BASE), &view);
+  if (r != GRCORE_OK) {
+    return r;
+  }
+  b.bytes = view;
+  uint64_t offset = GRCORE_STACK_BASE;
+  uint64_t previous = 0;
+  uint64_t count = 0;
+  while (offset < b.used) {
+    GRCORE_FrameHeader h;
+    if (b.used - offset < GRCORE_FRAME_HEADER) {
+      return GRCORE_ERR_CORRUPT;
+    }
+    memcpy(&h, b.bytes + (offset - GRCORE_STACK_BASE), sizeof h);
+    if (h.tag != tag_for(offset) || h.prev != previous ||
+        h.slot_count > GRCORE_FRAME_MAX_SLOTS ||
+        h.size != GRCORE_FRAME_HEADER + 8u * h.slot_count ||
+        b.used - offset < h.size || h.engine == 0 || h.engine > engines) {
+      return GRCORE_ERR_CORRUPT;
+    }
+    previous = offset;
+    offset += h.size;
+    count++;
+  }
+  if (count != b.frame_count || b.top != previous) {
+    return GRCORE_ERR_CORRUPT;
+  }
+  *out = b;
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_guest_restore(GRCORE_Context * context, void * value,
+    GRCORE_SnapshotReader * reader, void * env, GRCORE_RestoreMode mode) {
+  (void)env;
+  GRCORE_Stack * stack = value;
+  GuestBlob b;
+  GRCORE_Result r = guest_parse(stack, reader, &b);
+  if (r != GRCORE_OK) {
+    return r;
+  }
+  /* A fresh stack: no frame, no activation record, no scope. Anything else is
+   * a context somebody has already started on. */
+  if (stack->frame_count != 0 || stack->activation_count != 0 ||
+      stack->scope_count != 0 || stack->top != 0) {
+    return GRCORE_ERR_INVALID;
+  }
+  if (mode == GRCORE_RESTORE_CHECK) {
+    return GRCORE_OK;
+  }
+  /* The depth budget is the destination's: a snapshot deeper than it allows is
+   * a limit, and nothing has changed when it is reported. */
+  uint64_t entered = 0;
+  while (entered < b.frame_count) {
+    r = grcore_context_enter_depth(context, GRCORE_DEPTH_GUEST);
+    if (r != GRCORE_OK) {
+      break;
+    }
+    entered++;
+  }
+  if (r == GRCORE_OK) {
+    r = stack_grow(stack, (size_t)b.used, false);
+  }
+  if (r != GRCORE_OK) {
+    while (entered > 0) {
+      grcore_context_leave_depth(context, GRCORE_DEPTH_GUEST);
+      entered--;
+    }
+    return r;
+  }
+  if (b.used > GRCORE_STACK_BASE) {
+    memcpy(stack->buffer + GRCORE_STACK_BASE, b.bytes,
+        (size_t)(b.used - GRCORE_STACK_BASE));
+  }
+  stack->used = (size_t)b.used;
+  stack->top = (size_t)b.top;
+  stack->frame_count = (size_t)b.frame_count;
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_guest_settle(GRCORE_Context * context, void * value,
+    void * env, GRCORE_SettleMode mode) {
+  (void)env;
+  if (mode == GRCORE_SETTLE_ABANDON) {
+    GRCORE_Stack * stack = value;
+    /* The destination was fresh, so every frame now on it is the snapshot's. */
+    for (size_t i = 0; i < stack->frame_count; i++) {
+      grcore_context_leave_depth(context, GRCORE_DEPTH_GUEST);
+    }
+    stack->used = GRCORE_STACK_BASE;
+    stack->top = 0;
+    stack->frame_count = 0;
+  }
+  return GRCORE_OK;
 }

@@ -643,7 +643,7 @@ is parsed from outside the process.
 **When one may be taken (AD-20).** By the owning thread only, with the context
 paused or parked outside `run`, with no fuel scope open and no nested
 activation; the guest stack's own hook adds "no activation record and no budget
-scope record" (the next story's commit). Every refusal is `ERR_INVALID` and
+scope record". Every refusal is `ERR_INVALID` and
 changes nothing: the keys' shape is checked before anything is allocated (a key
 with `snapshot` but no `restore` or `settle`, no name, more than one
 registration or a name another hooked key has), and a hook that refuses frees the
@@ -687,6 +687,38 @@ Not captured, supplied again as for a fresh run: the group, the options and
 budgets (fuel used starts at zero, the limits are the destination's), the page
 provider and allocator, the request port, the keys that have no hooks, and the
 keys that paused it (a restored context reports none).
+
+**The guest stack's snapshot hooks (A).** The stack's own key (`runtime-core.guest`)
+has hooks, so every engine's frames travel with a snapshot without the engine
+writing them. The blob is the engine table by name and the frames byte for byte.
+Frames are position independent (links are offsets and a header's tag is a
+function of its own offset), so they land at the same offsets in the
+destination and every link stays true, and the poll identity in each header
+travels with them. The one thing in a frame that is not data is a `VALUE` slot,
+which holds a reference into somebody's heap: it is written as **zero** (the
+engine's `slot_kind` says which), and the owner of the reference writes it back
+at settle, which is why the heap's root enumeration must give the same count at
+take and at settle. A `RAW` slot is written as it is.
+
+Take is refused (`ERR_INVALID`) with an activation record or a budget scope
+record open: those are the host and native frames and the template boundaries
+that AD-20 says have no place in a frozen context. Restore refuses, in CHECK
+and before anything changes, a destination whose engine table is not the
+snapshot's (same names, same order: a header names its engine by position), a
+destination that already has a frame, an activation or a scope, and a blob that
+is not a well-formed stack (a frame whose tag, link or size is wrong; the
+counts are checked against the frames themselves, so a blob that lies about its
+size cannot make the copy overrun). The destination's *own* depth and memory
+budgets are what limit it: each restored frame enters the depth count, and a
+snapshot deeper than the destination allows is `ERR_LIMIT` with the depth
+counted back and the stack as it was; the buffer is grown through the context's
+counting allocator, so a budget or an allocation failure ends the same way.
+
+*Rejected:* a relocating restore that rebuilt the stack frame by frame through
+`grcore_stack_push`. It would renumber nothing here, but it would run the
+depth and growth logic once per frame, and a mismatch in the middle would leave
+a half-pushed stack for the key to unpick; copying a validated buffer and
+setting three counters has one place to fail.
 
 **Rejected alternatives.**
 

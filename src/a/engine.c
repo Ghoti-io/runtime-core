@@ -51,7 +51,8 @@ static void guest_destroy(GRCORE_Context * context, void * value) {
 }
 
 const GRCORE_Key grcore_guest_key = {"runtime-core.guest",
-    GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, guest_destroy, NULL, NULL, NULL, NULL};
+    GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, guest_destroy, NULL,
+    grcore_guest_snapshot, grcore_guest_restore, grcore_guest_settle};
 
 GRCORE_Result grcore_guest_alloc_failure(
     const GRCORE_Context * context, uint64_t refusals_before) {
