@@ -50,6 +50,7 @@
 
 #include <ghoti.io/runtime-core/a/activation.h>
 #include <ghoti.io/runtime-core/a/budget_scope.h>
+#include <ghoti.io/runtime-core/a/codemeta.h>
 #include <ghoti.io/runtime-core/a/engine.h>
 #include <ghoti.io/runtime-core/a/frame.h>
 #include <ghoti.io/runtime-core/a/stack.h>

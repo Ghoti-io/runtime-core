@@ -35,8 +35,8 @@
  * in it; C zero-fills fields added after it, so a descriptor written before a
  * field existed keeps working, and a NULL callback always means "the engine
  * has nothing to say", never an error. Root enumeration and unwinding are in
- * it now (the `roots` and `unwind` hooks); deoptimization arrives with the
- * story that needs it, and the descriptor has no field for it yet.
+ * it now (the `roots` and `unwind` hooks). Deoptimization is not a hook: its
+ * metadata is a table in codemeta.h, and the descriptor has no field for it.
  *
  * A is labelled `free` (AD-14): a consumer requires the exact version it was
  * built against.

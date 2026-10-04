@@ -363,7 +363,8 @@ reader falls back (hexadecimal for an uninspected value). Fields that later
 stories need are trailing: C zero-fills a descriptor written before they
 existed. They were not in the struct until a story read them, because a field
 with no reader is a promise nobody has tested; root enumeration and unwinding
-are in it now (part 2), and deoptimization is not yet.
+are in it now (part 2), and deoptimization is not: the stack-map and deopt
+format is a table in `a/codemeta.h`, not a descriptor field.
 
 **One abstract frame, one walk (AD-18, AD-20).** `grcore_frame_walk_*` yields
 a `GRCORE_AbstractFrame`: context, engine, descriptor, poll identity, the
@@ -544,6 +545,36 @@ Alternatives considered and rejected:
   frames and what its caller does about a failed call (a limit-error value, an
   error-list entry), so the engine unwinds and `run` learns it is over when the
   scope closes.
+
+## A, part 3: the code-metadata format and the JIT layout descriptor
+
+The first JIT (`runtime-jit`) emits against formats that live here, so the
+reader of a compiled frame (the collector's root source, a pause-time rebuild)
+exists before any one writer does (AD-14, AD-17). Both headers are `free`.
+
+**`a/codemeta.h`: stack maps and deopt records.** A *site* is a place in the
+emitted code, named by a code offset that is the return address of a call or
+of a poll's slow call, and the start of the exit stub of a guard. It is one
+of five GC-point kinds (AD-17: poll, allocation slow path, call out of guest
+code, frame push, nested entry) or a guard. A site carries the poll identity
+`(function, offset)` of AD-18, the stack map (the live references as
+frame-slot locations with their slot kind), derived pointers as `(slot, base
+slot, delta)` triples (AD-12), and the deopt frame state: one location per
+interpreter slot, a frame slot, a 64-bit constant or dead. The format says
+*frame base*, never a register: the x86-64 baseline's is `rbp`, and a backend
+that keeps its frame elsewhere fills the same table. The frame lies below the
+base, a slot is named by the byte offset of its lowest byte (`-8`, `-16`,
+...), and a table's `frame_bytes` bounds them. A table is immutable and owned
+by its builder; `grcore_codemeta_validate` is the one parser of it. It checks
+the version, offsets (strictly increasing, inside the code), slot alignment
+and range, that a derived pointer's base is one of the site's live references,
+and that two sites of one function agree on the interpreter slot count, and it
+reads nothing outside the table. Its cost is sites times distinct function
+identities (the identity check scans earlier sites rather than allocate); the
+tables a code generator makes name one function. `grcore_codemeta_find` is a
+binary search for a site at exactly one offset. The descriptor in `engine.h`
+still has no deoptimization field: the metadata is a table the engine hands to
+whoever reads it, not a hook, and no reader exists yet (story 15).
 
 ## Benchmarks
 
