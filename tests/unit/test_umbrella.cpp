@@ -49,6 +49,17 @@ TEST(Umbrella, ReachesTheNewAHeadersAndTheRootsHeaderOfB) {
   EXPECT_EQ(grcore_context_nested_depth(nullptr), 0u);
 }
 
+TEST(Umbrella, ReachesRefcountedCode) {
+  // code.h through the umbrella alone, from C++.
+  EXPECT_EQ(grcore_code_refcount(nullptr), 0u);
+  EXPECT_EQ(grcore_code_payload(nullptr), nullptr);
+  EXPECT_EQ(grcore_code_retain(nullptr), nullptr);
+  grcore_code_release(nullptr);
+  GRCORE_Code * code = nullptr;
+  EXPECT_EQ(grcore_code_create(nullptr, nullptr, nullptr, &code),
+      GRCORE_ERR_INVALID);
+}
+
 TEST(Umbrella, ReachesTheCodeMetadataFormatAndTheLayoutDescriptor) {
   // This file includes the umbrella and nothing else, so a header the
   // umbrella omitted would not compile here.

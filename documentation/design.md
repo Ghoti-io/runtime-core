@@ -587,6 +587,21 @@ There is no keyed-slot offset, on purpose: keyed state is found by key. A code
 generator reads the descriptor when it compiles and stores the offset it used,
 so code is valid for exactly the build that produced it.
 
+**`a/code.h`: reference-counted compiled code.** AD-13 says the core owns the
+count of compiled code, and AD-22 says compiled code is shared between
+contexts, so a retain and a release can race on one handle from two threads.
+`GRCORE_Code` is an opaque handle over a payload the code generator gives it
+and a release function; creation sets the count to one, `retain` is a relaxed
+increment and the `release` that reaches zero is acquire-release, so the thread
+that frees the payload sees every write the other holders made to it (the same
+discipline as `GRCORE_Port`). The count is the one place the library lets two
+threads touch an object without an owner, which is why the header says so.
+The handle copies the allocator it was created with, so the caller's
+allocator pointer need not outlive it. The rejected alternative is a count
+inside the code generator's own object: every generator would write the same
+atomic, and an engine that holds code from two generators would have two
+counting disciplines.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This
