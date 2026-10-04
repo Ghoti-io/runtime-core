@@ -276,6 +276,144 @@ TEST(Shuffle, SettingTheModeIsRefusedForNonOwnersAndNull) {
   EXPECT_FALSE(w.ctx->shuffle);
 }
 
+
+namespace {
+
+/* A request kind owned by a service that clears it in its own handler (as the
+ * profiler, the debugger and the JIT do), and observers that ask whether it
+ * was pending. `extra_kinds` defines that many kinds first, so the service's
+ * kind can land in the overflow set (63 and up). */
+struct ClearWorld {
+  struct Seen {
+    bool pending = false;
+    size_t slot = 0; ///< Position in the poll's run order.
+  };
+  Outcome out;
+  std::vector<Seen> seen;
+  size_t clearer_slot = 0;
+  GRCORE_RequestKind kind = 0;
+  bool live_pending_after = true;
+  bool via_live_read = false; ///< Observers use the context read, not the call.
+  size_t order = 0;
+};
+
+ClearWorld clear_poll(uint64_t seed, int extra_kinds, bool via_live_read) {
+  ClearWorld cw;
+  cw.via_live_read = via_live_read;
+  cw.seen.resize(3);
+  RunWorld w;
+  for (int i = 0; i < extra_kinds; i++) {
+    GRCORE_RequestKind k;
+    EXPECT_EQ(grcore_context_request_kind(w.ctx, &kObserveKey, &k), GRCORE_OK);
+  }
+  static const GRCORE_Key kOwner = {"owner", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_OBSERVE, nullptr, probe_handler, nullptr, nullptr, nullptr};
+  EXPECT_EQ(grcore_context_request_kind(w.ctx, &kOwner, &cw.kind), GRCORE_OK);
+  Probe owner("owner");
+  owner.extra = [&](GRCORE_Context * c, GRCORE_PollCall *) {
+    cw.clearer_slot = cw.order++;
+    EXPECT_EQ(grcore_context_clear_request(c, cw.kind), GRCORE_OK);
+  };
+  std::vector<Probe> watchers;
+  watchers.reserve(3);
+  for (size_t i = 0; i < 3; i++) {
+    watchers.emplace_back("w" + std::to_string(i));
+    watchers.back().extra = [&cw, i](GRCORE_Context * c, GRCORE_PollCall * call) {
+      cw.seen[i].slot = cw.order++;
+      cw.seen[i].pending = cw.via_live_read
+          ? grcore_context_request_pending(c, cw.kind)
+          : grcore_pollcall_pending(call, cw.kind);
+    };
+  }
+  EXPECT_EQ(grcore_context_register(w.ctx, &kOwner, &owner), GRCORE_OK);
+  for (auto & p : watchers) {
+    EXPECT_EQ(grcore_context_register(w.ctx, &kObserveKey, &p), GRCORE_OK);
+  }
+  GRCORE_Port * port;
+  EXPECT_EQ(grcore_context_port(w.ctx, &port), GRCORE_OK);
+  EXPECT_EQ(grcore_port_post(port, cw.kind), GRCORE_OK);
+  EXPECT_EQ(grcore_context_set_phase_shuffle(w.ctx, true, seed), GRCORE_OK);
+  Fn fn{[&](GRCORE_Context * c) {
+    GRCORE_POLL(c);
+    return GRCORE_STEP_FINISHED;
+  }};
+  GRCORE_Outcome outcome;
+  EXPECT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
+  cw.live_pending_after = grcore_context_request_pending(w.ctx, cw.kind);
+  grcore_port_release(port);
+  return cw;
+}
+
+void expect_every_observer_told_pending(int extra_kinds) {
+  bool some_after = false, some_before = false;
+  for (int seed = 1; seed <= kSeeds; seed++) {
+    ClearWorld cw = clear_poll(static_cast<uint64_t>(seed), extra_kinds, false);
+    for (size_t i = 0; i < 3; i++) {
+      EXPECT_TRUE(cw.seen[i].pending) << "seed " << seed << " observer " << i;
+      (cw.seen[i].slot > cw.clearer_slot ? some_after : some_before) = true;
+    }
+    // The request is still the service's to clear: it is gone afterwards.
+    EXPECT_FALSE(cw.live_pending_after) << "seed " << seed;
+  }
+  // The control that the mode did put observers on both sides of the clear.
+  EXPECT_TRUE(some_after);
+  EXPECT_TRUE(some_before);
+}
+
+} // namespace
+
+TEST(Shuffle, AServiceClearingItsOwnRequestDoesNotHideItFromTheObserversAfterIt) {
+  expect_every_observer_told_pending(0);
+}
+
+TEST(Shuffle, TheSameHoldsForAKindInTheOverflowSet) {
+  expect_every_observer_told_pending(70);
+}
+
+TEST(Shuffle, ReadingTheLiveRequestInsteadOfTheCallIsOrderDependent) {
+  // The control: this is what the call's answer used to be, and the mode
+  // catches it as two different answers for one poll.
+  std::set<std::vector<bool>> answers;
+  for (int seed = 1; seed <= kSeeds; seed++) {
+    ClearWorld cw = clear_poll(static_cast<uint64_t>(seed), 0, true);
+    answers.insert({cw.seen[0].pending, cw.seen[1].pending, cw.seen[2].pending});
+  }
+  EXPECT_GE(answers.size(), 2u);
+}
+
+TEST(Shuffle, ARequestPostedDuringAPollIsToldAtTheNextOneNotThisOne) {
+  RunWorld w;
+  static const GRCORE_Key kEarly = {"early", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_OBSERVE, nullptr, probe_handler, nullptr, nullptr, nullptr};
+  static const GRCORE_Key kLate = {"late", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_OBSERVE, nullptr, nullptr, nullptr, nullptr, nullptr};
+  GRCORE_RequestKind early, late;
+  ASSERT_EQ(grcore_context_request_kind(w.ctx, &kEarly, &early), GRCORE_OK);
+  ASSERT_EQ(grcore_context_request_kind(w.ctx, &kLate, &late), GRCORE_OK);
+  GRCORE_Port * port;
+  ASSERT_EQ(grcore_context_port(w.ctx, &port), GRCORE_OK);
+  std::vector<int> told;
+  Probe p("early");
+  p.extra = [&](GRCORE_Context *, GRCORE_PollCall * call) {
+    told.push_back(grcore_pollcall_pending(call, late) ? 1 : 0);
+    if (told.size() == 1) {
+      EXPECT_EQ(grcore_port_post(port, late), GRCORE_OK);
+      EXPECT_FALSE(grcore_pollcall_pending(call, late)); // not this poll's
+    }
+  };
+  ASSERT_EQ(grcore_context_register(w.ctx, &kEarly, &p), GRCORE_OK);
+  ASSERT_EQ(grcore_port_post(port, early), GRCORE_OK);
+  Fn fn{[&](GRCORE_Context * c) {
+    GRCORE_POLL(c);
+    GRCORE_POLL(c);
+    return GRCORE_STEP_FINISHED;
+  }};
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
+  EXPECT_EQ(told, (std::vector<int>{0, 1}));
+  grcore_port_release(port);
+}
+
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

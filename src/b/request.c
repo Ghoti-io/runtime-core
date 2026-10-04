@@ -90,6 +90,23 @@ GRCORE_Result grcore_context_request_kind(GRCORE_Context * context,
     context->kind_keys = grown;
     context->kind_capacity = capacity;
   }
+  /* The poll's copy of the overflow set must be able to hold this kind. */
+  GRCORE_RequestKind kind = GRCORE_REQUEST_FIRST_KEYED + count;
+  if (kind >= GRCORE_REQUEST_WORD_KINDS) {
+    size_t words = (size_t)(kind - GRCORE_REQUEST_WORD_KINDS) / 64 + 1;
+    if (words > context->poll_overflow_words) {
+      const GRCORE_Allocator * a = context->group->allocator;
+      uint64_t * grown =
+          a->realloc_fn(a->ctx, context->poll_overflow, words * sizeof *grown);
+      if (grown == NULL) {
+        return GRCORE_ERR_OOM;
+      }
+      memset(grown + context->poll_overflow_words, 0,
+          (words - context->poll_overflow_words) * sizeof *grown);
+      context->poll_overflow = grown;
+      context->poll_overflow_words = words;
+    }
+  }
   context->kind_keys[count] = key;
   /* Release: a port that sees the new count may post the new kind. */
   __atomic_store_n(&context->kind_count, count + 1, __ATOMIC_RELEASE);
@@ -276,6 +293,42 @@ bool grcore_context_request_pending(
   bool pending = overflow_test(p, kind);
   pthread_mutex_unlock(&p->mutex);
   return pending;
+}
+
+void grcore_context_snapshot_requests(GRCORE_Context * context) {
+  uint64_t word = __atomic_load_n(&context->request_word, __ATOMIC_ACQUIRE);
+  context->poll_word = word;
+  if (context->poll_overflow_words == 0) {
+    return;
+  }
+  GRCORE_Port * p = context->port;
+  if ((word & OVERFLOW_SIGNAL) == 0 || p == NULL) {
+    memset(context->poll_overflow, 0,
+        context->poll_overflow_words * sizeof *context->poll_overflow);
+    return;
+  }
+  pthread_mutex_lock(&p->mutex);
+  size_t n = p->overflow_words < context->poll_overflow_words
+      ? p->overflow_words
+      : context->poll_overflow_words;
+  memcpy(context->poll_overflow, p->overflow, n * sizeof *p->overflow);
+  memset(context->poll_overflow + n, 0,
+      (context->poll_overflow_words - n) * sizeof *p->overflow);
+  pthread_mutex_unlock(&p->mutex);
+}
+
+bool grcore_context_snapshot_pending(
+    const GRCORE_Context * context, GRCORE_RequestKind kind) {
+  if (context == NULL || !kind_defined(context, kind)) {
+    return false;
+  }
+  if (kind < GRCORE_REQUEST_WORD_KINDS) {
+    return (context->poll_word & WORD_BIT(kind)) != 0;
+  }
+  size_t index = kind - GRCORE_REQUEST_WORD_KINDS;
+  return index / 64 < context->poll_overflow_words &&
+      (context->poll_overflow[index / 64] &
+          (UINT64_C(1) << (index % 64))) != 0;
 }
 
 GRCORE_Result grcore_context_clear_request(

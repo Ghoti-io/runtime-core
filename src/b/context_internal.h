@@ -101,6 +101,13 @@ struct GRCORE_Context {
   const GRCORE_Key ** kind_keys; ///< Owner only; `kind_count` entries.
   size_t kind_capacity;
   GRCORE_Port * port;    ///< The context's own reference. Owner only.
+  /* What the poll in progress sees as pending (AD-5): the request word and
+   * the overflow set, copied when the poll starts. A handler that clears its
+   * own request does not change what a handler after it is told. The overflow
+   * array is sized when a kind is defined, so a poll never allocates. */
+  uint64_t poll_word;
+  uint64_t * poll_overflow; ///< Bit i is kind 63 + i.
+  size_t poll_overflow_words;
 
   /* Budgets (AD-21). Owner only. */
   uint64_t fuel_used;
@@ -180,6 +187,13 @@ static inline bool grcore_fuel_scope_exhausted(const GRCORE_Context * c) {
   const GRCORE_FuelScope * s = grcore_fuel_scope_innermost(c);
   return s != NULL && s->used > s->budget;
 }
+
+/** @brief Copies the pending requests for the poll that is starting. */
+void grcore_context_snapshot_requests(GRCORE_Context * context);
+
+/** @brief Whether `kind` was pending when the poll in progress started. */
+bool grcore_context_snapshot_pending(
+    const GRCORE_Context * context, GRCORE_RequestKind kind);
 
 /** @brief Clears the terminate request. Only the end of `run` does this. */
 void grcore_context_clear_terminate(GRCORE_Context * context);

@@ -155,7 +155,11 @@ GRCORE_API GRCORE_Result grcore_port_post(
     GRCORE_Port * port, GRCORE_RequestKind kind);
 
 /**
- * @brief Whether a request is pending. Owner.
+ * @brief Whether a request is pending now. Owner.
+ *
+ * This is the live state. A poll handler asks ::grcore_pollcall_pending
+ * instead, which gives every handler of one poll the same answer whatever an
+ * earlier handler cleared.
  *
  * @param context The context.
  * @param kind The kind, including the derived ones as of the last poll.

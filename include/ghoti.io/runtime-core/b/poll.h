@@ -178,6 +178,14 @@ GRCORE_API GRCORE_Phase grcore_pollcall_phase(const GRCORE_PollCall * call);
 /**
  * @brief Whether a request is pending, as this poll sees it.
  *
+ * The answer is what was pending when the poll started, the same for every
+ * handler of the poll. A handler that clears its own request, as a service
+ * does once it has acted on it, does not change what the handlers after it are
+ * told; neither does a post that arrives while the poll runs, which the next
+ * poll sees. This is what lets DECIDE and OBSERVE handlers commute.
+ * ::grcore_context_request_pending reads the request as it is now, and a
+ * handler must not use it for a decision.
+ *
  * @param call The poll in progress.
  * @param kind The kind.
  * @return True if pending.

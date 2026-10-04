@@ -53,7 +53,7 @@ GRCORE_Phase grcore_pollcall_phase(const GRCORE_PollCall * call) {
 
 bool grcore_pollcall_pending(
     const GRCORE_PollCall * call, GRCORE_RequestKind kind) {
-  return call != NULL && grcore_context_request_pending(call->context, kind);
+  return call != NULL && grcore_context_snapshot_pending(call->context, kind);
 }
 
 GRCORE_Verdict grcore_pollcall_verdict(const GRCORE_PollCall * call) {
@@ -99,8 +99,9 @@ GRCORE_Result grcore_pollcall_set_unwind_result(
 
 static void decide_terminate(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call) {
+  (void)context;
   (void)value;
-  if (grcore_context_request_pending(context, GRCORE_REQUEST_TERMINATE)) {
+  if (grcore_pollcall_pending(call, GRCORE_REQUEST_TERMINATE)) {
     grcore_pollcall_vote(call, GRCORE_VERDICT_UNWIND);
     grcore_pollcall_set_unwind_result(call, GRCORE_ERR_LIMIT);
   }
@@ -108,16 +109,18 @@ static void decide_terminate(
 
 static void decide_time(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call) {
+  (void)context;
   (void)value;
-  if (grcore_context_request_pending(context, GRCORE_REQUEST_TIME)) {
+  if (grcore_pollcall_pending(call, GRCORE_REQUEST_TIME)) {
     grcore_pollcall_vote(call, GRCORE_VERDICT_PAUSE);
   }
 }
 
 static void decide_interrupt(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call) {
+  (void)context;
   (void)value;
-  if (grcore_context_request_pending(context, GRCORE_REQUEST_INTERRUPT)) {
+  if (grcore_pollcall_pending(call, GRCORE_REQUEST_INTERRUPT)) {
     grcore_pollcall_vote(call, GRCORE_VERDICT_PAUSE);
   }
 }
@@ -125,7 +128,7 @@ static void decide_interrupt(
 static void decide_fuel(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call) {
   (void)value;
-  if (!grcore_context_request_pending(context, GRCORE_REQUEST_FUEL)) {
+  if (!grcore_pollcall_pending(call, GRCORE_REQUEST_FUEL)) {
     return;
   }
   /* The ceiling beats a scope: when both are exhausted the host can raise the
@@ -149,7 +152,7 @@ static void decide_memory(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call) {
   (void)value;
   if (context->reclaim_tried &&
-      grcore_context_request_pending(context, GRCORE_REQUEST_MEMORY)) {
+      grcore_pollcall_pending(call, GRCORE_REQUEST_MEMORY)) {
     grcore_pollcall_vote(call, GRCORE_VERDICT_PAUSE);
   }
 }
@@ -268,6 +271,9 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
   }
   grcore_context_transition(c, GRCORE_CONFIG_AT_POLL);
   grcore_context_refresh_derived(c);
+  /* What every handler of this poll is told is pending, whatever an earlier
+   * handler clears: the outcome must not depend on handler order. */
+  grcore_context_snapshot_requests(c);
   c->fuel_vote_scoped = false;
   /* A pause cannot return to the host from inside a nested activation
    * (AD-5), so there it is refused exactly as the runtime poll refuses it. */

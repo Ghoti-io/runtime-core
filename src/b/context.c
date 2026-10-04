@@ -183,6 +183,7 @@ GRCORE_Result grcore_context_destroy(GRCORE_Context * context) {
       context->counting.allocator.ctx, context->roots);
   a->free_fn(a->ctx, context->registrations);
   a->free_fn(a->ctx, context->kind_keys);
+  a->free_fn(a->ctx, context->poll_overflow);
   scratch_free(context, (void *)context->verdict_keys);
   grcore_options_destroy(context->options);
   a->free_fn(a->ctx, context);
