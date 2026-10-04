@@ -259,6 +259,19 @@ before it produces two different key lists over 64 seeds, and a test plants
 exactly that and watches it be caught. The same planted handler looks fine
 with the mode off, which is why the mode exists.
 
+**What is pending does not depend on handler order either.** A service clears
+its own request in its handler (the profiler, the JIT's tier-up, the debugger do),
+and a handler that ran after it used to be told the request was gone, so who saw a
+request depended on who ran first. The poll now copies the request word and the
+overflow set when it starts (the copy is sized when a kind is defined, so a poll
+still never allocates), and `grcore_pollcall_pending` and the built-in keys read the
+copy: every handler of one poll is told the same thing, a post that arrives while
+the poll runs is told at the next poll, and `grcore_context_request_pending` stays
+the live read for the owner outside a poll. The shuffle tests plant a handler that
+reads the live state and catch it as two different answers over 64 seeds; the
+lang-tang profile test, which had been written around the one order that worked, is
+now run under sixteen seeds and must give one report.
+
 **Rejected: handler-registration order for verdicts.** The first service to
 register would then win every tie, and two services could change each other's
 behaviour just by being loaded in a different order.
