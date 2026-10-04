@@ -8,11 +8,9 @@
 
 #include "test_helpers.h"
 
+#include <csetjmp>
 #include <csignal>
 #include <cstring>
-#include <sys/mman.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 TEST(Page, DefaultIsAPowerOfTwoGranuleWithAllThreeCalls) {
   const GRCORE_PageProvider * p = grcore_page_provider_default();
@@ -155,18 +153,29 @@ TEST(Page, ACustomProviderWithItsOwnGranuleIsHonoured) {
 
 /* ---- protect ------------------------------------------------------------ */
 
-/* Runs `body` in a forked child and returns the signal that killed it, or 0
- * when it exited normally. A write to a read-execute page must be SIGSEGV. */
-template <typename F>
-static int child_signal(F body) {
-  pid_t pid = fork();
-  if (pid == 0) {
-    body();
-    _exit(0);
+/* Whether a write to `*p` faults. The fault is caught in this process rather
+ * than in a forked child: a sanitizer's own SEGV handler turns the signal into
+ * an exit status a parent cannot tell from an ordinary failure. */
+static sigjmp_buf g_fault;
+static void on_fault(int) {
+  siglongjmp(g_fault, 1);
+}
+static bool write_faults(volatile unsigned char * p) {
+  struct sigaction act;
+  struct sigaction old;
+  std::memset(&act, 0, sizeof act);
+  act.sa_handler = on_fault;
+  sigemptyset(&act.sa_mask);
+  act.sa_flags = SA_NODEFER;
+  EXPECT_EQ(sigaction(SIGSEGV, &act, &old), 0);
+  volatile bool faulted = false;
+  if (sigsetjmp(g_fault, 1) == 0) {
+    *p = 1;
+  } else {
+    faulted = true;
   }
-  int status = 0;
-  waitpid(pid, &status, 0);
-  return WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+  sigaction(SIGSEGV, &old, nullptr);
+  return faulted;
 }
 
 static void exercise_protect(const GRCORE_PageProvider * p) {
@@ -177,12 +186,12 @@ static void exercise_protect(const GRCORE_PageProvider * p) {
   ASSERT_EQ(grcore_page_protect(p, m, size, GRCORE_PAGE_READ_EXECUTE),
       GRCORE_OK);
   EXPECT_EQ(m[0], 0xC3); /* still readable */
-  EXPECT_EQ(child_signal([&] { m[1] = 1; }), SIGSEGV);
+  EXPECT_TRUE(write_faults(&m[1])) << "a write to a read-execute page succeeded";
   ASSERT_EQ(grcore_page_protect(p, m, size, GRCORE_PAGE_READ_WRITE),
       GRCORE_OK);
   m[1] = 7;
   EXPECT_EQ(m[1], 7);
-  EXPECT_EQ(child_signal([&] { m[2] = 1; }), 0);
+  EXPECT_FALSE(write_faults(&m[2])) << "a write to a read-write page faulted";
   p->unmap(p->ctx, m, size);
 }
 
