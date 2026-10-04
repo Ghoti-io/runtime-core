@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstring>
 #include <random>
+#include <string>
 
 namespace {
 
@@ -230,6 +231,55 @@ TEST(CodeMeta, TwoSitesOfOneFunctionMustAgreeOnTheSlotCount) {
   b.parts[2].identity.function = 8;
   b.finish(64, 100);
   EXPECT_EQ(grcore_codemeta_validate(&b.meta, 100, nullptr), GRCORE_OK);
+}
+
+TEST(CodeMeta, WideSitesAndManyFunctionsAreValidatedAndTheirFlawsStillFound) {
+  // 40 sites of 300 live references and 300 derived pointers each, whose bases
+  // are found among the live slots by the fast path; and 5,000 sites of as
+  // many functions, two of them the same function far apart.
+  Built wide;
+  for (uint32_t i = 0; i < 40; i++) {
+    Built::Site s;
+    s.offset = 10 + i * 10;
+    s.kind = GRCORE_SITE_GC_POINT_CALL;
+    s.identity = {7, i};
+    for (int64_t k = 0; k < 300; k++) {
+      s.live.push_back(slot(-8 * (k + 1), GRCORE_SLOT_VALUE));
+      s.derived.push_back({-8 * (300 + k + 1), -8 * (300 - k), 16});
+    }
+    wide.parts.push_back(s);
+  }
+  wide.finish(8 * 600, 10 * 40 + 20);
+  EXPECT_EQ(grcore_codemeta_validate(&wide.meta, wide.meta.code_bytes, nullptr), GRCORE_OK);
+  // The last site's last derived pointer is based on a slot that is only RAW.
+  wide.parts.back().live[0].slot_kind = GRCORE_SLOT_RAW; // slot -8, the base of the last
+  wide.finish(8 * 600, 10 * 40 + 20);
+  const char * why = refuse(wide);
+  EXPECT_NE(std::string(why).find("derived pointer's base"), std::string::npos) << why;
+  // A marking left over from the refused site must not make the next table
+  // look valid or invalid: validate the good one again.
+  wide.parts.back().live[0].slot_kind = GRCORE_SLOT_VALUE;
+  wide.finish(8 * 600, 10 * 40 + 20);
+  EXPECT_EQ(grcore_codemeta_validate(&wide.meta, wide.meta.code_bytes, nullptr), GRCORE_OK);
+
+  Built many;
+  constexpr uint32_t kMany = 5000;
+  for (uint32_t i = 0; i < kMany; i++) {
+    Built::Site s;
+    s.offset = 4 + i * 4;
+    s.kind = GRCORE_SITE_GUARD;
+    s.identity = {1000 + i, 0};
+    s.state = {{GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 1}};
+    many.parts.push_back(s);
+  }
+  many.finish(64, 4 * kMany + 8);
+  EXPECT_EQ(grcore_codemeta_validate(&many.meta, many.meta.code_bytes, nullptr), GRCORE_OK);
+  // The last site now names the first site's function with another slot count.
+  many.parts.back().identity.function = 1000;
+  many.parts.back().state.push_back({GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 2});
+  many.finish(64, 4 * kMany + 8);
+  why = refuse(many);
+  EXPECT_NE(std::string(why).find("disagree on the slot count"), std::string::npos) << why;
 }
 
 TEST(CodeMeta, ANullArrayWithANonZeroCountIsCorrupt) {

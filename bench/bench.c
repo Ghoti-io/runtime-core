@@ -698,6 +698,63 @@ static uint64_t profile_sample_32_run(uint64_t iterations) {
   return profile_sample_run(iterations, 32);
 }
 
+/* Validating a code-metadata table of many sites: 100 sites of a thousand
+ * live references and a thousand derived pointers each (a base that must be
+ * found among the live slots), and then 20,000 sites of 20,000 different
+ * functions (each of which must agree with the first earlier site of its
+ * function, of which there is none). A validator that searches the live
+ * slots for each derived pointer, or the earlier sites for each site, is
+ * quadratic in both. An iteration is one validation of both tables. */
+#define META_WIDE_SITES 100u
+#define META_WIDE_SLOTS 1000u
+#define META_MANY_SITES 20000u
+
+static uint64_t codemeta_validate_run(uint64_t iterations) {
+  static GRCORE_CodeSite wide_sites[META_WIDE_SITES];
+  static GRCORE_CodeLocation wide_live[META_WIDE_SLOTS];
+  static GRCORE_DerivedPointer wide_derived[META_WIDE_SLOTS];
+  static GRCORE_CodeSite many_sites[META_MANY_SITES];
+  for (uint32_t i = 0; i < META_WIDE_SLOTS; i++) {
+    wide_live[i].kind = GRCORE_LOC_FRAME_SLOT;
+    wide_live[i].slot_kind = GRCORE_SLOT_VALUE;
+    wide_live[i].value = -8 * (int64_t)(i + 1);
+    wide_derived[i].slot = -8 * (int64_t)(META_WIDE_SLOTS + i + 1);
+    wide_derived[i].base_slot = -8 * (int64_t)(META_WIDE_SLOTS - i);
+    wide_derived[i].delta = 16;
+  }
+  for (uint32_t i = 0; i < META_WIDE_SITES; i++) {
+    wide_sites[i].code_offset = 10 + i * 10;
+    wide_sites[i].kind = GRCORE_SITE_GC_POINT_CALL;
+    wide_sites[i].identity.function = 1;
+    wide_sites[i].identity.offset = i;
+    wide_sites[i].live = wide_live;
+    wide_sites[i].live_count = META_WIDE_SLOTS;
+    wide_sites[i].derived = wide_derived;
+    wide_sites[i].derived_count = META_WIDE_SLOTS;
+  }
+  for (uint32_t i = 0; i < META_MANY_SITES; i++) {
+    many_sites[i].code_offset = 4 + i * 4;
+    many_sites[i].kind = GRCORE_SITE_GUARD;
+    many_sites[i].identity.function = 1000 + i;
+  }
+  GRCORE_CodeMeta wide = {GRCORE_CODEMETA_FORMAT_VERSION,
+      16u * META_WIDE_SLOTS, 10u * META_WIDE_SITES + 20u, META_WIDE_SITES, wide_sites};
+  GRCORE_CodeMeta many = {GRCORE_CODEMETA_FORMAT_VERSION, 64u,
+      4u * META_MANY_SITES + 8u, META_MANY_SITES, many_sites};
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    const char * why = NULL;
+    if (grcore_codemeta_validate(&wide, wide.code_bytes, &why) != GRCORE_OK ||
+        grcore_codemeta_validate(&many, many.code_bytes, &why) != GRCORE_OK) {
+      fprintf(stderr, "bench: the code-metadata tables did not validate: %s\n",
+          why != NULL ? why : "(no reason)");
+      abort();
+    }
+    sink += META_WIDE_SITES + META_MANY_SITES;
+  }
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"ctx-create", context_create_destroy_run, 1000u * 1000u, 1000u},
@@ -716,6 +773,7 @@ static const Case cases[] = {
     {"snapshot-restore", snapshot_restore_run, 2u * 1000u * 1000u, 1000u},
     {"profile-sample-1", profile_sample_1_run, 5u * 1000u * 1000u, 10000u},
     {"profile-sample-32", profile_sample_32_run, 2u * 1000u * 1000u, 10000u},
+    {"codemeta-validate", codemeta_validate_run, 20u, 1u},
 };
 
 #define REPEATS 7

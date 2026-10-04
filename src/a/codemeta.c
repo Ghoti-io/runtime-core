@@ -28,8 +28,11 @@
 #include <ghoti.io/runtime-core/macros.h>
 
 #include <ghoti.io/runtime-core/a/codemeta.h>
+#include <ghoti.io/runtime-core/allocator.h>
 
 #include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 
 #define CORRUPT(why) \
   do { \
@@ -55,8 +58,31 @@ static bool is_live(const GRCORE_CodeSite * site, int64_t slot) {
   return false;
 }
 
+/* The same question for a whole site at once. `marks` holds a bit per frame
+ * slot; the VALUE entries of the site's stack map are set in it, so that each
+ * derived pointer's base is a bit test and not a search of the stack map
+ * (which made a site with n derived pointers and n live references n squared).
+ * Slots were range-checked before this is used. */
+static size_t slot_index(int64_t offset) {
+  return (size_t)(-offset / 8 - 1);
+}
+
+static void mark_slots(const GRCORE_CodeSite * s, uint64_t * marks, bool on) {
+  for (size_t i = 0; i < s->live_count; i++) {
+    if (s->live[i].slot_kind != GRCORE_SLOT_VALUE) {
+      continue;
+    }
+    size_t k = slot_index(s->live[i].value);
+    if (on) {
+      marks[k / 64] |= UINT64_C(1) << (k % 64);
+    } else {
+      marks[k / 64] &= ~(UINT64_C(1) << (k % 64));
+    }
+  }
+}
+
 static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
-    const char ** out_reason) {
+    uint64_t * marks, const char ** out_reason) {
   if ((unsigned)s->kind >= (unsigned)GRCORE_SITE_KIND_COUNT) {
     CORRUPT("site kind is not one of the kinds");
   }
@@ -77,14 +103,33 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
       CORRUPT("stack map slot is misaligned or outside the frame");
     }
   }
+  if (marks != NULL) {
+    mark_slots(s, marks, true);
+  }
   for (size_t i = 0; i < s->derived_count; i++) {
     const GRCORE_DerivedPointer * d = &s->derived[i];
     if (!slot_ok(d->slot, frame_bytes) || !slot_ok(d->base_slot, frame_bytes)) {
+      if (marks != NULL) {
+        mark_slots(s, marks, false);
+      }
       CORRUPT("derived pointer slot is misaligned or outside the frame");
     }
-    if (!is_live(s, d->base_slot)) {
+    bool live;
+    if (marks != NULL) {
+      size_t k = slot_index(d->base_slot);
+      live = (marks[k / 64] >> (k % 64)) & 1u;
+    } else {
+      live = is_live(s, d->base_slot);
+    }
+    if (!live) {
+      if (marks != NULL) {
+        mark_slots(s, marks, false);
+      }
       CORRUPT("derived pointer's base is not a live reference of its site");
     }
+  }
+  if (marks != NULL) {
+    mark_slots(s, marks, false);
   }
   for (size_t i = 0; i < s->frame_state_count; i++) {
     const GRCORE_CodeLocation * l = &s->frame_state[i];
@@ -101,6 +146,23 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
   return GRCORE_OK;
 }
 
+/* Each function's interpreter slot count, found by function in an open
+ * addressing table, so that "agree with the first earlier site of this
+ * function" is a lookup and not a walk over every earlier site. */
+typedef struct FnCount {
+  uint64_t function;
+  size_t count;
+  bool used;
+} FnCount;
+
+static size_t fn_home(uint64_t function, size_t mask) {
+  uint64_t x = function;
+  x ^= x >> 33;
+  x *= UINT64_C(0xff51afd7ed558ccd);
+  x ^= x >> 33;
+  return (size_t)x & mask;
+}
+
 GRCORE_Result grcore_codemeta_validate(
     const GRCORE_CodeMeta * meta, size_t code_bytes, const char ** out_reason) {
   if (meta == NULL) {
@@ -115,30 +177,74 @@ GRCORE_Result grcore_codemeta_validate(
   if (meta->sites == NULL && meta->site_count != 0) {
     CORRUPT("array is NULL with a non-zero count");
   }
-  for (size_t i = 0; i < meta->site_count; i++) {
+
+  /* Working memory for the two lookups. If it cannot be had, the checks fall
+   * back to searching, which gives the same answers more slowly. */
+  const GRCORE_Allocator * a = grcore_allocator_default();
+  size_t mark_words = (size_t)meta->frame_bytes / 8 / 64 + 1;
+  uint64_t * marks = a->calloc_fn(a->ctx, mark_words, sizeof *marks);
+  FnCount * functions = NULL;
+  size_t mask = 0;
+  if (meta->site_count != 0 && meta->site_count < SIZE_MAX / 4 / sizeof *functions) {
+    size_t cap = 16;
+    while (cap < meta->site_count * 2) {
+      cap <<= 1;
+    }
+    functions = a->calloc_fn(a->ctx, cap, sizeof *functions);
+    mask = cap - 1;
+  }
+
+  GRCORE_Result result = GRCORE_OK;
+  const char * why = NULL;
+  for (size_t i = 0; i < meta->site_count && result == GRCORE_OK; i++) {
     const GRCORE_CodeSite * s = &meta->sites[i];
     if (s->code_offset >= meta->code_bytes) {
-      CORRUPT("site offset is past the code");
+      why = "site offset is past the code";
+      result = GRCORE_ERR_CORRUPT;
+      break;
     }
     if (i > 0 && s->code_offset <= meta->sites[i - 1].code_offset) {
-      CORRUPT("site offsets are not strictly increasing");
+      why = "site offsets are not strictly increasing";
+      result = GRCORE_ERR_CORRUPT;
+      break;
     }
-    GRCORE_Result r = check_site(s, meta->frame_bytes, out_reason);
-    if (r != GRCORE_OK) {
-      return r;
+    result = check_site(s, meta->frame_bytes, marks, &why);
+    if (result != GRCORE_OK) {
+      break;
     }
     /* One function, one interpreter frame size: compare with the first
      * earlier site that names the same function. */
-    for (size_t j = 0; j < i; j++) {
-      if (meta->sites[j].identity.function == s->identity.function) {
-        if (meta->sites[j].frame_state_count != s->frame_state_count) {
-          CORRUPT("two sites of one function disagree on the slot count");
+    if (functions != NULL) {
+      size_t h = fn_home(s->identity.function, mask);
+      while (functions[h].used && functions[h].function != s->identity.function) {
+        h = (h + 1) & mask;
+      }
+      if (!functions[h].used) {
+        functions[h].used = true;
+        functions[h].function = s->identity.function;
+        functions[h].count = s->frame_state_count;
+      } else if (functions[h].count != s->frame_state_count) {
+        why = "two sites of one function disagree on the slot count";
+        result = GRCORE_ERR_CORRUPT;
+      }
+    } else {
+      for (size_t j = 0; j < i; j++) {
+        if (meta->sites[j].identity.function == s->identity.function) {
+          if (meta->sites[j].frame_state_count != s->frame_state_count) {
+            why = "two sites of one function disagree on the slot count";
+            result = GRCORE_ERR_CORRUPT;
+          }
+          break;
         }
-        break;
       }
     }
   }
-  return GRCORE_OK;
+  a->free_fn(a->ctx, marks);
+  a->free_fn(a->ctx, functions);
+  if (result != GRCORE_OK && out_reason != NULL) {
+    *out_reason = why;
+  }
+  return result;
 }
 
 const GRCORE_CodeSite * grcore_codemeta_find(
