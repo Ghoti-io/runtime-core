@@ -107,6 +107,16 @@ typedef struct GRCORE_Profiler GRCORE_Profiler;
 /** @brief The largest table capacity: more is ::GRCORE_ERR_LIMIT. */
 #define GRCORE_PROFILER_MAX_CAPACITY ((size_t)1 << 20)
 
+/**
+ * @brief The shortest timer interval, in microseconds (10 kHz).
+ *
+ * A shorter one is refused, never clamped (::GRCORE_ERR_INVALID): a period of
+ * a microsecond or two leaves the timer thread posting without pause, which
+ * costs a core and takes no more samples than the guest's polls allow. A host
+ * that wants every poll sampled posts ::grcore_profiler_request itself.
+ */
+#define GRCORE_PROFILER_MIN_INTERVAL_US UINT64_C(100)
+
 /** @brief The longest timer interval, in microseconds (one day). */
 #define GRCORE_PROFILER_MAX_INTERVAL_US (UINT64_C(86400) * UINT64_C(1000000))
 
@@ -196,10 +206,11 @@ GRCORE_API GRCORE_Result grcore_profiler_request(const GRCORE_Profiler * profile
  * it, so a guest that polls rarely is sampled at its poll rate, not faster.
  *
  * @param profiler The profiler. Its context's owner calls this.
- * @param interval_us The period in microseconds, from 1 to
- *   ::GRCORE_PROFILER_MAX_INTERVAL_US.
- * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for NULL, a non-owner, a zero
- *   interval or a timer already running (nothing changes);
+ * @param interval_us The period in microseconds, from
+ *   ::GRCORE_PROFILER_MIN_INTERVAL_US to ::GRCORE_PROFILER_MAX_INTERVAL_US.
+ * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for NULL, a non-owner, an interval
+ *   below the minimum (zero included) or a timer already running (nothing
+ *   changes);
  *   ::GRCORE_ERR_LIMIT for an interval over the maximum; ::GRCORE_ERR_OOM
  *   when the timer or its thread cannot be created.
  */

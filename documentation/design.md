@@ -885,7 +885,7 @@ from any thread. `grcore_profiler_timer_start(interval_us)` runs a thread that
 calls it every interval. The timer holds only a retained port and the kind and
 touches no guest state (AD-4, AD-6); the key's `destroy` stops it and joins it
 before the profiler is freed, so a context destroyed while the timer runs is safe
-(the TSan target exercises this). A zero interval and a second start are refused.
+(the TSan target exercises this). A zero interval, one under `GRCORE_PROFILER_MIN_INTERVAL_US` (100 us, refused rather than clamped: a period of a microsecond spins a core) and a second start are refused.
 The sample rate is the host's: a tick that finds a sample already pending merges
 with it, so a guest that polls rarely is sampled at its poll rate.
 

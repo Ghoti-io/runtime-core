@@ -591,29 +591,67 @@ TEST(ProfilerTimer, ZeroIntervalAndASecondStartAreRefusedAndStopWithoutStartIsAN
   ASSERT_EQ(grcore_profiler_timer_start(p, 100000), GRCORE_OK);
 }
 
+TEST(ProfilerTimer, AnIntervalBelowTheMinimumIsRefusedNotClamped) {
+  // A 1 us period spins a core on posts. It is refused with nothing started
+  // (not rounded up, so a host never gets a rate it did not ask for), and the
+  // minimum itself, and the first value under it, are the two sides of the line.
+  RunWorld w;
+  GRCORE_Profiler * p = nullptr;
+  ASSERT_EQ(grcore_profiler_attach(w.ctx, 0, &p), GRCORE_OK);
+  ASSERT_GT(GRCORE_PROFILER_MIN_INTERVAL_US, UINT64_C(1));
+  for (uint64_t us : {UINT64_C(1), UINT64_C(2), UINT64_C(10),
+           GRCORE_PROFILER_MIN_INTERVAL_US - 1}) {
+    EXPECT_EQ(grcore_profiler_timer_start(p, us), GRCORE_ERR_INVALID) << us;
+    EXPECT_FALSE(grcore_profiler_timer_running(p)) << us;
+  }
+  ASSERT_EQ(grcore_profiler_timer_start(p, GRCORE_PROFILER_MIN_INTERVAL_US),
+      GRCORE_OK);
+  EXPECT_TRUE(grcore_profiler_timer_running(p));
+  EXPECT_EQ(grcore_profiler_timer_stop(p), GRCORE_OK);
+  EXPECT_FALSE(grcore_profiler_timer_running(p));
+}
+
 TEST(ProfilerTimer, ARunningTimerSamplesAGuestThatPollsAndStopsWhenAskedTo) {
   StackWorld w;
   GRCORE_Profiler * p = nullptr;
   ASSERT_EQ(grcore_profiler_attach(w.ctx, 0, &p), GRCORE_OK);
   ASSERT_EQ(grcore_profiler_timer_start(p, 500), GRCORE_OK);
-  Guest g;
-  g.engine = w.alpha;
-  g.steps = 400;
-  g.request = false;
-  g.before_poll = [](uint64_t) {
-    std::this_thread::sleep_for(std::chrono::microseconds(250));
-  };
-  ASSERT_EQ(run_guest(w.ctx, &g), GRCORE_OK);
+  // Poll in rounds until the timer has delivered enough samples, not for a
+  // fixed number of polls: how many ticks fit in a fixed run depends on
+  // whether the timer thread is scheduled at all (a loaded or starved host
+  // gave zero), and the property is that a running timer samples, not how
+  // fast this host runs it. The deadline is only the failure path.
+  const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  uint64_t polls = 0;
+  uint64_t seen = 0;
+  while (seen < 20 && std::chrono::steady_clock::now() < give_up) {
+    Guest g;
+    g.engine = w.alpha;
+    g.steps = 50;
+    g.request = false;
+    g.before_poll = [](uint64_t) {
+      std::this_thread::sleep_for(std::chrono::microseconds(250));
+    };
+    ASSERT_EQ(run_guest(w.ctx, &g), GRCORE_OK);
+    polls += g.steps;
+    seen = read(p).totals.samples;
+  }
   ASSERT_EQ(grcore_profiler_timer_stop(p), GRCORE_OK);
   Report r = read(p);
-  // 400 polls over at least 100 ms of a 0.5 ms tick: far more than a handful
-  // unless the timer is dead; samples are bounded by the polls.
-  EXPECT_GE(r.totals.samples, 20u);
-  EXPECT_LE(r.totals.samples, 400u);
+  // A tick that finds a sample pending merges, so samples never exceed polls.
+  EXPECT_GE(r.totals.samples, 20u) << "the timer never sampled";
+  EXPECT_LE(r.totals.samples, polls);
   ASSERT_EQ(r.entries.size(), 1u);
   EXPECT_EQ(r.entries[0].self, r.totals.samples);
-  // Stopped means stopped: no more samples arrive.
-  uint64_t before = r.totals.samples;
+  // Stopped means stopped: no more samples arrive. A tick posted just before
+  // the stop (the join guarantees none after it) is still pending and is taken
+  // at the next poll, so one poll drains it before the count is fixed.
+  Guest drain;
+  drain.engine = w.alpha;
+  drain.steps = 1;
+  drain.request = false;
+  ASSERT_EQ(run_guest(w.ctx, &drain), GRCORE_OK);
+  uint64_t before = read(p).totals.samples;
   Guest more;
   more.engine = w.alpha;
   more.steps = 50;
@@ -631,7 +669,7 @@ TEST(ProfilerTimer, DestroyingTheContextWhileTheTimerRunsIsClean) {
           tracker.get());
       GRCORE_Profiler * p = nullptr;
       ASSERT_EQ(grcore_profiler_attach(w.ctx, 0, &p), GRCORE_OK);
-      ASSERT_EQ(grcore_profiler_timer_start(p, 1 + i), GRCORE_OK);
+      ASSERT_EQ(grcore_profiler_timer_start(p, GRCORE_PROFILER_MIN_INTERVAL_US + i), GRCORE_OK);
       std::this_thread::sleep_for(std::chrono::microseconds(100 * i));
       // ~RunWorld destroys the context with the timer thread running.
     }

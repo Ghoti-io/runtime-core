@@ -328,7 +328,8 @@ GRCORE_Result grcore_profiler_request(const GRCORE_Profiler * profiler) {
 
 GRCORE_Result grcore_profiler_timer_start(
     GRCORE_Profiler * profiler, uint64_t interval_us) {
-  if (profiler == NULL || interval_us == 0 || profiler->timer != NULL ||
+  if (profiler == NULL || interval_us < GRCORE_PROFILER_MIN_INTERVAL_US ||
+      profiler->timer != NULL ||
       !grcore_context_owned_by_caller(profiler->context)) {
     return GRCORE_ERR_INVALID;
   }
