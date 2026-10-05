@@ -201,7 +201,8 @@ typedef struct GRCORE_EngineDescriptor {
    *  functions. It may read the frame's slots through stack.h but must not
    *  push, pop or poll, and
    *  the frame's `location` is not filled in (a collector calls this on every
-   *  frame at every collection). */
+   *  frame at every collection). Absent (and so NULL) in a descriptor whose
+   *  `size` ends before it. */
   void (*roots)(GRCORE_Context * context, const GRCORE_AbstractFrame * frame,
       const GRCORE_RootVisitor * visitor);
   /** Called by the unwinder for each frame it pops, innermost first, while
@@ -273,7 +274,8 @@ GRCORE_API bool grcore_engine_descriptor_valid(
  *   registered with this context.
  * @param out_id Receives the engine's id, from 1. Written only on success.
  * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, an unnamed
- *   or already registered descriptor, an invalid one (`size`), a non-owner or a wrong state;
+ *   or already registered descriptor, an invalid one (`size`), a non-owner or a
+ *   wrong state;
  *   ::GRCORE_ERR_LIMIT if the context's memory budget refuses the allocation;
  *   or ::GRCORE_ERR_OOM for any other allocation failure. A refusal leaves the engine table unchanged.
  */
