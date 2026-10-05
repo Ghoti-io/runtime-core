@@ -279,7 +279,7 @@ TEST(Snapshot, TheEnvironmentLookupIsAskedByKeyNameAndItsAnswerReachesBothHooks)
   ASSERT_EQ(grcore_context_snapshot(src.w.ctx, nullptr, &t.s), GRCORE_OK);
   ToyWorld dst;
   static int env_a = 1, env_b = 2;
-  GRCORE_RestoreEnv env = {};
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   env.lookup = [](void *, const char * name) -> void * {
     return std::strcmp(name, "toy-a") == 0 ? &env_a
         : std::strcmp(name, "toy-b") == 0  ? &env_b
@@ -566,7 +566,7 @@ TEST(Snapshot, APausedContextRestoresPausedAndResumesToTheUninterruptedAnswer) {
   GuestHolder dst_guest;
   RunWorld dst; // its own budgets: unlimited fuel here
   ASSERT_EQ(grcore_context_register(dst.ctx, &kGuestKey, &dst_guest), GRCORE_OK);
-  GRCORE_RestoreEnv env = {};
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   env.entry = counting_entry;
   env.entry_state = &dst_guest.g;
   env.pause_file = kCountingPollFile;
@@ -598,7 +598,7 @@ TEST(Snapshot, APausedSnapshotNeedsAnEntryToResumeWith) {
   RunWorld dst;
   ASSERT_EQ(grcore_context_register(dst.ctx, &kGuestKey, &d), GRCORE_OK);
   EXPECT_EQ(grcore_context_restore(dst.ctx, t.s, nullptr), GRCORE_ERR_INVALID);
-  GRCORE_RestoreEnv no_entry = {};
+  GRCORE_RestoreEnv no_entry = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   EXPECT_EQ(grcore_context_restore(dst.ctx, t.s, &no_entry), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_state(dst.ctx), GRCORE_CONTEXT_PARKED);
   EXPECT_EQ(d.g.pos, 0u);
@@ -635,7 +635,7 @@ TEST(Snapshot, TheDestinationsBudgetsAreItsOwnNotTheSnapshots) {
   GuestHolder dst_guest;
   RunWorld dst(5); // a smaller budget than the source had
   ASSERT_EQ(grcore_context_register(dst.ctx, &kGuestKey, &dst_guest), GRCORE_OK);
-  GRCORE_RestoreEnv env = {};
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   env.entry = counting_entry;
   env.entry_state = &dst_guest.g;
   ASSERT_EQ(grcore_context_restore(dst.ctx, t.s, &env), GRCORE_OK);
@@ -679,7 +679,7 @@ TEST(Snapshot, AReaderThatRunsPastTheEndFailsAndStaysFailed) {
   RunWorld b;
   ASSERT_EQ(grcore_context_register(b.ctx, &k, &token), GRCORE_OK);
   std::vector<GRCORE_Result> seen;
-  GRCORE_RestoreEnv env = {};
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   env.user = &seen;
   env.lookup = [](void * u, const char *) -> void * { return u; };
   ASSERT_EQ(grcore_context_restore(b.ctx, t.s, &env), GRCORE_OK);
@@ -723,7 +723,7 @@ TEST(Snapshot, AStringMissingItsTerminatorIsCorruptNotARead) {
   Taken t;
   ASSERT_EQ(grcore_context_snapshot(a.ctx, nullptr, &t.s), GRCORE_OK);
   GRCORE_Result seen = GRCORE_OK;
-  GRCORE_RestoreEnv env = {};
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   env.user = &seen;
   env.lookup = [](void * u, const char *) -> void * { return u; };
   ASSERT_EQ(grcore_context_restore(b.ctx, t.s, &env), GRCORE_OK);
@@ -938,7 +938,7 @@ TEST(Snapshot, ThePausedContextMigratesAfterTheSnapshotAndTheSnapshotIsUnaffecte
     GuestHolder d;
     RunWorld dst;
     EXPECT_EQ(grcore_context_register(dst.ctx, &kGuestKey, &d), GRCORE_OK);
-    GRCORE_RestoreEnv env = {};
+    GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
     env.entry = counting_entry;
     env.entry_state = &d.g;
     EXPECT_EQ(grcore_context_restore(dst.ctx, t.s, &env), GRCORE_OK);

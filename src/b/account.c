@@ -237,12 +237,16 @@ void grcore_counting_init(GRCORE_Counting * counting, GRCORE_Meter * meter,
   counting->allocator.calloc_fn = counted_calloc;
   counting->allocator.realloc_fn = counted_realloc;
   counting->allocator.free_fn = counted_free;
+  counting->pages.size = sizeof counting->pages;
   counting->pages.ctx = counting;
   counting->pages.page_size = counting->base_pages->page_size;
   counting->pages.map = counted_map;
   counting->pages.unmap = counted_unmap;
-  counting->pages.protect =
-      counting->base_pages->protect != NULL ? counted_protect : NULL;
+  /* A base provider whose size ends before `protect` has none. */
+  counting->pages.protect = GRCORE_PAGE_PROVIDER_HAS(counting->base_pages, protect) &&
+          counting->base_pages->protect != NULL
+      ? counted_protect
+      : NULL;
 }
 
 void grcore_counting_set_limit(

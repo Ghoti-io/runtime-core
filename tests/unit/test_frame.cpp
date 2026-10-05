@@ -368,7 +368,7 @@ TEST(FrameScopes, AnEngineRegisteredWithAnEmptyInterfaceHasNoScopes) {
 }
 
 TEST(FrameScopes, AnEnginesRefusalComesBackAndWritesNothing) {
-  static const GRCORE_EngineDescriptor liar = {"liar", nullptr, nullptr, nullptr,
+  static const GRCORE_EngineDescriptor liar = GRCORE_ENGINE_DESCRIPTOR_INIT("liar", nullptr, nullptr, nullptr,
       GRCORE_ScopeInterface{
           [](const GRCORE_AbstractFrame *) -> size_t { return 1; },
           [](const GRCORE_AbstractFrame *, size_t,
@@ -378,7 +378,7 @@ TEST(FrameScopes, AnEnginesRefusalComesBackAndWritesNothing) {
           },
           [](const GRCORE_AbstractFrame *, size_t, size_t,
               GRCORE_Variable *) -> GRCORE_Result { return GRCORE_ERR_INVALID; }},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
   RunWorld w(0);
   GRCORE_EngineId e;
   ASSERT_EQ(grcore_engine_register(w.ctx, &liar, &e), GRCORE_OK);

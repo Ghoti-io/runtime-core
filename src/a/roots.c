@@ -57,8 +57,8 @@ static void guest_enumerate(
         }
       }
     }
-    if (d->roots != NULL) {
-      d->roots(context, &frame, visitor);
+    if (grcore_engine_roots(d) != NULL) {
+      grcore_engine_roots(d)(context, &frame, visitor);
     }
     ref.offset = (size_t)h.prev;
     depth++;
@@ -89,5 +89,5 @@ static void guest_enumerate(
   }
 }
 
-const GRCORE_RootSource grcore_guest_root_source = {
-    "runtime-core.guest", guest_enumerate};
+const GRCORE_RootSource grcore_guest_root_source =
+    GRCORE_ROOT_SOURCE_INIT("runtime-core.guest", guest_enumerate);

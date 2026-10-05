@@ -75,10 +75,18 @@ GRCORE_Stack * grcore_context_stack(const GRCORE_Context * context) {
   return grcore_context_slot(context, &grcore_guest_key);
 }
 
+bool grcore_engine_descriptor_valid(const GRCORE_EngineDescriptor * descriptor) {
+  /* The first member is read to learn how much of the rest exists, so a
+   * descriptor is judged by that alone (see grcore_key_valid). */
+  return descriptor != NULL &&
+      descriptor->size >= GRCORE_ENGINE_DESCRIPTOR_MIN_SIZE &&
+      descriptor->size % _Alignof(GRCORE_EngineDescriptor) == 0;
+}
+
 GRCORE_Result grcore_engine_register(GRCORE_Context * context,
     const GRCORE_EngineDescriptor * descriptor, GRCORE_EngineId * out_id) {
-  if (context == NULL || descriptor == NULL || out_id == NULL ||
-      descriptor->name == NULL || descriptor->name[0] == '\0' ||
+  if (context == NULL || !grcore_engine_descriptor_valid(descriptor) ||
+      out_id == NULL || descriptor->name == NULL || descriptor->name[0] == '\0' ||
       !grcore_context_is_owner(context) ||
       grcore_context_state(context) == GRCORE_CONTEXT_RUNNING) {
     return GRCORE_ERR_INVALID;

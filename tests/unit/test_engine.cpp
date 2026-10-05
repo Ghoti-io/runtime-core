@@ -67,12 +67,12 @@ TEST(Engine, RegisterRefusesBadArgumentsAndLeavesTheTableUnchanged) {
   EXPECT_EQ(grcore_engine_register(nullptr, &kAlpha, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_engine_register(w.ctx, nullptr, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_engine_register(w.ctx, &kAlpha, nullptr), GRCORE_ERR_INVALID);
-  static const GRCORE_EngineDescriptor no_name = {nullptr, nullptr, nullptr,
+  static const GRCORE_EngineDescriptor no_name = GRCORE_ENGINE_DESCRIPTOR_INIT(nullptr, nullptr, nullptr,
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
-  static const GRCORE_EngineDescriptor empty_name = {"", nullptr, nullptr,
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
+  static const GRCORE_EngineDescriptor empty_name = GRCORE_ENGINE_DESCRIPTOR_INIT("", nullptr, nullptr,
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
   EXPECT_EQ(grcore_engine_register(w.ctx, &no_name, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_engine_register(w.ctx, &empty_name, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(id, 77u); // never written on a refusal

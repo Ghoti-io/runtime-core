@@ -92,11 +92,31 @@ typedef struct GRCORE_Snapshot GRCORE_Snapshot;
 #endif
 
 /**
- * @brief What the host supplies to a restore.
+ * @brief What the host supplies to a restore. Define it with
+ *   ::GRCORE_RESTORE_ENV_INIT.
  *
  * All fields are optional except `entry` for a snapshot of a paused context.
+ *
+ * **The struct grows at the end, and `size` says how far.** The rule is
+ * ::GRCORE_Key's (b/key.h has the argument and the rejected alternatives), and
+ * it matters here because the struct has grown once already (`entry`,
+ * `entry_state` and `pause_file` came after `lookup`) and a host fills it at
+ * run time, where C zero-fills an omitted member only in an initialiser. The
+ * first member, `size`, is the `sizeof(GRCORE_RestoreEnv)` of the header the
+ * host compiled against, ::GRCORE_RESTORE_ENV_INIT writes it, and a member
+ * after `lookup` is read only where `size` covers it
+ * (::GRCORE_RESTORE_ENV_HAS), an absent one being NULL. A struct filled by
+ * assignment starts from ::GRCORE_RESTORE_ENV_INIT too. ::grcore_context_restore
+ * refuses with ::GRCORE_ERR_INVALID an environment that
+ * ::grcore_restore_env_valid does not accept (NULL stays the host having none);
+ * a larger `size` is accepted and the unknown tail ignored.
  */
 typedef struct GRCORE_RestoreEnv {
+  /**
+   * `sizeof(GRCORE_RestoreEnv)` as the host compiled it. Set by
+   * ::GRCORE_RESTORE_ENV_INIT. Never write it by hand.
+   */
+  size_t size;
   void * user; ///< Handed to `lookup`.
   /**
    * The environment of the key called `key_name`, handed to its `restore` and
@@ -104,12 +124,42 @@ typedef struct GRCORE_RestoreEnv {
    * not allocate in the context.
    */
   void * (*lookup)(void * user, const char * key_name);
-  /** The entry function a paused context resumes with (the engine's). */
+  /** The entry function a paused context resumes with (the engine's). Absent
+   *  (and so NULL) in an environment whose `size` ends before it. */
   GRCORE_EntryFn entry;
-  void * entry_state; ///< Handed to `entry`.
-  /** The file of the pause location, borrowed; the snapshot has only the line. */
+  void * entry_state; ///< Handed to `entry`. Absent as `entry` is.
+  /** The file of the pause location, borrowed; the snapshot has only the line.
+   *  Absent as `entry` is. */
   const char * pause_file;
 } GRCORE_RestoreEnv;
+
+/** @brief The smallest `size` an environment may state: the layout through
+ *   `lookup`, which is the layout before `entry` existed. */
+#define GRCORE_RESTORE_ENV_MIN_SIZE                                         \
+  (offsetof(GRCORE_RestoreEnv, lookup) +                                    \
+      sizeof(((GRCORE_RestoreEnv *)0)->lookup))
+
+/** @brief The initialiser of a restore environment:
+ *   `GRCORE_RESTORE_ENV_INIT(user, lookup, entry, entry_state, pause_file)`.
+ *   Begins with `sizeof(GRCORE_RestoreEnv)`; `GRCORE_RESTORE_ENV_INIT(NULL,
+ *   NULL, NULL, NULL, NULL)` is the starting point of one filled by assignment. */
+#define GRCORE_RESTORE_ENV_INIT(...) { sizeof(GRCORE_RestoreEnv), __VA_ARGS__ }
+
+/** @brief Whether an environment's `size` covers a member, so that reading it
+ *   is defined. */
+#define GRCORE_RESTORE_ENV_HAS(env, member)                                 \
+  ((env)->size >= offsetof(GRCORE_RestoreEnv, member) + sizeof((env)->member))
+
+/**
+ * @brief Whether a restore environment is acceptable (see
+ *   ::GRCORE_RestoreEnv).
+ *
+ * @param env The environment. NULL is not valid here, though
+ *   ::grcore_context_restore takes NULL as "none".
+ * @return true when `size` is at least ::GRCORE_RESTORE_ENV_MIN_SIZE and a
+ *   multiple of the struct's alignment.
+ */
+GRCORE_API bool grcore_restore_env_valid(const GRCORE_RestoreEnv * env);
 
 /**
  * @brief Takes a snapshot of a context.
@@ -139,7 +189,8 @@ GRCORE_API GRCORE_Result grcore_context_snapshot(GRCORE_Context * context,
  *   fresh (every key's own checks say what fresh means to it).
  * @param snapshot The snapshot.
  * @param env The host's environment, or NULL.
- * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, a non-owner,
+ * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, an invalid
+ *   environment (`size`), a non-owner,
  *   a destination in the wrong state, a key set that differs from the
  *   snapshot's (a blob with no key, or a key with hooks and no blob), a paused
  *   snapshot with no `entry`, or a destination a key's CHECK refuses;

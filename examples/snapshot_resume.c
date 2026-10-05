@@ -130,7 +130,7 @@ static int restore_into(Side * side, const GRCORE_Snapshot * snapshot) {
   CHECK(grcore_context_create(side->group, NULL, &side->context) == GRCORE_OK);
   CHECK(grcore_context_register(side->context, &loop_key, &side->loop) ==
       GRCORE_OK);
-  GRCORE_RestoreEnv env = {0};
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(NULL, NULL, NULL, NULL, NULL);
   env.entry = loop_entry; /* what a paused context resumes with */
   env.entry_state = &side->loop;
   CHECK(grcore_context_restore(side->context, snapshot, &env) == GRCORE_OK);

@@ -227,9 +227,9 @@ TEST(Profiler, ALocationIsKeyedByTheTextOfItsFileNotByThePointer) {
       return GRCORE_Location{function % 2 == 0 ? a : b, int(offset)};
     }
   };
-  static const GRCORE_EngineDescriptor twin = {"twin", nullptr, Twin::locate,
+  static const GRCORE_EngineDescriptor twin = GRCORE_ENGINE_DESCRIPTOR_INIT("twin", nullptr, Twin::locate,
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
   RunWorld w;
   GRCORE_EngineId id = 0;
   ASSERT_EQ(grcore_engine_register(w.ctx, &twin, &id), GRCORE_OK);

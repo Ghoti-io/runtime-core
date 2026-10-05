@@ -40,8 +40,8 @@ void held_enumerate(
   }
 }
 
-const GRCORE_RootSource kSourceA = {"a", held_enumerate};
-const GRCORE_RootSource kSourceB = {"b", held_enumerate};
+const GRCORE_RootSource kSourceA = GRCORE_ROOT_SOURCE_INIT("a", held_enumerate);
+const GRCORE_RootSource kSourceB = GRCORE_ROOT_SOURCE_INIT("b", held_enumerate);
 
 struct Seen {
   std::vector<uint64_t *> slots;
@@ -180,7 +180,7 @@ TEST(Roots, TheSameSourceWithAnotherValueIsADifferentRegistration) {
 TEST(Roots, RefusalsAreInvalidAndChangeNothing) {
   RunWorld w;
   Held a{"a"};
-  const GRCORE_RootSource no_enumerate = {"none", nullptr};
+  const GRCORE_RootSource no_enumerate = GRCORE_ROOT_SOURCE_INIT("none", nullptr);
   EXPECT_EQ(grcore_context_add_root_source(nullptr, &kSourceA, &a), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_add_root_source(w.ctx, nullptr, &a), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_add_root_source(w.ctx, &no_enumerate, &a), GRCORE_ERR_INVALID);

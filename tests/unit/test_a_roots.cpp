@@ -241,10 +241,10 @@ TEST(ARoots, EnumeratingFromANonOwnerIsInvalidAndVisitsNothing) {
 TEST(ARoots, ASourceFromAnotherLibraryIsEnumeratedAfterAs) {
   StackWorld w;
   push_numbered(w.stack, w.beta, 1, 1);
-  static const GRCORE_RootSource extra = {"extra",
+  static const GRCORE_RootSource extra = GRCORE_ROOT_SOURCE_INIT("extra",
       [](GRCORE_Context *, void * value, const GRCORE_RootVisitor * visitor) {
         visitor->slot(visitor->user, static_cast<uint64_t *>(value));
-      }};
+      });
   uint64_t held = 777;
   ASSERT_EQ(grcore_context_add_root_source(w.ctx, &extra, &held), GRCORE_OK);
   EXPECT_EQ(grcore_context_root_source_count(w.ctx), 2u);

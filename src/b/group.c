@@ -39,7 +39,8 @@ GRCORE_Result grcore_group_create(const GRCORE_Allocator * allocator,
   if (pages == NULL) {
     pages = grcore_page_provider_default();
   }
-  if (pages->page_size == 0 || pages->map == NULL || pages->unmap == NULL) {
+  if (!grcore_page_provider_valid(pages) || pages->page_size == 0 ||
+      pages->map == NULL || pages->unmap == NULL) {
     return GRCORE_ERR_INVALID;
   }
   GRCORE_Group * g = allocator->malloc_fn(allocator->ctx, sizeof *g);

@@ -53,6 +53,7 @@
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/core.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -82,8 +83,27 @@ typedef struct GRCORE_RootVisitor {
   void (*range)(void * user, const GRCORE_ConservativeRange * range);
 } GRCORE_RootVisitor;
 
-/** @brief A root source: a name and one function that reports the roots. */
+/**
+ * @brief A root source: a name and one function that reports the roots.
+ *   Define it `static` (or `const`) with ::GRCORE_ROOT_SOURCE_INIT and
+ *   register it by address.
+ *
+ * **The struct grows at the end, and `size` says how far.** The rule is
+ * ::GRCORE_Key's (b/key.h has the argument and the rejected alternatives): the
+ * first member, `size`, is the `sizeof(GRCORE_RootSource)` of the header the
+ * source was compiled against, ::GRCORE_ROOT_SOURCE_INIT writes it, and a
+ * member added after `enumerate` is read only where `size` covers it, an absent
+ * one being NULL. No such member exists yet, so
+ * ::GRCORE_ROOT_SOURCE_MIN_SIZE is the whole struct. ::grcore_context_add_root_source
+ * refuses with ::GRCORE_ERR_INVALID a source that ::grcore_root_source_valid
+ * does not accept; a larger `size` is accepted and the unknown tail ignored.
+ */
 typedef struct GRCORE_RootSource {
+  /**
+   * `sizeof(GRCORE_RootSource)` as the source's definer compiled it. Set by
+   * ::GRCORE_ROOT_SOURCE_INIT. Never write it by hand.
+   */
+  size_t size;
   const char * name; ///< For diagnostics. May be NULL.
   /**
    * Reports every root the source holds to `visitor`, precise ones before
@@ -94,6 +114,32 @@ typedef struct GRCORE_RootSource {
       GRCORE_Context * context, void * value, const GRCORE_RootVisitor * visitor);
 } GRCORE_RootSource;
 
+/** @brief The smallest `size` a root source may state: the layout through
+ *   `enumerate`, which is every member there is. */
+#define GRCORE_ROOT_SOURCE_MIN_SIZE                                         \
+  (offsetof(GRCORE_RootSource, enumerate) +                                 \
+      sizeof(((GRCORE_RootSource *)0)->enumerate))
+
+/** @brief The initialiser of a root source:
+ *   `GRCORE_ROOT_SOURCE_INIT(name, enumerate)`. Begins with
+ *   `sizeof(GRCORE_RootSource)`. */
+#define GRCORE_ROOT_SOURCE_INIT(...) { sizeof(GRCORE_RootSource), __VA_ARGS__ }
+
+/** @brief Whether a root source's `size` covers a member, so that reading it
+ *   is defined. */
+#define GRCORE_ROOT_SOURCE_HAS(source, member)                              \
+  ((source)->size >= offsetof(GRCORE_RootSource, member) +                  \
+      sizeof((source)->member))
+
+/**
+ * @brief Whether a root source is acceptable (see ::GRCORE_RootSource).
+ *
+ * @param source The source. NULL is not valid.
+ * @return true when `size` is at least ::GRCORE_ROOT_SOURCE_MIN_SIZE and a
+ *   multiple of the struct's alignment.
+ */
+GRCORE_API bool grcore_root_source_valid(const GRCORE_RootSource * source);
+
 /**
  * @brief Adds a root source to a context, after the ones already there.
  *
@@ -102,10 +148,11 @@ typedef struct GRCORE_RootSource {
  *
  * @param context The context. The caller must own it, and it must not be
  *   tearing down.
- * @param source The source, by address. Must have an `enumerate` function.
+ * @param source The source, by address. Must be valid (see
+ *   ::grcore_root_source_valid) and have an `enumerate` function.
  * @param value Handed to `enumerate`.
  * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, a source
- *   without `enumerate`, a source and value already added, or a non-owner;
+ *   that is invalid (`size`) or has no `enumerate`, a source and value already added, or a non-owner;
  *   ::GRCORE_ERR_LIMIT if the memory budget refuses the table's growth;
  *   ::GRCORE_ERR_OOM for any other allocation failure. A refusal leaves the
  *   table unchanged.

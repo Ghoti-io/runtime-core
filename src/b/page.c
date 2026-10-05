@@ -51,8 +51,8 @@ static bool default_protect(
 
 /* Everything but the page size is a constant, so the provider is usable from
  * the first instruction. The page size is looked up on first use. */
-static GRCORE_PageProvider default_provider = {
-    NULL, 0, default_map, default_unmap, default_protect};
+static GRCORE_PageProvider default_provider = GRCORE_PAGE_PROVIDER_INIT(
+    NULL, 0, default_map, default_unmap, default_protect);
 
 /* Idempotent: every thread stores the same value, relaxed. The constructor
  * below makes it a constant before main in the ordinary case; this covers a
@@ -123,9 +123,19 @@ static bool default_protect(
 #endif
 }
 
+bool grcore_page_provider_valid(const GRCORE_PageProvider * provider) {
+  /* The first member is read to learn how much of the rest exists, so a
+   * provider is judged by that alone (see grcore_key_valid). A size above this
+   * header's is a provider from a newer header, which is accepted. */
+  return provider != NULL && provider->size >= GRCORE_PAGE_PROVIDER_MIN_SIZE &&
+      provider->size % _Alignof(GRCORE_PageProvider) == 0;
+}
+
 GRCORE_Result grcore_page_protect(const GRCORE_PageProvider * provider,
     void * ptr, size_t size, GRCORE_PageAccess access) {
-  if (provider == NULL || provider->protect == NULL || ptr == NULL ||
+  if (!grcore_page_provider_valid(provider) ||
+      !GRCORE_PAGE_PROVIDER_HAS(provider, protect) ||
+      provider->protect == NULL || ptr == NULL ||
       provider->page_size == 0 || size == 0 ||
       (access != GRCORE_PAGE_READ_WRITE &&
           access != GRCORE_PAGE_READ_EXECUTE) ||

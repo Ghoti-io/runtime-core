@@ -36,9 +36,16 @@ static bool owner_ok(const GRCORE_Context * c) {
   return c != NULL && grcore_context_owned_by_caller(c) && !c->tearing_down;
 }
 
+bool grcore_root_source_valid(const GRCORE_RootSource * source) {
+  /* See grcore_key_valid: judged by `size` alone. */
+  return source != NULL && source->size >= GRCORE_ROOT_SOURCE_MIN_SIZE &&
+      source->size % _Alignof(GRCORE_RootSource) == 0;
+}
+
 GRCORE_Result grcore_context_add_root_source(GRCORE_Context * context,
     const GRCORE_RootSource * source, void * value) {
-  if (!owner_ok(context) || source == NULL || source->enumerate == NULL) {
+  if (!owner_ok(context) || !grcore_root_source_valid(source) ||
+      source->enumerate == NULL) {
     return GRCORE_ERR_INVALID;
   }
   for (size_t i = 0; i < context->root_count; i++) {

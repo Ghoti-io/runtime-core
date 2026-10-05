@@ -373,6 +373,28 @@ static const GRCORE_Registration * find_by_name(
   return NULL;
 }
 
+bool grcore_restore_env_valid(const GRCORE_RestoreEnv * env) {
+  /* See grcore_key_valid: judged by `size` alone. */
+  return env != NULL && env->size >= GRCORE_RESTORE_ENV_MIN_SIZE &&
+      env->size % _Alignof(GRCORE_RestoreEnv) == 0;
+}
+
+/* A member after `lookup` is read only where the environment's size covers it;
+ * an absent one is NULL. */
+static GRCORE_EntryFn env_entry(const GRCORE_RestoreEnv * env) {
+  return env != NULL && GRCORE_RESTORE_ENV_HAS(env, entry) ? env->entry : NULL;
+}
+static void * env_entry_state(const GRCORE_RestoreEnv * env) {
+  return env != NULL && GRCORE_RESTORE_ENV_HAS(env, entry_state)
+      ? env->entry_state
+      : NULL;
+}
+static const char * env_pause_file(const GRCORE_RestoreEnv * env) {
+  return env != NULL && GRCORE_RESTORE_ENV_HAS(env, pause_file)
+      ? env->pause_file
+      : NULL;
+}
+
 static void * environment(const GRCORE_RestoreEnv * env, const char * name) {
   return env != NULL && env->lookup != NULL ? env->lookup(env->user, name)
                                             : NULL;
@@ -404,7 +426,8 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
       !grcore_context_owned_by_caller(context) || context->tearing_down ||
       context->config != GRCORE_CONFIG_PARKED_OUTSIDE ||
       context->fuel_scope_count != 0 || context->nested != 0 ||
-      (snapshot->paused && (env == NULL || env->entry == NULL))) {
+      (env != NULL && !grcore_restore_env_valid(env)) ||
+      (snapshot->paused && env_entry(env) == NULL)) {
     return GRCORE_ERR_INVALID;
   }
   /* The key set must be the snapshot's, exactly: a blob with no key on this
@@ -470,9 +493,9 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
     }
   }
   if (snapshot->paused) {
-    context->entry = env->entry;
-    context->entry_state = env->entry_state;
-    context->pause_location.file = env->pause_file;
+    context->entry = env_entry(env);
+    context->entry_state = env_entry_state(env);
+    context->pause_location.file = env_pause_file(env);
     context->pause_location.line = snapshot->line;
     context->last_verdict = GRCORE_VERDICT_PAUSE;
     context->config = GRCORE_CONFIG_PAUSED;

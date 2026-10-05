@@ -177,7 +177,9 @@ run under wine and not yet on a Windows machine), and the counting provider
 forwards the call
 unchanged and charges nothing, since protection moves no bytes. The member is
 an addition to a `stable` header, made because a JIT cannot exist without it;
-nothing was released, and a provider written before it has it zero-filled.
+nothing was released, and a provider states its own `size`, so one written
+before the member existed has it absent (see "The other caller-filled structs
+state their size", below).
 
 ## B, part 2: requests, the poll, `run`, budgets and migration
 
@@ -371,6 +373,42 @@ past the end is a finding under ASan and Valgrind, and arm every member after
 the stated size with a tripwire, so a core that ignores `size` fails a plain
 run.
 
+**The other caller-filled structs state their size.** `GRCORE_Key`'s rule (above)
+applies to every public struct that a host or another library *defines* and the
+core *reads*, and that has grown or can grow at the end:
+`GRCORE_EngineDescriptor`, `GRCORE_PageProvider`, `GRCORE_RestoreEnv` and
+`GRCORE_RootSource`. Each has a leading `size` written by an initialiser macro
+(`GRCORE_ENGINE_DESCRIPTOR_INIT`, `GRCORE_PAGE_PROVIDER_INIT`,
+`GRCORE_RESTORE_ENV_INIT`, `GRCORE_ROOT_SOURCE_INIT`), a `..._MIN_SIZE` (the
+first-generation layout: through `decoder`, `unmap`, `lookup`, `enumerate`), a
+`..._HAS(p, member)` that says whether `size` covers a member, and a `..._valid`
+function, which registration, group creation and restore call before anything
+is read. A member after the minimum is read only where `size` covers it, an
+absent one being NULL (a descriptor's `roots` and `unwind`, a provider's
+`protect`, an environment's `entry`, `entry_state` and `pause_file`); a `size`
+below the minimum, zero included, or off the struct's alignment is refused with
+`ERR_INVALID`; a larger `size` is accepted and the unknown tail ignored. The
+reasons and the rejected alternatives are the key's. Three points are specific:
+a provider and an environment are often filled by assignment to a zeroed
+struct, so their macro is also the starting point of that (`size` is part of the
+initialiser, and a `{}` left at zero is refused, not read); the core's own
+counting provider is built at full size, and forwards `protect` only if the
+provider under it states one; and `GRCORE_RootSource` has no member after its
+first generation, so its tests cover the rule (initialiser, refusal, a newer
+size) but have no older layout to copy. `GRCORE_RestoreEnv` is the one of the
+four that has already grown (`entry`, `entry_state`, `pause_file` after
+`lookup`), which is why it is here and not left to zero-filling. Not given a
+size: the contexts, options, groups and ports (opaque, built by setters,
+AD-13), the root *visitor* (built by the collector and read by sources, and
+without a member after the first generation), and A's `free` formats, whose
+reader and writer require the same release (AD-14): the code-metadata tables
+(which `runtime-jit` writes, and which carry a format version of their own) and
+the layout descriptor (which the core writes). The tests
+(`test_engine_size.cpp`, `test_page_size.cpp`, `test_restore_env_size.cpp`,
+`test_root_source_size.cpp`) follow `test_key_size.cpp`: older-layout copies as
+heap blocks exactly as large as their `size`, armed tripwires past the stated
+size, a full-size control for every refusal, and a larger-size case.
+
 ## A, part 1: the guest stack, engine descriptors, the abstract frame and scopes
 
 The first half of A adds three headers under `a/` (`engine.h`, `stack.h` and
@@ -426,8 +464,8 @@ poll identity as a source location, an inspector that prints a value, a scope
 interface, and a conservative decoder (mask, shift, base) for its value
 encoding. A callback that is NULL means the engine has nothing to say, and the
 reader falls back (hexadecimal for an uninspected value). Fields that later
-stories need are trailing: C zero-fills a descriptor written before they
-existed. They were not in the struct until a story read them, because a field
+stories need are trailing, and the descriptor states its own `size`, so one
+written before they existed has them absent. They were not in the struct until a story read them, because a field
 with no reader is a promise nobody has tested; root enumeration and unwinding
 are in it now (part 2), and deoptimization is not: the stack-map and deopt
 format is a table in `a/codemeta.h`, not a descriptor field.
@@ -580,9 +618,8 @@ track; closing or unwinding an A scope closes any left open inside it, and
 
 **Two new trailing fields on the descriptor.** `roots` and `unwind` follow the
 decoder. Like the key's `poll` field, a descriptor written before they existed
-keeps its meaning (C zero-fills the omission; a NULL hook is never called), but
-a C++ compile with `-Wextra` flags the omission, and the static descriptors in
-the tests, the benchmark and the examples were updated.
+keeps its meaning (the descriptor's `size` stops before them, and an absent hook
+is never called); see "The other caller-filled structs state their size".
 
 **Nothing raw survives (AD-17).** Records and scopes are arrays that grow by
 copy through the context's counting allocator, as the stack does, so they are

@@ -317,11 +317,11 @@ static GRCORE_SlotKind bench_all_values(
   return GRCORE_SLOT_VALUE;
 }
 
-static const GRCORE_EngineDescriptor bench_value_engine = {"bench-value",
-    bench_all_values, NULL, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL};
+static const GRCORE_EngineDescriptor bench_value_engine = GRCORE_ENGINE_DESCRIPTOR_INIT("bench-value",
+    bench_all_values, NULL, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL);
 
-static const GRCORE_EngineDescriptor bench_engine = {"bench", NULL,
-    bench_locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL};
+static const GRCORE_EngineDescriptor bench_engine = GRCORE_ENGINE_DESCRIPTOR_INIT("bench", NULL,
+    bench_locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL);
 
 /* A push and the matching pop of a four-slot frame on a warm stack: the price
  * of a guest call's bookkeeping, depth budget included. */

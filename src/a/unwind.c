@@ -42,8 +42,8 @@ GRCORE_Result grcore_unwind_frames(
     if (!grcore_stack_hook_frame(stack, top, 0, &frame, &h)) {
       return GRCORE_ERR_INTERNAL;
     }
-    if (frame.descriptor->unwind != NULL) {
-      frame.descriptor->unwind(stack->context, &frame);
+    if (grcore_engine_unwind(frame.descriptor) != NULL) {
+      grcore_engine_unwind(frame.descriptor)(stack->context, &frame);
     }
     if (grcore_stack_pop(stack) != GRCORE_OK) {
       return GRCORE_ERR_INTERNAL;

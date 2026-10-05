@@ -82,7 +82,8 @@ struct TrackingAllocator {
 
 /* A page provider over the default one that counts and can be told to fail. */
 struct FakePages {
-  GRCORE_PageProvider vtable{};
+  GRCORE_PageProvider vtable =
+      GRCORE_PAGE_PROVIDER_INIT(nullptr, 0, nullptr, nullptr, nullptr);
   bool fail = false;
   bool fail_protect = false;
   long protects = 0;
@@ -315,10 +316,10 @@ inline GRCORE_Result alpha_variable(const GRCORE_AbstractFrame * frame,
   }
   return GRCORE_ERR_INVALID;
 }
-inline const GRCORE_EngineDescriptor kAlpha = {"alpha", alpha_slot_kind,
+inline const GRCORE_EngineDescriptor kAlpha = GRCORE_ENGINE_DESCRIPTOR_INIT("alpha", alpha_slot_kind,
     alpha_locate, alpha_inspect,
     GRCORE_ScopeInterface{alpha_scope_count, alpha_scope, alpha_variable},
-    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
+    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
 
 inline GRCORE_SlotKind beta_slot_kind(
     const GRCORE_AbstractFrame *, size_t) {
@@ -334,13 +335,13 @@ inline size_t beta_inspect(const GRCORE_Context *, GRCORE_SlotKind,
       static_cast<unsigned long long>(value));
   return static_cast<size_t>(n);
 }
-inline const GRCORE_EngineDescriptor kBeta = {"beta", beta_slot_kind,
+inline const GRCORE_EngineDescriptor kBeta = GRCORE_ENGINE_DESCRIPTOR_INIT("beta", beta_slot_kind,
     beta_locate, beta_inspect, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0xFFFF0, 4, 0x1000}, nullptr, nullptr};
+    GRCORE_ConservativeDecoder{0xFFFF0, 4, 0x1000}, nullptr, nullptr);
 
-inline const GRCORE_EngineDescriptor kGamma = {"gamma", nullptr, nullptr,
+inline const GRCORE_EngineDescriptor kGamma = GRCORE_ENGINE_DESCRIPTOR_INIT("gamma", nullptr, nullptr,
     nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
+    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
 
 /* A RunWorld with the two engines registered. */
 struct StackWorld : RunWorld {
@@ -409,9 +410,9 @@ inline void delta_unwind(
   g_hook_log->on_stack.push_back(grcore_stack_frame_valid(stack, frame->frame));
   g_hook_log->contexts.push_back(context);
 }
-inline const GRCORE_EngineDescriptor kDelta = {"delta", delta_slot_kind, nullptr,
+inline const GRCORE_EngineDescriptor kDelta = GRCORE_ENGINE_DESCRIPTOR_INIT("delta", delta_slot_kind, nullptr,
     nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0xFF00, 8, 0x40}, delta_roots, delta_unwind};
+    GRCORE_ConservativeDecoder{0xFF00, 8, 0x40}, delta_roots, delta_unwind);
 
 /* A StackWorld that also has the hooked engine, and a log the hooks write. */
 struct HookWorld : StackWorld {

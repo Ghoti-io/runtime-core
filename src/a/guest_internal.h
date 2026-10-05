@@ -113,6 +113,22 @@ struct GRCORE_Stack {
   size_t scope_capacity;
 };
 
+/* ---- Reading a descriptor ------------------------------------------------
+ *
+ * A descriptor states how large it is (a/engine.h). A member after `decoder`
+ * is read only through these, which treat a member the descriptor's `size` does
+ * not cover as NULL. Registration has already refused a descriptor too small
+ * to hold the members before it, so those are read directly. */
+
+static inline void (*grcore_engine_roots(const GRCORE_EngineDescriptor * d))(
+    GRCORE_Context *, const GRCORE_AbstractFrame *, const GRCORE_RootVisitor *) {
+  return GRCORE_ENGINE_DESCRIPTOR_HAS(d, roots) ? d->roots : NULL;
+}
+static inline void (*grcore_engine_unwind(const GRCORE_EngineDescriptor * d))(
+    GRCORE_Context *, const GRCORE_AbstractFrame *) {
+  return GRCORE_ENGINE_DESCRIPTOR_HAS(d, unwind) ? d->unwind : NULL;
+}
+
 /** @brief The stack's snapshot hooks (stack.c): the frames, with VALUE slots
  *   written as zero, and the engine table by name. */
 GRCORE_Result grcore_guest_snapshot(

@@ -32,9 +32,9 @@
  * frame.h.
  *
  * The descriptor is deliberately small. Only what the stories so far read is
- * in it; C zero-fills fields added after it, so a descriptor written before a
- * field existed keeps working, and a NULL callback always means "the engine
- * has nothing to say", never an error. Root enumeration and unwinding are in
+ * in it; it states its own `size`, so a descriptor written before a field
+ * existed keeps working (an absent member reads as NULL), and a NULL callback
+ * always means "the engine has nothing to say", never an error. Root enumeration and unwinding are in
  * it now (the `roots` and `unwind` hooks). Deoptimization is not a hook: its
  * metadata is a table in codemeta.h, and the descriptor has no field for it.
  *
@@ -144,10 +144,31 @@ typedef struct GRCORE_ScopeInterface {
 } GRCORE_ScopeInterface;
 
 /**
- * @brief An engine descriptor. Define it `static` (or `const`) and register it
- *   by address; the object must outlive every context that holds it.
+ * @brief An engine descriptor. Define it `static` (or `const`) with
+ *   ::GRCORE_ENGINE_DESCRIPTOR_INIT and register it by address; the object must
+ *   outlive every context that holds it.
+ *
+ * **The struct grows at the end, and `size` says how far.** The rule is
+ * ::GRCORE_Key's (b/key.h has the argument and the rejected alternatives). The
+ * first member, `size`, is the `sizeof(GRCORE_EngineDescriptor)` of the header
+ * the descriptor was compiled against, and ::GRCORE_ENGINE_DESCRIPTOR_INIT
+ * writes it. A member after `decoder` (`roots`, `unwind`) is read only where
+ * `size` covers it (::GRCORE_ENGINE_DESCRIPTOR_HAS), an absent one being NULL,
+ * which for both means the engine has nothing to say. ::grcore_engine_register
+ * refuses with ::GRCORE_ERR_INVALID a descriptor that
+ * ::grcore_engine_descriptor_valid does not accept: a `size` below
+ * ::GRCORE_ENGINE_DESCRIPTOR_MIN_SIZE (which includes zero) or off the
+ * struct's alignment. A larger `size` is accepted and the members this
+ * library does not know are ignored, so each future member must be one whose
+ * absence is a defined degradation. A is `free` (AD-14), but a descriptor is
+ * defined by the engine, outside A, which is why it states its size.
  */
 typedef struct GRCORE_EngineDescriptor {
+  /**
+   * `sizeof(GRCORE_EngineDescriptor)` as the descriptor's definer compiled it.
+   * Set by ::GRCORE_ENGINE_DESCRIPTOR_INIT. Never write it by hand.
+   */
+  size_t size;
   /** The engine's name, for diagnostics. Required: registration refuses a
    *  NULL or empty one. */
   const char * name;
@@ -188,9 +209,54 @@ typedef struct GRCORE_EngineDescriptor {
    *  holds (closes its open upvalues, drops a handler). It never runs guest
    *  code, and must not push, pop or poll, nor call the unwinder, the activation
    *  functions or the budget-scope functions. NULL means nothing to release. The
-   *  frame's `location` is not filled in. */
+   *  frame's `location` is not filled in. Absent (and so NULL) in a
+   *  descriptor whose `size` ends before it. */
   void (*unwind)(GRCORE_Context * context, const GRCORE_AbstractFrame * frame);
 } GRCORE_EngineDescriptor;
+
+/**
+ * @brief The smallest `size` a descriptor may state: the layout through
+ *   `decoder`, which is the layout before `roots` and `unwind` existed.
+ */
+#define GRCORE_ENGINE_DESCRIPTOR_MIN_SIZE                                   \
+  (offsetof(GRCORE_EngineDescriptor, decoder) +                             \
+      sizeof(((GRCORE_EngineDescriptor *)0)->decoder))
+
+/**
+ * @brief The initialiser of an engine descriptor:
+ *   `GRCORE_ENGINE_DESCRIPTOR_INIT(name, slot_kind, locate, inspect, scopes,
+ *   decoder, roots, unwind)`.
+ *
+ * Expands to a braced initialiser that begins with
+ * `sizeof(GRCORE_EngineDescriptor)`, a constant expression in C17 and C++20.
+ * Give every member, `{NULL, NULL, NULL}` for no scopes, `{0, 0, 0}` for no
+ * decoder and NULL where unused.
+ * @code
+ * static const GRCORE_EngineDescriptor engine = GRCORE_ENGINE_DESCRIPTOR_INIT(
+ *     "mine", slot_kind, locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL);
+ * @endcode
+ */
+#define GRCORE_ENGINE_DESCRIPTOR_INIT(...) \
+  { sizeof(GRCORE_EngineDescriptor), __VA_ARGS__ }
+
+/**
+ * @brief Whether a descriptor's `size` covers a member, so that reading it is
+ *   defined.
+ */
+#define GRCORE_ENGINE_DESCRIPTOR_HAS(descriptor, member)                    \
+  ((descriptor)->size >= offsetof(GRCORE_EngineDescriptor, member) +        \
+      sizeof((descriptor)->member))
+
+/**
+ * @brief Whether a descriptor is acceptable to register (see
+ *   ::GRCORE_EngineDescriptor).
+ *
+ * @param descriptor The descriptor. NULL is not valid.
+ * @return true when `size` is at least ::GRCORE_ENGINE_DESCRIPTOR_MIN_SIZE and
+ *   a multiple of the struct's alignment.
+ */
+GRCORE_API bool grcore_engine_descriptor_valid(
+    const GRCORE_EngineDescriptor * descriptor);
 
 /**
  * @brief Registers an engine with a context.
@@ -202,11 +268,12 @@ typedef struct GRCORE_EngineDescriptor {
  *
  * @param context The context. The caller must own it, and it must not be
  *   running or being destroyed.
- * @param descriptor The descriptor, by address. Must have a name, and must not
- *   already be registered with this context.
+ * @param descriptor The descriptor, by address. Must be valid (see
+ *   ::grcore_engine_descriptor_valid), have a name, and not already be
+ *   registered with this context.
  * @param out_id Receives the engine's id, from 1. Written only on success.
  * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, an unnamed
- *   or already registered descriptor, a non-owner or a wrong state;
+ *   or already registered descriptor, an invalid one (`size`), a non-owner or a wrong state;
  *   ::GRCORE_ERR_LIMIT if the context's memory budget refuses the allocation;
  *   or ::GRCORE_ERR_OOM for any other allocation failure. A refusal leaves the engine table unchanged.
  */

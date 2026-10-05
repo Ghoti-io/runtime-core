@@ -486,13 +486,13 @@ TEST(StackPoll, FuelExhaustionRecordsTheIdentityAndLocatesThePause) {
 
 TEST(StackPoll, TheDescriptorIsNotAskedWhereAPollIsUnlessSomethingIsPending) {
   static int locates = 0;
-  static const GRCORE_EngineDescriptor counting = {"counting", nullptr,
+  static const GRCORE_EngineDescriptor counting = GRCORE_ENGINE_DESCRIPTOR_INIT("counting", nullptr,
       [](const GRCORE_Context *, uint64_t, uint64_t) {
         locates++;
         return GRCORE_Location{"x", 1};
       },
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr};
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
   RunWorld w;
   GRCORE_EngineId e;
   ASSERT_EQ(grcore_engine_register(w.ctx, &counting, &e), GRCORE_OK);
@@ -1040,7 +1040,7 @@ TEST(StackSnapshot, APausedGuestKeepingItsPositionOnTheStackFinishesInAnotherCon
   dst_guest.sum = 0;
   RunWorld dst;
   ASSERT_EQ(grcore_engine_register(dst.ctx, &kAlpha, &dst_guest.engine), GRCORE_OK);
-  GRCORE_RestoreEnv env = {};
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   env.entry = frame_guest_entry;
   env.entry_state = &dst_guest;
   ASSERT_EQ(grcore_context_restore(dst.ctx, snap.s, &env), GRCORE_OK);
