@@ -92,7 +92,7 @@ local name), and, in `b/` and `a/`:
 | `b/group.h` | `GRCORE_Group`: created by the host, owns the allocator and page provider its contexts draw on; refuses to be destroyed while it has contexts |
 | `b/context.h` | `GRCORE_Context`: four states (parked, running, at-poll, paused), one owning thread, `acquire`/`release` to migrate, keyed registration, a counting allocator and page provider, memory getters |
 | `b/options.h` | `GRCORE_Options`: opaque, set through setters; four budgets that are `GRCORE_UNLIMITED` until set, plus keyed byte options |
-| `b/key.h` | `GRCORE_Key`: a static object with a cardinality, a phase, a destructor, a poll handler and three optional snapshot hooks (`snapshot`, `restore`, `settle`); identity is its address |
+| `b/key.h` | `GRCORE_Key`: a static object with a leading `size`, a cardinality, a phase, a destructor, a poll handler and three optional snapshot hooks (`snapshot`, `restore`, `settle`); identity is its address. Define it with `GRCORE_KEY_INIT(name, cardinality, phase, destroy, poll, snapshot, restore, settle)`, which writes `size`; the core reads a trailing member only if `size` reaches it |
 | `b/page.h` | `GRCORE_PageProvider`: the pages `runtime-heap` and `runtime-jit` ask for, and `grcore_page_protect`, which flips a mapping between read-write and read-execute |
 | `b/request.h` | request kinds, and `GRCORE_Port`: the only way another thread acts on a context, reference-counted and valid after its context is gone |
 | `b/poll.h` | `grcore_poll`, the runtime poll for natives, the four phases and their verdicts, `grcore_pollcall_pause_allowed` (whether a pause vote would return to the host, which a debugger asks before voting one), and the phase-shuffle test mode |

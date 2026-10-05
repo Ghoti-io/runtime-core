@@ -88,9 +88,9 @@ static void profiler_poll(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call);
 
 /* No snapshot hook: a profiler is not part of any snapshot. */
-static const GRCORE_Key profiler_key = {"runtime-core.profiler",
+static const GRCORE_Key profiler_key = GRCORE_KEY_INIT("runtime-core.profiler",
     GRCORE_CARDINALITY_ONE, GRCORE_PHASE_OBSERVE, profiler_destroy,
-    profiler_poll, NULL, NULL, NULL};
+    profiler_poll, NULL, NULL, NULL);
 
 /* ---- The table ---------------------------------------------------------- */
 

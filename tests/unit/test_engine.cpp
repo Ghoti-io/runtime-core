@@ -241,12 +241,12 @@ TEST(Engine, DestroyRunsTheGuestKeyInReverseRegistrationOrder) {
   // The guest key was registered after this one, so it is destroyed first and
   // the other destructor may still read the context.
   static bool stack_gone_when_ours_ran = false;
-  static const GRCORE_Key kEarly = {"early", GRCORE_CARDINALITY_ONE,
+  static const GRCORE_Key kEarly = GRCORE_KEY_INIT("early", GRCORE_CARDINALITY_ONE,
       GRCORE_PHASE_NONE,
       [](GRCORE_Context * c, void *) {
         stack_gone_when_ours_ran = grcore_context_stack(c) == nullptr;
       },
-      nullptr, nullptr, nullptr, nullptr};
+      nullptr, nullptr, nullptr, nullptr);
   RunWorld w;
   int token = 0;
   ASSERT_EQ(grcore_context_register(w.ctx, &kEarly, &token), GRCORE_OK);

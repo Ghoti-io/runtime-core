@@ -281,9 +281,19 @@ bool grcore_context_guest_state_readable(const GRCORE_Context * context) {
           context->config == GRCORE_CONFIG_PAUSED);
 }
 
+bool grcore_key_valid(const GRCORE_Key * key) {
+  /* The first member is read to learn how much of the rest exists, so a key
+   * is judged by that alone: a size below the first-generation layout would
+   * have the core read members that are not there, and one that is not a
+   * multiple of the alignment cannot be the sizeof of any struct. A size
+   * above this header's is a key from a newer header, which is accepted. */
+  return key != NULL && key->size >= GRCORE_KEY_MIN_SIZE &&
+      key->size % _Alignof(GRCORE_Key) == 0;
+}
+
 GRCORE_Result grcore_context_register(
     GRCORE_Context * context, const GRCORE_Key * key, void * value) {
-  if (context == NULL || key == NULL || value == NULL ||
+  if (context == NULL || !grcore_key_valid(key) || value == NULL ||
       !owned_by_caller(context) || context->tearing_down ||
       context->config == GRCORE_CONFIG_RUNNING ||
       (key->cardinality != GRCORE_CARDINALITY_ONE &&

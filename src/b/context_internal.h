@@ -237,6 +237,26 @@ bool grcore_port_wait(
 GRCORE_Result grcore_context_transition(
     GRCORE_Context * context, GRCORE_ContextConfig to);
 
+/* ---- Reading a key ------------------------------------------------------
+ *
+ * A key states how large it is (key.h). A member after `destroy` is read only
+ * through these, which treat a member the key's `size` does not cover as NULL;
+ * registration has already refused a key too small to hold the members before
+ * it, so `name`, `cardinality`, `phase` and `destroy` are read directly. */
+
+static inline GRCORE_PollHandler grcore_key_poll(const GRCORE_Key * key) {
+  return GRCORE_KEY_HAS(key, poll) ? key->poll : NULL;
+}
+static inline GRCORE_SnapshotHook grcore_key_snapshot(const GRCORE_Key * key) {
+  return GRCORE_KEY_HAS(key, snapshot) ? key->snapshot : NULL;
+}
+static inline GRCORE_RestoreHook grcore_key_restore(const GRCORE_Key * key) {
+  return GRCORE_KEY_HAS(key, restore) ? key->restore : NULL;
+}
+static inline GRCORE_SettleHook grcore_key_settle(const GRCORE_Key * key) {
+  return GRCORE_KEY_HAS(key, settle) ? key->settle : NULL;
+}
+
 #ifdef __cplusplus
 }
 #endif

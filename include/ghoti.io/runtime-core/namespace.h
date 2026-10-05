@@ -256,6 +256,7 @@
 #define grcore_guest_settle GHOTIIO_RUNTIME_CORE(grcore_guest_settle)
 #define grcore_guest_snapshot GHOTIIO_RUNTIME_CORE(grcore_guest_snapshot)
 #define grcore_jit_layout GHOTIIO_RUNTIME_CORE(grcore_jit_layout)
+#define grcore_key_valid GHOTIIO_RUNTIME_CORE(grcore_key_valid)
 #define grcore_meter_blocks GHOTIIO_RUNTIME_CORE(grcore_meter_blocks)
 #define grcore_meter_in_use GHOTIIO_RUNTIME_CORE(grcore_meter_in_use)
 #define grcore_meter_init GHOTIIO_RUNTIME_CORE(grcore_meter_init)

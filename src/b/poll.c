@@ -158,14 +158,14 @@ static void decide_memory(
 }
 
 static const GRCORE_Key core_keys[CORE] = {
-    {"terminate", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
-        decide_terminate, NULL, NULL, NULL},
-    {"time", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_time, NULL, NULL, NULL},
-    {"interrupt", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
-        decide_interrupt, NULL, NULL, NULL},
-    {"fuel", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_fuel, NULL, NULL, NULL},
-    {"memory", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
-        decide_memory, NULL, NULL, NULL},
+    GRCORE_KEY_INIT("terminate", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
+        decide_terminate, NULL, NULL, NULL),
+    GRCORE_KEY_INIT("time", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_time, NULL, NULL, NULL),
+    GRCORE_KEY_INIT("interrupt", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
+        decide_interrupt, NULL, NULL, NULL),
+    GRCORE_KEY_INIT("fuel", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL, decide_fuel, NULL, NULL, NULL),
+    GRCORE_KEY_INIT("memory", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_DECIDE, NULL,
+        decide_memory, NULL, NULL, NULL),
 };
 
 const GRCORE_Key * grcore_core_key(GRCORE_RequestKind kind) {
@@ -204,7 +204,7 @@ static void run_phase(GRCORE_Context * c, GRCORE_PollCall * call,
   call->phase = phase;
   for (size_t i = 0; i < count; i++) {
     const GRCORE_Key * key = c->registrations[i].key;
-    if (key->phase == phase && key->poll != NULL) {
+    if (key->phase == phase && grcore_key_poll(key) != NULL) {
       c->order[n++] = i;
     }
   }
@@ -220,7 +220,7 @@ static void run_phase(GRCORE_Context * c, GRCORE_PollCall * call,
     size_t i = c->order[k];
     GRCORE_Registration reg = c->registrations[i];
     call->current = CORE + i;
-    reg.key->poll(c, reg.value, call);
+    grcore_key_poll(reg.key)(c, reg.value, call);
   }
 }
 

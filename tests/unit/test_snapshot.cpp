@@ -139,15 +139,15 @@ void toy_destroy(GRCORE_Context *, void * value) {
 }
 
 #define TOY_KEY(var, nm)                                                    \
-  const GRCORE_Key var = {nm, GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,    \
-      toy_destroy, nullptr, toy_snapshot, toy_restore, toy_settle}
+  const GRCORE_Key var = GRCORE_KEY_INIT(nm, GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,    \
+      toy_destroy, nullptr, toy_snapshot, toy_restore, toy_settle)
 TOY_KEY(kToyA, "toy-a");
 TOY_KEY(kToyB, "toy-b");
 TOY_KEY(kToyTwinOfA, "toy-a");
 
 /* A key that holds a value and takes no part in snapshots. */
-const GRCORE_Key kPlain = {"plain", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
-    nullptr, nullptr, nullptr, nullptr, nullptr};
+const GRCORE_Key kPlain = GRCORE_KEY_INIT("plain", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
+    nullptr, nullptr, nullptr, nullptr, nullptr);
 
 /* A world with two toys registered, in the order a test gives. */
 struct ToyWorld {
@@ -372,14 +372,14 @@ TEST(Snapshot, AKeyThatRefusesRefusesTheWholeSnapshotAndLeavesNothingAllocated) 
 }
 
 TEST(Snapshot, IncompleteHooksNullNamesManyCardinalityAndDuplicateNamesAreRefused) {
-  static const GRCORE_Key only_snapshot = {"half", GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, nullptr, nullptr};
-  static const GRCORE_Key no_settle = {"nosettle", GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, nullptr};
-  static const GRCORE_Key no_name = {nullptr, GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle};
-  static const GRCORE_Key many = {"many", GRCORE_CARDINALITY_MANY,
-      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle};
+  static const GRCORE_Key only_snapshot = GRCORE_KEY_INIT("half", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, nullptr, nullptr);
+  static const GRCORE_Key no_settle = GRCORE_KEY_INIT("nosettle", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, nullptr);
+  static const GRCORE_Key no_name = GRCORE_KEY_INIT(nullptr, GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle);
+  static const GRCORE_Key many = GRCORE_KEY_INIT("many", GRCORE_CARDINALITY_MANY,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle);
   for (const GRCORE_Key * k : {&only_snapshot, &no_settle, &no_name, &many}) {
     Toy t;
     RunWorld w;
@@ -424,8 +424,8 @@ TEST(Snapshot, ABlobWithNoKeyAndAKeyWithNoBlobAreBothRefusedBeforeAnyChange) {
     // context that is otherwise not.
     Toy e;
     ToyWorld w;
-    static const GRCORE_Key extra = {"toy-extra", GRCORE_CARDINALITY_ONE,
-        GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle};
+    static const GRCORE_Key extra = GRCORE_KEY_INIT("toy-extra", GRCORE_CARDINALITY_ONE,
+        GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle);
     e.context = w.w.ctx;
     ASSERT_EQ(grcore_context_register(w.w.ctx, &extra, &e), GRCORE_OK);
     EXPECT_EQ(grcore_context_restore(w.w.ctx, t.s, nullptr), GRCORE_ERR_INVALID);
@@ -543,9 +543,9 @@ GRCORE_Result guest_settle(
   }
   return GRCORE_OK;
 }
-const GRCORE_Key kGuestKey = {"counting-guest", GRCORE_CARDINALITY_ONE,
+const GRCORE_Key kGuestKey = GRCORE_KEY_INIT("counting-guest", GRCORE_CARDINALITY_ONE,
     GRCORE_PHASE_NONE, nullptr, nullptr, guest_snapshot, guest_restore,
-    guest_settle};
+    guest_settle);
 
 } // namespace
 
@@ -668,9 +668,9 @@ TEST(Snapshot, AReaderThatRunsPastTheEndFailsAndStaysFailed) {
       return GRCORE_OK;
     }
   };
-  static const GRCORE_Key k = {"reads", GRCORE_CARDINALITY_ONE,
+  static const GRCORE_Key k = GRCORE_KEY_INIT("reads", GRCORE_CARDINALITY_ONE,
       GRCORE_PHASE_NONE, nullptr, nullptr, Reads::snapshot, Reads::restore,
-      Reads::settle};
+      Reads::settle);
   int token = 0;
   RunWorld a;
   ASSERT_EQ(grcore_context_register(a.ctx, &k, &token), GRCORE_OK);
@@ -713,9 +713,9 @@ TEST(Snapshot, AStringMissingItsTerminatorIsCorruptNotARead) {
       return GRCORE_OK;
     }
   };
-  static const GRCORE_Key k = {"bad-string", GRCORE_CARDINALITY_ONE,
+  static const GRCORE_Key k = GRCORE_KEY_INIT("bad-string", GRCORE_CARDINALITY_ONE,
       GRCORE_PHASE_NONE, nullptr, nullptr, Bad::snapshot, Bad::restore,
-      Bad::settle};
+      Bad::settle);
   int token = 0;
   RunWorld a, b;
   ASSERT_EQ(grcore_context_register(a.ctx, &k, &token), GRCORE_OK);
@@ -750,8 +750,8 @@ TEST(Snapshot, AWriterRefusesNullDataWithBytesAndTheBlobStaysWhole) {
       return GRCORE_OK;
     }
   };
-  static const GRCORE_Key k = {"w", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
-      nullptr, nullptr, W::snapshot, W::restore, W::settle};
+  static const GRCORE_Key k = GRCORE_KEY_INIT("w", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
+      nullptr, nullptr, W::snapshot, W::restore, W::settle);
   GRCORE_Result seen = GRCORE_OK;
   RunWorld a;
   ASSERT_EQ(grcore_context_register(a.ctx, &k, &seen), GRCORE_OK);
@@ -785,8 +785,8 @@ TEST(Snapshot, AWriterPastTheCapIsALimitErrorAndTheBlobStaysWhole) {
       return GRCORE_OK;
     }
   };
-  static const GRCORE_Key k = {"cap", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
-      nullptr, nullptr, W::snapshot, W::restore, W::settle};
+  static const GRCORE_Key k = GRCORE_KEY_INIT("cap", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
+      nullptr, nullptr, W::snapshot, W::restore, W::settle);
   GRCORE_Result seen[3] = {GRCORE_OK, GRCORE_OK, GRCORE_OK};
   RunWorld a;
   ASSERT_EQ(grcore_context_register(a.ctx, &k, seen), GRCORE_OK);
@@ -805,8 +805,8 @@ TEST(Snapshot, ADestinationKeyWithHooksAndNoNameIsRefusedNotDereferenced) {
   ASSERT_EQ(grcore_context_snapshot(src.w.ctx, nullptr, &t.s), GRCORE_OK);
   Toy n;
   ToyWorld w;
-  static const GRCORE_Key nameless = {nullptr, GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle};
+  static const GRCORE_Key nameless = GRCORE_KEY_INIT(nullptr, GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle);
   n.context = w.w.ctx;
   ASSERT_EQ(grcore_context_register(w.w.ctx, &nameless, &n), GRCORE_OK);
   EXPECT_EQ(grcore_context_restore(w.w.ctx, t.s, nullptr), GRCORE_ERR_INVALID);
@@ -956,8 +956,8 @@ TEST(Snapshot, ANamelessHookedDestinationKeyIsRefusedNotDereferenced) {
   src.fill();
   Taken t;
   ASSERT_EQ(grcore_context_snapshot(src.w.ctx, nullptr, &t.s), GRCORE_OK);
-  static const GRCORE_Key nameless = {nullptr, GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle};
+  static const GRCORE_Key nameless = GRCORE_KEY_INIT(nullptr, GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, toy_snapshot, toy_restore, toy_settle);
   Toy n;
   ToyWorld dst;
   n.context = dst.w.ctx;
@@ -989,8 +989,8 @@ TEST(Snapshot, TheWriterRefusesAWriteOverTheCapAndOneThatWouldOverflowTheTotal) 
       return GRCORE_OK;
     }
   };
-  static const GRCORE_Key k = {"cap", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
-      nullptr, nullptr, Cap::snapshot, Cap::restore, Cap::settle};
+  static const GRCORE_Key k = GRCORE_KEY_INIT("cap", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
+      nullptr, nullptr, Cap::snapshot, Cap::restore, Cap::settle);
   std::vector<GRCORE_Result> seen;
   RunWorld a;
   ASSERT_EQ(grcore_context_register(a.ctx, &k, &seen), GRCORE_OK);

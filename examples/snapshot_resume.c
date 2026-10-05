@@ -114,8 +114,8 @@ static GRCORE_Result loop_settle(GRCORE_Context * context, void * value,
   return GRCORE_OK;
 }
 
-static const GRCORE_Key loop_key = {"example loop", GRCORE_CARDINALITY_ONE,
-    GRCORE_PHASE_NONE, NULL, NULL, loop_snapshot, loop_restore, loop_settle};
+static const GRCORE_Key loop_key = GRCORE_KEY_INIT("example loop", GRCORE_CARDINALITY_ONE,
+    GRCORE_PHASE_NONE, NULL, NULL, loop_snapshot, loop_restore, loop_settle);
 
 typedef struct {
   GRCORE_Group * group;

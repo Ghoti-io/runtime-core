@@ -326,12 +326,50 @@ only from inside its entry function, and a check on every call would cost the
 branch the JIT's inline test must not pay. The poll also does not check for a
 NULL context.
 
-**A new field on `GRCORE_Key`.** The poll handler is a trailing `poll` field.
-C zero-fills an aggregate initialiser that omits it, so a key written before
-the field existed keeps its meaning (a NULL handler is never run), but a C++
-compile with `-Wextra` flags the omission. The key is still a public
-fixed-layout struct that callers define statically; making it an accessor-built
-object is deferred until before the first release.
+**A key states its size, so the struct can grow (AD-14, AD-19).** A
+`GRCORE_Key` is a public fixed-layout struct that every library defines as a
+static initialiser, and it has grown twice (`poll`, then the three snapshot
+hooks), each time forcing an edit of every static key in every library. After
+the first release a new trailing field would also be a binary break: a key
+compiled before the field existed cannot be told from one with garbage in it.
+So the first member is `size`, the `sizeof(GRCORE_Key)` of the header the key
+was built against, and the initialiser macro `GRCORE_KEY_INIT(...)`
+(`{ sizeof(GRCORE_Key), ... }`, a constant expression in C17 and C++20) writes
+it, so a definition cannot forget it. The core reads a member after `destroy`
+only through accessors that check `size` covers the member's end
+(`GRCORE_KEY_HAS`) and take an absent one as NULL; `name`, `cardinality`,
+`phase` and `destroy` are the first-generation layout, `GRCORE_KEY_MIN_SIZE`,
+and are always read.
+
+Registration (`grcore_context_register` and `grcore_context_request_kind`)
+calls `grcore_key_valid` and refuses with `ERR_INVALID`, before anything is
+read or stored, a key whose `size` is below `GRCORE_KEY_MIN_SIZE` (which
+includes zero, the forgotten size) or is not a multiple of the struct's
+alignment (no `sizeof` can be). A `size` larger than the core's struct is
+*accepted* and the members past the ones this core knows are ignored: a newer
+library on an older core should lose a hook, not the whole key, so every future
+member must be one whose absence is a defined degradation (a hook not run),
+never a requirement. A definition written in the old positional form starts
+with a string where there is now a `size_t` and does not compile, which is the
+intended one-time break; the five libraries' keys, tests, examples and the
+planted-defect patch were converted in the same change.
+
+Rejected: a *trailing* size or version (code built before it was added never
+wrote it, so it is garbage to the reader and indistinguishable from a real
+value); a version number (it is bumped by hand, says nothing about which
+fields exist, and two numbers must be compared where one size answers
+directly); a pointer to a vtable (a second static object per key, an
+indirection on the poll's per-key loop, and the key's identity, its address,
+would be the pointer's holder and not the data); designated initialisers only
+(nothing makes a caller write `.size`, C++20 requires declaration order and
+forbids mixing positional and designated forms, and an omitted size is found
+only at run time); and keeping the trailing, zero-filled scheme (the status
+quo, which cannot be told from garbage and breaks every definition for the
+`-Wextra` warning on each new field). The tests (`test_key_size.cpp`) build
+older-layout keys as a heap block exactly as large as their `size`, so a read
+past the end is a finding under ASan and Valgrind, and arm every member after
+the stated size with a tripwire, so a core that ignores `size` fails a plain
+run.
 
 ## A, part 1: the guest stack, engine descriptors, the abstract frame and scopes
 

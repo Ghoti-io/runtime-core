@@ -80,10 +80,10 @@ Outcome poll_once(uint64_t seed, bool shuffle,
 }
 
 /* A key per voter, so the names of the keys that voted can be told apart. */
-const GRCORE_Key kV0 = {"v0", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
-const GRCORE_Key kV1 = {"v1", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
-const GRCORE_Key kV2 = {"v2", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
-const GRCORE_Key kV3 = {"v3", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr};
+const GRCORE_Key kV0 = GRCORE_KEY_INIT("v0", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr);
+const GRCORE_Key kV1 = GRCORE_KEY_INIT("v1", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr);
+const GRCORE_Key kV2 = GRCORE_KEY_INIT("v2", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr);
+const GRCORE_Key kV3 = GRCORE_KEY_INIT("v3", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_DECIDE, nullptr, probe_handler, nullptr, nullptr, nullptr);
 const GRCORE_Key * const kVoters[] = {&kV0, &kV1, &kV2, &kV3};
 
 /* Like poll_once, but the DECIDE voters are registered under their own keys,
@@ -306,8 +306,8 @@ ClearWorld clear_poll(uint64_t seed, int extra_kinds, bool via_live_read) {
     GRCORE_RequestKind k;
     EXPECT_EQ(grcore_context_request_kind(w.ctx, &kObserveKey, &k), GRCORE_OK);
   }
-  static const GRCORE_Key kOwner = {"owner", GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_OBSERVE, nullptr, probe_handler, nullptr, nullptr, nullptr};
+  static const GRCORE_Key kOwner = GRCORE_KEY_INIT("owner", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_OBSERVE, nullptr, probe_handler, nullptr, nullptr, nullptr);
   EXPECT_EQ(grcore_context_request_kind(w.ctx, &kOwner, &cw.kind), GRCORE_OK);
   Probe owner("owner");
   owner.extra = [&](GRCORE_Context * c, GRCORE_PollCall *) {
@@ -383,10 +383,10 @@ TEST(Shuffle, ReadingTheLiveRequestInsteadOfTheCallIsOrderDependent) {
 
 TEST(Shuffle, ARequestPostedDuringAPollIsToldAtTheNextOneNotThisOne) {
   RunWorld w;
-  static const GRCORE_Key kEarly = {"early", GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_OBSERVE, nullptr, probe_handler, nullptr, nullptr, nullptr};
-  static const GRCORE_Key kLate = {"late", GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_OBSERVE, nullptr, nullptr, nullptr, nullptr, nullptr};
+  static const GRCORE_Key kEarly = GRCORE_KEY_INIT("early", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_OBSERVE, nullptr, probe_handler, nullptr, nullptr, nullptr);
+  static const GRCORE_Key kLate = GRCORE_KEY_INIT("late", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_OBSERVE, nullptr, nullptr, nullptr, nullptr, nullptr);
   GRCORE_RequestKind early, late;
   ASSERT_EQ(grcore_context_request_kind(w.ctx, &kEarly, &early), GRCORE_OK);
   ASSERT_EQ(grcore_context_request_kind(w.ctx, &kLate, &late), GRCORE_OK);

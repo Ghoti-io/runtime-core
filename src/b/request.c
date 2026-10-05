@@ -70,7 +70,7 @@ static bool kind_defined(
 
 GRCORE_Result grcore_context_request_kind(GRCORE_Context * context,
     const GRCORE_Key * key, GRCORE_RequestKind * out_kind) {
-  if (context == NULL || key == NULL || out_kind == NULL ||
+  if (context == NULL || !grcore_key_valid(key) || out_kind == NULL ||
       !grcore_context_owned_by_caller(context) || context->tearing_down ||
       context->config == GRCORE_CONFIG_RUNNING) {
     return GRCORE_ERR_INVALID;

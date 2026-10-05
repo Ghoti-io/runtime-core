@@ -951,9 +951,9 @@ TEST(StackSnapshot, ABlobThatIsNotAStackIsCorruptNotATrap) {
       return GRCORE_OK;
     }
   };
-  static const GRCORE_Key fake = {"runtime-core.guest", GRCORE_CARDINALITY_ONE,
+  static const GRCORE_Key fake = GRCORE_KEY_INIT("runtime-core.guest", GRCORE_CARDINALITY_ONE,
       GRCORE_PHASE_NONE, nullptr, nullptr, Fake::snapshot, Fake::restore,
-      Fake::settle};
+      Fake::settle);
   const uint64_t magic = 0x3130304B54534752ull;
   // magic, 2 engines named alpha and beta, 1 frame, top 8, used 48, then 40
   // bytes that are not a frame (all zero: no tag).

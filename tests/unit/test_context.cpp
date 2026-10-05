@@ -25,12 +25,12 @@ void log_destroy(GRCORE_Context *, void * value) {
   g_log.push_back(static_cast<const char *>(value));
 }
 
-const GRCORE_Key kOne = {"one", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
-    log_destroy, nullptr, nullptr, nullptr, nullptr};
-const GRCORE_Key kMany = {"many", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_DECIDE, log_destroy, nullptr, nullptr, nullptr, nullptr};
-const GRCORE_Key kQuiet = {"quiet", GRCORE_CARDINALITY_MANY,
-    GRCORE_PHASE_YIELD, nullptr, nullptr, nullptr, nullptr, nullptr};
+const GRCORE_Key kOne = GRCORE_KEY_INIT("one", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE,
+    log_destroy, nullptr, nullptr, nullptr, nullptr);
+const GRCORE_Key kMany = GRCORE_KEY_INIT("many", GRCORE_CARDINALITY_MANY,
+    GRCORE_PHASE_DECIDE, log_destroy, nullptr, nullptr, nullptr, nullptr);
+const GRCORE_Key kQuiet = GRCORE_KEY_INIT("quiet", GRCORE_CARDINALITY_MANY,
+    GRCORE_PHASE_YIELD, nullptr, nullptr, nullptr, nullptr, nullptr);
 
 struct World {
   GRCORE_Group * group = nullptr;
@@ -64,42 +64,8 @@ GRCORE_Result on_other_thread(F f) {
 
 } // namespace
 
-// key.h promises that a static key written before the poll handler and the
-// three snapshot hooks existed - four initialisers - keeps working, because C
-// zero-fills the rest. This is such a key, as a client built against the older
-// header would have it: a missing-field warning is exactly what it provokes,
-// so the warning is silenced here and nowhere else.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-const GRCORE_Key kFourFields = {"four", GRCORE_CARDINALITY_ONE, GRCORE_PHASE_OBSERVE, log_destroy};
-#pragma GCC diagnostic pop
-
-TEST(Context, AKeyWithOnlyItsFirstFourFieldsRegistersPollsAndDestroys) {
-  World w;
-  ASSERT_EQ(kFourFields.poll, nullptr);
-  ASSERT_EQ(kFourFields.snapshot, nullptr);
-  ASSERT_EQ(kFourFields.restore, nullptr);
-  ASSERT_EQ(kFourFields.settle, nullptr);
-  ASSERT_EQ(grcore_context_register(w.ctx, &kFourFields, const_cast<char *>("v")), GRCORE_OK);
-  EXPECT_EQ(grcore_context_slot(w.ctx, &kFourFields), const_cast<char *>("v"));
-  // Not polled (no handler) and not part of a snapshot (no hooks), and the
-  // destructor still runs.
-  GRCORE_Port * port = nullptr;
-  ASSERT_EQ(grcore_context_port(w.ctx, &port), GRCORE_OK);
-  GRCORE_RequestKind kind;
-  ASSERT_EQ(grcore_context_request_kind(w.ctx, &kFourFields, &kind), GRCORE_OK);
-  ASSERT_EQ(grcore_port_post(port, kind), GRCORE_OK);
-  EXPECT_EQ(grcore_poll(w.ctx, GRCORE_HERE), GRCORE_VERDICT_UNWIND) << "outside run";
-  grcore_port_release(port);
-  GRCORE_Snapshot * snapshot = nullptr;
-  ASSERT_EQ(grcore_context_snapshot(w.ctx, nullptr, &snapshot), GRCORE_OK);
-  EXPECT_EQ(grcore_snapshot_blob_count(snapshot), 0u);
-  grcore_snapshot_release(snapshot);
-  g_log.clear();
-  ASSERT_EQ(grcore_context_destroy(w.ctx), GRCORE_OK);
-  w.ctx = nullptr;
-  EXPECT_EQ(g_log, (std::vector<std::string>{"v"}));
-}
+// The older-layout keys (a shorter struct, stated by `size`) are in
+// test_key_size.cpp.
 
 TEST(Context, CreateGivesAParkedOwnedUnlimitedContext) {
   World w;
@@ -199,8 +165,8 @@ TEST(Context, CardinalityManyKeepsBothInOrder) {
 TEST(Context, KeysAreIdentifiedByAddressNotName) {
   char a[] = "a", b[] = "b";  // before the world: its teardown reads them
   World w;
-  static const GRCORE_Key twin = {"one", GRCORE_CARDINALITY_ONE,
-      GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr};
+  static const GRCORE_Key twin = GRCORE_KEY_INIT("one", GRCORE_CARDINALITY_ONE,
+      GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr);
   EXPECT_EQ(grcore_context_register(w.ctx, &kOne, a), GRCORE_OK);
   EXPECT_EQ(grcore_context_register(w.ctx, &twin, b), GRCORE_OK);
   EXPECT_EQ(grcore_context_slot(w.ctx, &twin), b);
@@ -212,10 +178,10 @@ TEST(Context, RegisterRefusalsLeaveTheTableUnchanged) {
   World w;
   EXPECT_EQ(grcore_context_register(w.ctx, &kMany, nullptr), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_register(w.ctx, nullptr, a), GRCORE_ERR_INVALID);
-  GRCORE_Key bad_card = {"x", static_cast<GRCORE_Cardinality>(9),
-      GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr};
-  GRCORE_Key bad_phase = {"x", GRCORE_CARDINALITY_MANY,
-      static_cast<GRCORE_Phase>(9), nullptr, nullptr, nullptr, nullptr, nullptr};
+  GRCORE_Key bad_card = GRCORE_KEY_INIT("x", static_cast<GRCORE_Cardinality>(9),
+      GRCORE_PHASE_NONE, nullptr, nullptr, nullptr, nullptr, nullptr);
+  GRCORE_Key bad_phase = GRCORE_KEY_INIT("x", GRCORE_CARDINALITY_MANY,
+      static_cast<GRCORE_Phase>(9), nullptr, nullptr, nullptr, nullptr, nullptr);
   EXPECT_EQ(grcore_context_register(w.ctx, &bad_card, a), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_register(w.ctx, &bad_phase, a), GRCORE_ERR_INVALID);
   ASSERT_EQ(grcore_context_transition(w.ctx, GRCORE_CONFIG_RUNNING), GRCORE_OK);
@@ -286,8 +252,8 @@ void free_through_context(GRCORE_Context * c, void * value) {
   a->free_fn(a->ctx, value);
   g_blocks_at_last_destroy = static_cast<int>(grcore_context_memory_blocks(c));
 }
-const GRCORE_Key kHeld = {"held", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_NONE,
-    free_through_context, nullptr, nullptr, nullptr, nullptr};
+const GRCORE_Key kHeld = GRCORE_KEY_INIT("held", GRCORE_CARDINALITY_MANY, GRCORE_PHASE_NONE,
+    free_through_context, nullptr, nullptr, nullptr, nullptr);
 } // namespace
 
 TEST(Context, MeterBlocksEqualWhatRegistrantsStillHoldAtTheEnd) {
@@ -486,7 +452,7 @@ struct TearingDown {
   size_t count_seen = 99;
 };
 TearingDown * g_td = nullptr;
-const GRCORE_Key kProbe = {"probe", GRCORE_CARDINALITY_MANY,
+const GRCORE_Key kProbe = GRCORE_KEY_INIT("probe", GRCORE_CARDINALITY_MANY,
     GRCORE_PHASE_NONE, [](GRCORE_Context * c, void * value) {
       static char extra[] = "x";
       TearingDown * td = g_td;
@@ -500,7 +466,7 @@ const GRCORE_Key kProbe = {"probe", GRCORE_CARDINALITY_MANY,
       td->slot_seen = grcore_context_slot(c, &kOne);
       td->count_seen = grcore_context_registration_count(c);
       (void)value;
-    }, nullptr, nullptr, nullptr, nullptr};
+    }, nullptr, nullptr, nullptr, nullptr);
 } // namespace
 
 TEST(Context, ADestructorCannotChangeTheContextOrSeeDestroyedValues) {

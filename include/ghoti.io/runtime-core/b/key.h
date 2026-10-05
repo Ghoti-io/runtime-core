@@ -32,6 +32,9 @@
 #ifndef GHOTI_IO_GRCORE_B_KEY_H
 #define GHOTI_IO_GRCORE_B_KEY_H
 
+#include <stdbool.h>
+#include <stddef.h>
+
 #include <ghoti.io/runtime-core/macros.h>
 
 #include <ghoti.io/runtime-core/core.h>
@@ -171,11 +174,47 @@ typedef enum {
 } GRCORE_Cardinality;
 
 /**
- * @brief A key. Define it `static` (or `const`) and register it by address.
+ * @brief A key. Define it `static` (or `const`) with ::GRCORE_KEY_INIT and
+ *   register it by address.
  *
  * The object must outlive every context that holds a registration under it.
+ *
+ * **The struct grows at the end, and `size` says how far.** Every key is
+ * written by a library other than this one, as a static initialiser, so the
+ * layout is part of the contract. The first member, `size`, is the
+ * `sizeof(GRCORE_Key)` of the header the key was compiled against, and
+ * ::GRCORE_KEY_INIT writes it, so a definition cannot forget it. The core
+ * reads a member after `destroy` only when `size` reaches the end of that
+ * member, and takes an absent one as NULL. A key built before a field existed
+ * therefore stays valid, and is distinguishable from one with garbage in the
+ * new field, which a trailing marker could not be (code built before the
+ * marker never wrote it).
+ *
+ * Registration (::grcore_context_register, ::grcore_context_request_kind)
+ * refuses with ::GRCORE_ERR_INVALID a key whose `size` is below
+ * ::GRCORE_KEY_MIN_SIZE (name, cardinality, phase and destroy are always
+ * read, so they must exist) or is not a multiple of the struct's alignment.
+ * A `size` larger than this header's struct is accepted: the key is from a
+ * newer header, and members this core does not know are ignored, so each
+ * future member must be one whose absence is a defined, safe degradation
+ * (a hook not run), never a requirement.
+ *
+ * Rejected alternatives (design.md has the argument): a trailing size or
+ * version number (code built before it was added never wrote it, so it is
+ * indistinguishable from garbage); a version number (it has to be bumped by
+ * hand, and says nothing about which fields exist); a vtable pointer (an
+ * indirection and a second static object per key, and the address of the
+ * key, its identity, would no longer be the object that holds the data);
+ * designated initialisers only (nothing makes a caller write `.size`, C++20
+ * requires declaration order and forbids mixing, and an omitted size is only
+ * caught at run time).
  */
 typedef struct GRCORE_Key {
+  /**
+   * `sizeof(GRCORE_Key)` as the key's definer compiled it. Set by
+   * ::GRCORE_KEY_INIT. Never write it by hand.
+   */
+  size_t size;
   const char * name;             ///< For diagnostics. May be NULL.
   GRCORE_Cardinality cardinality; ///< Registrations accepted per context.
   GRCORE_Phase phase;            ///< The poll phase this key belongs to.
@@ -188,10 +227,8 @@ typedef struct GRCORE_Key {
   /**
    * The handler the poll runs in `phase`, with the registered value. May be
    * NULL, and is then never run. A key whose phase is ::GRCORE_PHASE_NONE
-   * is never polled whatever this holds.
-   *
-   * A static key written before this field existed keeps working: C
-   * zero-fills the omitted initialiser.
+   * is never polled whatever this holds. Absent (and so NULL) in a key whose
+   * `size` ends before it.
    */
   GRCORE_PollHandler poll;
   /**
@@ -199,10 +236,7 @@ typedef struct GRCORE_Key {
    * NULL, and the key is then not part of any snapshot: the host registers it
    * again on the destination. A key with `snapshot` must also have `restore`
    * and `settle`, or taking a snapshot of a context that holds it is refused.
-   * It must have cardinality one.
-   *
-   * The three snapshot fields are last, so a static key written before them
-   * keeps working: C zero-fills the omitted initialisers.
+   * It must have cardinality one. Absent in a key whose `size` ends before it.
    */
   GRCORE_SnapshotHook snapshot;
   /** Rebuilds the state on a destination context. See ::GRCORE_RestoreHook. */
@@ -210,6 +244,53 @@ typedef struct GRCORE_Key {
   /** Completes a restore across keys. See ::GRCORE_SettleHook. */
   GRCORE_SettleHook settle;
 } GRCORE_Key;
+
+/**
+ * @brief The smallest `size` a key may state: the layout through `destroy`.
+ *
+ * It is the layout of the first generation, before any trailing hook existed.
+ */
+#define GRCORE_KEY_MIN_SIZE \
+  (offsetof(GRCORE_Key, destroy) + sizeof(((GRCORE_Key *)0)->destroy))
+
+/**
+ * @brief The initialiser of a key: `GRCORE_KEY_INIT(name, cardinality, phase,
+ *   destroy, poll, snapshot, restore, settle)`.
+ *
+ * Expands to a braced initialiser that begins with `sizeof(GRCORE_Key)`, so
+ * it is a constant expression in a static initialiser in C17 and C++20, and
+ * the members given are the ones after `size`, positionally (a C file may use
+ * designators instead). Give every member, NULL where unused: an omitted one
+ * is zero, but a `-Wextra` C++ compile warns about it, which is what makes
+ * the next field added to this struct visible at each definition.
+ * @code
+ * static const GRCORE_Key my_key = GRCORE_KEY_INIT("my", GRCORE_CARDINALITY_ONE,
+ *     GRCORE_PHASE_NONE, my_destroy, NULL, NULL, NULL, NULL);
+ * @endcode
+ * A definition written before `size` existed starts with a string where this
+ * has a `size_t`, and does not compile; that is the intended break.
+ */
+#define GRCORE_KEY_INIT(...) { sizeof(GRCORE_Key), __VA_ARGS__ }
+
+/**
+ * @brief Whether a key's `size` covers a member, so that reading it is
+ *   defined.
+ *
+ * @code
+ * GRCORE_KEY_HAS(key, poll) && key->poll != NULL
+ * @endcode
+ */
+#define GRCORE_KEY_HAS(key, member)                                         \
+  ((key)->size >= offsetof(GRCORE_Key, member) + sizeof((key)->member))
+
+/**
+ * @brief Whether a key is acceptable to register (see ::GRCORE_Key).
+ *
+ * @param key The key. NULL is not valid.
+ * @return true when `size` is at least ::GRCORE_KEY_MIN_SIZE and a multiple
+ *   of the struct's alignment.
+ */
+GRCORE_API bool grcore_key_valid(const GRCORE_Key * key);
 
 #ifdef __cplusplus
 }

@@ -278,7 +278,7 @@ size_t grcore_snapshot_reader_remaining(const GRCORE_SnapshotReader * reader) {
 /* ---- taking ------------------------------------------------------------- */
 
 static bool hooked(const GRCORE_Key * key) {
-  return key->snapshot != NULL;
+  return grcore_key_snapshot(key) != NULL;
 }
 
 GRCORE_Result grcore_context_snapshot(GRCORE_Context * context,
@@ -298,8 +298,8 @@ GRCORE_Result grcore_context_snapshot(GRCORE_Context * context,
     if (!hooked(k)) {
       continue;
     }
-    if (k->restore == NULL || k->settle == NULL || k->name == NULL ||
-        k->cardinality != GRCORE_CARDINALITY_ONE) {
+    if (grcore_key_restore(k) == NULL || grcore_key_settle(k) == NULL ||
+        k->name == NULL || k->cardinality != GRCORE_CARDINALITY_ONE) {
       return GRCORE_ERR_INVALID;
     }
     for (size_t j = 0; j < i; j++) {
@@ -347,7 +347,7 @@ GRCORE_Result grcore_context_snapshot(GRCORE_Context * context,
     b->size = 0;
     s->blob_count++; /* counted first, so a failure frees the name */
     GRCORE_SnapshotWriter w = {s, b, 0};
-    r = k->snapshot(context, context->registrations[i].value, &w);
+    r = grcore_key_snapshot(k)(context, context->registrations[i].value, &w);
   }
   if (r != GRCORE_OK) {
     snapshot_free(s);
@@ -383,7 +383,7 @@ static GRCORE_Result run_restore(GRCORE_Context * c, const GRCORE_Snapshot * s,
   const Blob * b = &s->blobs[index];
   const GRCORE_Registration * reg = find_by_name(c, b->name);
   GRCORE_SnapshotReader reader = {b->data, b->size, 0, false};
-  return reg->key->restore(c, reg->value, &reader, environment(env, b->name),
+  return grcore_key_restore(reg->key)(c, reg->value, &reader, environment(env, b->name),
       mode);
 }
 
@@ -393,7 +393,7 @@ static void abandon(GRCORE_Context * c, const GRCORE_Snapshot * s,
   while (applied > 0) {
     const Blob * b = &s->blobs[--applied];
     const GRCORE_Registration * reg = find_by_name(c, b->name);
-    (void)reg->key->settle(
+    (void)grcore_key_settle(reg->key)(
         c, reg->value, environment(env, b->name), GRCORE_SETTLE_ABANDON);
   }
 }
@@ -421,8 +421,8 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
     if (!hooked(k)) {
       continue;
     }
-    if (k->restore == NULL || k->settle == NULL || k->name == NULL ||
-        k->cardinality != GRCORE_CARDINALITY_ONE) {
+    if (grcore_key_restore(k) == NULL || grcore_key_settle(k) == NULL ||
+        k->name == NULL || k->cardinality != GRCORE_CARDINALITY_ONE) {
       return GRCORE_ERR_INVALID;
     }
     destination_hooked++;
@@ -454,7 +454,7 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
   for (size_t i = 0; i < context->registration_count && r == GRCORE_OK; i++) {
     const GRCORE_Registration * reg = &context->registrations[i];
     if (hooked(reg->key)) {
-      r = reg->key->settle(context, reg->value,
+      r = grcore_key_settle(reg->key)(context, reg->value,
           environment(env, reg->key->name), GRCORE_SETTLE_PREPARE);
     }
   }
@@ -465,7 +465,7 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
   for (size_t i = 0; i < context->registration_count; i++) {
     const GRCORE_Registration * reg = &context->registrations[i];
     if (hooked(reg->key)) {
-      (void)reg->key->settle(context, reg->value,
+      (void)grcore_key_settle(reg->key)(context, reg->value,
           environment(env, reg->key->name), GRCORE_SETTLE_COMMIT);
     }
   }
