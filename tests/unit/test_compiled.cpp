@@ -20,8 +20,10 @@
 #include <algorithm>
 #include <csignal>
 #include <set>
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
@@ -120,6 +122,11 @@ struct ChildResult {
   std::string err;
 };
 ChildResult in_child(const std::function<void()> & fn) {
+#ifdef _WIN32
+  (void)fn;
+  ADD_FAILURE() << "no fork on this platform";
+  return ChildResult{};
+#else
   int fds[2];
   EXPECT_EQ(pipe(fds), 0);
   std::fflush(nullptr);
@@ -143,6 +150,7 @@ ChildResult in_child(const std::function<void()> & fn) {
   r.aborted = WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
   r.exited_clean = WIFEXITED(status) && WEXITSTATUS(status) == 0;
   return r;
+#endif
 }
 
 /* Frames of a run, stopped at consecutive sites of the code, set on a JIT
@@ -625,6 +633,9 @@ TEST(CompiledRoots, ABrokenChainStopsTheEnumerationAndSaysWhyRatherThanSkippingA
   };
   for (const Break & b : cases) {
     SCOPED_TRACE(b.name);
+#ifdef _WIN32
+    GTEST_SKIP() << "root enumeration aborts, which is seen from a forked child";
+#endif
     CWorld w;
     HandStack st(4);
     GRCORE_CSegment seg = {st.lo() - 4096, st.hi() + 4096};
@@ -649,6 +660,9 @@ TEST(CompiledRoots, ABrokenChainStopsTheEnumerationAndSaysWhyRatherThanSkippingA
 
 TEST(CompiledRoots, AGoodChainDoesNotAbortInTheSameChild) {
   // The control for the case above: the same harness, nothing broken.
+#ifdef _WIN32
+  GTEST_SKIP() << "no fork on this platform";
+#endif
   CWorld w;
   HandStack st(4);
   GRCORE_CSegment seg = {st.lo() - 4096, st.hi() + 4096};
