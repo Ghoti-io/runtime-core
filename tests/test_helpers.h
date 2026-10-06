@@ -14,6 +14,7 @@
 #include <ghoti.io/runtime-core/runtime-core.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -502,13 +503,21 @@ class MigrantThread {
   MigrantThread(GRCORE_Context * context, std::function<void()> body)
       : context_(context), thread_([this, body = std::move(body)] {
           while (!go_.load(std::memory_order_relaxed)) {
-            if (quit_.load(std::memory_order_relaxed)) {
+            if (quit_.load(std::memory_order_relaxed) || expired()) {
               return;
             }
             std::this_thread::yield();
           }
-          while (grcore_context_acquire(context_) != GRCORE_OK) {
+          GRCORE_Result got = grcore_context_acquire(context_);
+          while (got != GRCORE_OK && !expired() &&
+              !quit_.load(std::memory_order_relaxed)) {
             std::this_thread::yield();
+            got = grcore_context_acquire(context_);
+          }
+          acquire_result_.store(got, std::memory_order_relaxed);
+          if (got != GRCORE_OK) {
+            done_.store(true, std::memory_order_relaxed);
+            return;
           }
           taken_.store(true, std::memory_order_relaxed);
           body();
@@ -516,6 +525,12 @@ class MigrantThread {
         }) {}
   MigrantThread(const MigrantThread &) = delete;
   MigrantThread & operator=(const MigrantThread &) = delete;
+  /* The result of the migrant's own acquire: GRCORE_OK if it took the
+   * context, whatever the last refusal was if the deadline passed first. Read
+   * it after take_back(). */
+  GRCORE_Result acquire_result() const {
+    return acquire_result_.load(std::memory_order_relaxed);
+  }
   ~MigrantThread() {
     quit_.store(true, std::memory_order_relaxed);
     if (thread_.joinable()) {
@@ -532,8 +547,8 @@ class MigrantThread {
     // acquire, so an acquire here before the migrant has its turn would
     // succeed and prove nothing. The flag orders nothing either.
     while (!taken_.load(std::memory_order_relaxed)) {
-      if (done_.load(std::memory_order_relaxed)) {
-        return false;
+      if (done_.load(std::memory_order_relaxed) || expired()) {
+        return timed_out();
       }
       std::this_thread::yield();
     }
@@ -542,8 +557,8 @@ class MigrantThread {
       if (grcore_context_acquire(context_) == GRCORE_OK) {
         return true;
       }
-      if (finished) {
-        return false;
+      if (finished || expired()) {
+        return timed_out();
       }
       std::this_thread::yield();
     }
@@ -552,7 +567,22 @@ class MigrantThread {
   void join() { thread_.join(); }
 
  private:
+  /* A hand-off that never completes must fail the test, not hang it. */
+  static constexpr std::chrono::seconds kDeadline{30};
+  bool expired() const {
+    return std::chrono::steady_clock::now() >= deadline_;
+  }
+  bool timed_out() const {
+    if (expired()) {
+      ADD_FAILURE() << "MigrantThread: the hand-off did not complete within "
+                    << kDeadline.count() << " s";
+    }
+    return false;
+  }
   GRCORE_Context * context_;
+  std::chrono::steady_clock::time_point deadline_ =
+      std::chrono::steady_clock::now() + kDeadline;
+  std::atomic<GRCORE_Result> acquire_result_{GRCORE_ERR_INTERNAL};
   std::atomic<bool> go_{false};
   std::atomic<bool> taken_{false};
   std::atomic<bool> quit_{false};

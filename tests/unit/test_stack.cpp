@@ -669,7 +669,6 @@ TEST(Stack, APausedContextWithFramesMigratesAndResumesOnAnotherThread) {
   uint64_t seen_slot = 0;
   int pauses = 0;
   MigrantThread migrant(w.ctx, [&] {
-    r = GRCORE_OK;
     GRCORE_Stack * s = grcore_context_stack(w.ctx);
     seen_frames = grcore_stack_frame_count(s);
     grcore_stack_slot_get(s, grcore_stack_top(s), 0, &seen_slot);
@@ -694,6 +693,7 @@ TEST(Stack, APausedContextWithFramesMigratesAndResumesOnAnotherThread) {
   migrant.go();
   ASSERT_TRUE(migrant.take_back());
   migrant.join();
+  ASSERT_EQ(migrant.acquire_result(), GRCORE_OK);
   ASSERT_EQ(r, GRCORE_OK);
   EXPECT_EQ(there, GRCORE_OUTCOME_FINISHED);
   EXPECT_EQ(seen_frames, frames); // intact on arrival

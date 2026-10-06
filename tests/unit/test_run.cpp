@@ -367,6 +367,7 @@ TEST(Migrate, APausedContextResumesOnAnotherThreadWithTheSameOutputAsAStraightRu
   migrant.go();
   ASSERT_TRUE(migrant.take_back());
   migrant.join();
+  ASSERT_EQ(migrant.acquire_result(), GRCORE_OK);
   EXPECT_TRUE(readable);
   EXPECT_EQ(fuel_result, GRCORE_OK);
   EXPECT_EQ(r, GRCORE_OK);
@@ -394,6 +395,7 @@ TEST(Migrate, AContextPingPongsBetweenThreadsAcrossManyPauses) {
     migrant.go();
     ASSERT_TRUE(migrant.take_back());
     migrant.join();
+    ASSERT_EQ(migrant.acquire_result(), GRCORE_OK);
     for (GRCORE_Result s : step) {
       ASSERT_EQ(s, GRCORE_OK);
     }
