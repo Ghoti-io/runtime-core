@@ -73,6 +73,89 @@ static const char * base_fault(const GRCORE_ActivationRecord * rec,
   return NULL;
 }
 
+/* Picks the next record outward that carries compiled state and starts a run
+ * at it. FRAME means a run was started; END, none is left; BROKEN, its first
+ * base is not one. */
+static GRCORE_CompiledWalkStatus start_run(
+    GRCORE_CompiledWalk * walk, const GRCORE_Stack * stack) {
+  while (walk->next_record > 0 && walk->base == 0) {
+    const GRCORE_ActivationRecord * rec =
+        &stack->activations[--walk->next_record];
+    if (rec->frame_base == 0) {
+      continue;
+    }
+    const char * fault = base_fault(rec, rec->frame_base, walk->last_base);
+    if (fault != NULL) {
+      walk->broken = true;
+      walk->reason = fault;
+      return GRCORE_CWALK_BROKEN;
+    }
+    walk->base = rec->frame_base;
+    walk->return_address = rec->return_address;
+    walk->run_record = walk->next_record;
+  }
+  return walk->base == 0 ? GRCORE_CWALK_END : GRCORE_CWALK_FRAME;
+}
+
+/* Yields the frame at `walk->base` and moves to its caller. The one place that
+ * reads a frame's words and decides where a run goes on or ends, so the count
+ * of a run's frames (made on a copy of the walk) and the walk itself cannot
+ * disagree about it. `out` need not be filled in by the caller for a count. */
+static GRCORE_CompiledWalkStatus yield_frame(GRCORE_CompiledWalk * walk,
+    const GRCORE_Stack * stack, GRCORE_CompiledFrame * out) {
+  const GRCORE_ActivationRecord * rec = &stack->activations[walk->run_record];
+  GRCORE_CodeRange range;
+  if (!grcore_registry_find(stack, walk->return_address, &range)) {
+    walk->broken = true;
+    walk->reason = "a compiled frame's return address is in no registered code";
+    return GRCORE_CWALK_BROKEN;
+  }
+  uintptr_t offset = walk->return_address - range.start;
+  const GRCORE_CodeSite * site =
+      offset > UINT32_MAX ? NULL : grcore_codemeta_find(range.meta, (uint32_t)offset);
+  if (site == NULL) {
+    walk->broken = true;
+    walk->reason = "a compiled frame's return address is at no site of its code";
+    return GRCORE_CWALK_BROKEN;
+  }
+  out->frame_base = walk->base;
+  out->return_address = walk->return_address;
+  out->engine = range.engine;
+  out->meta = range.meta;
+  out->site = site;
+  out->identity = site->identity;
+  out->depth = walk->depth++;
+  out->record = walk->run_record;
+  out->base_frames = rec->base_frames;
+  /* The caller: the two words at this frame's base. */
+  uintptr_t words[2];
+  memcpy(words, (const void *)walk->base, sizeof words);
+  walk->last_base = walk->base;
+  if (words[0] == GRCORE_COMPILED_CHAIN_END) {
+    /* The entry stub's marker: the run ends here, definitively. */
+    walk->base = 0;
+    walk->return_address = 0;
+    return GRCORE_CWALK_FRAME;
+  }
+  if (!grcore_registry_find(stack, words[1], NULL)) {
+    /* Not the entry, because the entry is marked; so this is a word that went
+     * wrong, and the frames above are not to be skipped. */
+    walk->failing = true;
+    walk->reason = "a compiled frame returns into no registered code, and the "
+                   "chain-end marker was not met";
+    return GRCORE_CWALK_FRAME;
+  }
+  const char * fault = base_fault(rec, words[0], walk->base);
+  if (fault != NULL) {
+    walk->failing = true;
+    walk->reason = fault;
+    return GRCORE_CWALK_FRAME;
+  }
+  walk->base = words[0];
+  walk->return_address = words[1];
+  return GRCORE_CWALK_FRAME;
+}
+
 GRCORE_CompiledWalkStatus grcore_compiled_walk_next(
     GRCORE_CompiledWalk * walk, GRCORE_CompiledFrame * out_frame) {
   if (walk == NULL || out_frame == NULL) {
@@ -89,70 +172,31 @@ GRCORE_CompiledWalkStatus grcore_compiled_walk_next(
     return GRCORE_CWALK_END;
   }
   if (walk->base == 0) {
-    /* Between runs: the next record outward that carries compiled state. */
-    while (walk->next_record > 0 && walk->base == 0) {
-      const GRCORE_ActivationRecord * rec =
-          &stack->activations[--walk->next_record];
-      if (rec->frame_base == 0) {
-        continue;
-      }
-      const char * fault = base_fault(rec, rec->frame_base, walk->last_base);
-      if (fault != NULL) {
-        walk->broken = true;
-        walk->reason = fault;
-        return GRCORE_CWALK_BROKEN;
-      }
-      walk->base = rec->frame_base;
-      walk->return_address = rec->return_address;
-      walk->run_record = walk->next_record;
+    GRCORE_CompiledWalkStatus st = start_run(walk, stack);
+    if (st != GRCORE_CWALK_FRAME) {
+      return st;
     }
-    if (walk->base == 0) {
-      return GRCORE_CWALK_END;
+    /* How many frames the run has, counted on a copy by the same step, so that
+     * each frame can say where in its run it is (and so which guest frame it
+     * stands for). */
+    GRCORE_CompiledWalk probe = *walk;
+    GRCORE_CompiledFrame scratch;
+    size_t n = 0;
+    while (yield_frame(&probe, stack, &scratch) == GRCORE_CWALK_FRAME) {
+      n++;
+      if (probe.base == 0 || probe.failing) {
+        break;
+      }
     }
+    walk->run_length = n;
+    walk->run_index = 0;
   }
-  const GRCORE_ActivationRecord * rec = &stack->activations[walk->run_record];
-  GRCORE_CodeRange range;
-  if (!grcore_registry_find(stack, walk->return_address, &range)) {
-    walk->broken = true;
-    walk->reason = "a compiled frame's return address is in no registered code";
-    return GRCORE_CWALK_BROKEN;
+  GRCORE_CompiledWalkStatus st = yield_frame(walk, stack, out_frame);
+  if (st == GRCORE_CWALK_FRAME) {
+    out_frame->run_depth = walk->run_index++;
+    out_frame->run_length = walk->run_length;
   }
-  uintptr_t offset = walk->return_address - range.start;
-  const GRCORE_CodeSite * site =
-      offset > UINT32_MAX ? NULL : grcore_codemeta_find(range.meta, (uint32_t)offset);
-  if (site == NULL) {
-    walk->broken = true;
-    walk->reason = "a compiled frame's return address is at no site of its code";
-    return GRCORE_CWALK_BROKEN;
-  }
-  out_frame->frame_base = walk->base;
-  out_frame->return_address = walk->return_address;
-  out_frame->engine = range.engine;
-  out_frame->meta = range.meta;
-  out_frame->site = site;
-  out_frame->identity = site->identity;
-  out_frame->depth = walk->depth++;
-  out_frame->record = walk->run_record;
-  out_frame->base_frames = rec->base_frames;
-  /* The caller: the two words at this frame's base. A return address in no
-   * registered code is the entry from the interpreter, which ends the run. */
-  uintptr_t words[2];
-  memcpy(words, (const void *)walk->base, sizeof words);
-  walk->last_base = walk->base;
-  if (!grcore_registry_find(stack, words[1], NULL)) {
-    walk->base = 0;
-    walk->return_address = 0;
-    return GRCORE_CWALK_FRAME;
-  }
-  const char * fault = base_fault(rec, words[0], walk->base);
-  if (fault != NULL) {
-    walk->failing = true;
-    walk->reason = fault;
-    return GRCORE_CWALK_FRAME;
-  }
-  walk->base = words[0];
-  walk->return_address = words[1];
-  return GRCORE_CWALK_FRAME;
+  return st;
 }
 
 const char * grcore_compiled_walk_reason(const GRCORE_CompiledWalk * walk) {

@@ -350,6 +350,15 @@ TEST(CompiledWalk, EveryBrokenChainIsAnErrorAndNeverASkipOrAnEnd) {
       {"the innermost frame base is below the record's segment", 0,
           [](HandStack &, CWorld &, std::vector<uintptr_t> & b, uintptr_t &,
               uintptr_t &, GRCORE_CSegment & seg) { seg = {b[0] + 8, b[5] + 16}; }},
+      {"a return word met mid-run is in no registered code and no marker was", 3,
+          [](HandStack & st, CWorld &, std::vector<uintptr_t> &, uintptr_t &,
+              uintptr_t &, GRCORE_CSegment &) { st.words[16 + 7] = kOutside; }},
+      {"the last frame's marker is gone (zero) where the entry stub leaves it", 6,
+          [](HandStack & st, CWorld &, std::vector<uintptr_t> &, uintptr_t &,
+              uintptr_t &, GRCORE_CSegment &) { st.words[40 + 6] = 0; }},
+      {"the last frame's marker is a word that merely looks like a base", 6,
+          [](HandStack & st, CWorld &, std::vector<uintptr_t> & b, uintptr_t &,
+              uintptr_t &, GRCORE_CSegment &) { st.words[40 + 6] = b[5] + 64; }},
       {"a return address is in code but at no site", 4,
           [](HandStack & st, CWorld & w, std::vector<uintptr_t> &, uintptr_t &,
               uintptr_t &, GRCORE_CSegment &) { st.words[24 + 7] = w.code.at(4) + 1; }},
@@ -371,6 +380,56 @@ TEST(CompiledWalk, EveryBrokenChainIsAnErrorAndNeverASkipOrAnEnd) {
     EXPECT_EQ(got.frames.size(), c.frames_before_the_break)
         << "the frames before the break are all reported, and none after it";
   }
+}
+
+TEST(CompiledWalk, TheMarkerAloneEndsARunWhateverReturnAddressSitsNextToIt) {
+  // The marker is what is definitive: the entry stub's return address is in
+  // the interpreter's C code, in no registered code, and that is the entry.
+  CWorld w;
+  HandStack st(4);
+  std::vector<uintptr_t> bases = st.build(w.code, 0, 4, 0, kOutside);
+  EXPECT_EQ(st.words[3 * 8 + 6], GRCORE_COMPILED_CHAIN_END);
+  EXPECT_EQ(GRCORE_COMPILED_CHAIN_END % 2, 1u);
+  GRCORE_ActivationRef rec = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_activation_set_compiled(w.stack, rec, bases[0], w.code.at(0)),
+      GRCORE_OK);
+  Walked got = walk_compiled(w.ctx);
+  EXPECT_EQ(got.frames.size(), 4u);
+  EXPECT_EQ(got.end, GRCORE_CWALK_END);
+  // The same with a return address that is in registered code: the marker still
+  // ends it, and nothing is read as a frame beyond it.
+  st.words[3 * 8 + 7] = w.code.at(9);
+  got = walk_compiled(w.ctx);
+  EXPECT_EQ(got.frames.size(), 4u);
+  EXPECT_EQ(got.end, GRCORE_CWALK_END);
+}
+
+TEST(CompiledWalk, EachFrameSaysWhereItIsInItsRunAndHowLongTheRunIs) {
+  CWorld w;
+  HandStack st(8 + 3);
+  // An outer run of three under a nested activation, then an inner run of four.
+  std::vector<uintptr_t> outer = st.build(w.code, 32, 3, 4, kOutside);
+  std::vector<uintptr_t> inner = st.build(w.code, 0, 4, 0, kOutside);
+  GRCORE_ActivationRef a = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_activation_set_compiled(w.stack, a, outer[0], w.code.at(4)),
+      GRCORE_OK);
+  GRCORE_ActivationRef n = enter(w.stack, GRCORE_ACTIVATION_NATIVE);
+  GRCORE_ActivationRef b = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_activation_set_compiled(w.stack, b, inner[0], w.code.at(0)),
+      GRCORE_OK);
+  Walked got = walk_compiled(w.ctx);
+  ASSERT_EQ(got.frames.size(), 7u);
+  for (size_t i = 0; i < 4; i++) {
+    EXPECT_EQ(got.frames[i].run_depth, i);
+    EXPECT_EQ(got.frames[i].run_length, 4u);
+  }
+  for (size_t i = 4; i < 7; i++) {
+    EXPECT_EQ(got.frames[i].run_depth, i - 4);
+    EXPECT_EQ(got.frames[i].run_length, 3u);
+  }
+  ASSERT_EQ(grcore_activation_leave(w.stack, b), GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, n), GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, a), GRCORE_OK);
 }
 
 TEST(CompiledWalk, ARunBelowTheRunInsideItIsABrokenChain) {

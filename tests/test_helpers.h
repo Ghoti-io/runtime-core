@@ -786,9 +786,11 @@ struct HandStack {
   static uint64_t trap_of(size_t tag) { return 0x900000 + tag * 0x10; }
   /* Builds `n` frames starting at word `first`, the k-th stopped at site
    * `site0 + k` of `code`. The last frame's return address is `entry` and its
-   * base word `last_caller`. Returns the bases, innermost first. */
+   * base word `last_caller`, which is the chain-end marker the entry stub of
+   * a real run leaves there. Returns the bases, innermost first. */
   std::vector<uintptr_t> build(HandCode & code, size_t first, size_t n,
-      size_t site0, uintptr_t entry, uintptr_t last_caller = 0) {
+      size_t site0, uintptr_t entry,
+      uintptr_t last_caller = GRCORE_COMPILED_CHAIN_END) {
     std::vector<uintptr_t> bases;
     for (size_t k = 0; k < n; k++) {
       size_t w = first + k * kFrameWords;

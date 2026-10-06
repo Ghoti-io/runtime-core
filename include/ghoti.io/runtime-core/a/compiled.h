@@ -58,10 +58,18 @@
  * site, with the stack map and the identity, from `grcore_codemeta_find` at the
  * address's offset in that code. The caller's base and return address are the
  * two words at the frame's base. If that return address is in registered code
- * the caller is a compiled frame and the walk continues; if it is in none, it is
- * the entry from the interpreter and the run ends. The walk then goes to the
- * next record outward that carries compiled state, which is a compiled run
+ * the caller is a compiled frame and the walk continues. The walk then goes to
+ * the next record outward that carries compiled state, which is a compiled run
  * under a nested activation, and so on.
+ *
+ * **Where a run ends.** A run ends only at a *chain-end marker*:
+ * ::GRCORE_COMPILED_CHAIN_END as the caller's base word. The entry stub that
+ * adapts the C ABI to the internal convention (runtime-jit) sets its frame
+ * register to the marker before it calls the first compiled function, so that
+ * function's saved caller base is the marker. The marker is odd, so no frame
+ * base can equal it, and a corrupt word is therefore never taken for the entry
+ * from the interpreter: a return address in no registered code, met where no
+ * marker was, is a broken chain.
  *
  * **A broken chain is never skipped.** The walk checks that each caller base is
  * word-aligned, above its callee's, and, where the record has a C segment,
@@ -103,6 +111,15 @@
 extern "C" {
 #endif
 
+/**
+ * @brief The word a run's outermost frame holds as its caller's base: the end
+ *   of the chain of compiled frames.
+ *
+ * It is odd, so it is never the base of a frame (a base is word-aligned), and
+ * it is not a value a stack holds by accident.
+ */
+#define GRCORE_COMPILED_CHAIN_END ((uintptr_t)UINT64_C(0x47524A4954454E01))
+
 /** @brief What one step of the walk did. */
 typedef enum GRCORE_CompiledWalkStatus {
   GRCORE_CWALK_FRAME = 0, ///< A frame was written.
@@ -122,6 +139,9 @@ typedef struct GRCORE_CompiledFrame {
   size_t record;                 ///< The activation record it was found from.
   size_t base_frames;            ///< That record's guest frame count: the guest
                                  ///< frames this frame is above, in the stack.
+  size_t run_depth;              ///< Zero for the innermost frame of its run.
+  size_t run_length;             ///< The frames in its run, up to the end or the
+                                 ///< first break.
 } GRCORE_CompiledFrame;
 
 /** @brief A walk in progress, innermost frame first. Treat as opaque. */
@@ -136,6 +156,8 @@ typedef struct GRCORE_CompiledWalk {
   bool failing;              ///< The chain after the last frame is bad.
   bool broken;               ///< Reported; sticky.
   const char * reason;       ///< Static; set with `failing` and `broken`.
+  size_t run_length;         ///< Frames in the current run.
+  size_t run_index;          ///< Frames of the current run yielded so far.
 } GRCORE_CompiledWalk;
 
 /**
