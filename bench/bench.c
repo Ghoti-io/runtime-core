@@ -25,14 +25,15 @@
  *
  * Every library ships one from its first commit, so that "performant" is a
  * claim with a way to check it. Besides the calibration case it holds the
- * cases of the runtime: creating and destroying a context, a counting
+ * seventeen cases of the runtime, sixteen operations and one validation:
+ * creating and destroying a context, a counting
  * malloc/free pair, a keyed slot lookup, the poll's fast path, its slow path
  * through four handlers, a post to a port, a push and pop of a guest frame,
  * the engine-aware poll's fast path, a walk of sixteen frames at a pause, an
  * activation record entered and left, a fuel scope opened, charged and closed,
  * the enumeration of the roots of sixteen frames, a snapshot taken and
- * restored, a profiler sample at depth one and at depth thirty-two, and the
- * validation of two code-metadata tables.
+ * restored, a profiler sample at depth one and at depth thirty-two, and (the
+ * seventeenth) the validation of two code-metadata tables.
  *
  * The calibration case is a fixed amount of integer work that touches no
  * library code, run the same way every real case will be, so a figure from a

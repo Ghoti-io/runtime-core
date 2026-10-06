@@ -939,8 +939,8 @@ ten-thousandth of the guest's time.
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and seventeen real cases, with one more that is not an operation
-but a whole validation, `codemeta-validate`: creating and destroying a context, a
+was taken on, and seventeen real cases, sixteen operations and one whole validation,
+`codemeta-validate`. The operations are: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
 poll's slow path through four handlers (one in each phase), a post to a port, a push
 and pop of a guest frame, the engine-aware poll's fast path, a walk of
@@ -949,9 +949,9 @@ entered and left, a fuel scope opened, charged and closed, the enumeration of th
 roots of sixteen frames (reported per frame), a snapshot taken of a context
 holding one 8 KiB blob (and released), the restore of it, and one profiler sample
 at depth one and at depth thirty-two (a request posted, then the poll that takes
-it). `codemeta-validate` validates a code-metadata table of 100 sites with 1,000 live
-slots and 1,000 derived pointers each, and one of 20,000 sites of 20,000
-functions; its unit is one validation of both.
+it). `codemeta-validate` is the seventeenth: it validates a code-metadata
+table of 100 sites with 1,000 live slots and 1,000 derived pointers each, and
+one of 20,000 sites of 20,000 functions; its unit is one validation of both.
 
 No budget is asserted, so nothing fails if a figure moves; the spine says a
 budget is recorded once a first measurement of a real case exists, and these are
