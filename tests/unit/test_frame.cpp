@@ -268,7 +268,9 @@ TEST(FrameWalk, AFrameKeptPastTheResumeCannotBeReadThrough) {
   char buf[8];
   size_t len;
   EXPECT_EQ(grcore_frame_inspect(&frames[0], 0, buf, 8, &len), GRCORE_ERR_INVALID);
-  GRCORE_FrameWalk walk = {w.ctx, w.frames.inner, 0};
+  GRCORE_FrameWalk walk = {};
+  walk.context = w.ctx;
+  walk.next = w.frames.inner;
   GRCORE_AbstractFrame f;
   EXPECT_FALSE(grcore_frame_walk_next(&walk, &f));
 }

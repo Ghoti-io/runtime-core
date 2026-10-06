@@ -14,7 +14,7 @@ B: groups, contexts, options, keys, the lifecycle and ownership rules,
 memory accounting, requests and ports, the four-phase poll, `run` and `resume`,
 the budgets with their fuel scopes, and root sources; and all of A: the guest
 stack, engine descriptors, the abstract frame, the frame walk and scopes,
-activation records, the unwinder and budget scopes.
+activation records (with the compiled-frame state), the unwinder, budget scopes, the code registry and the walk of compiled frames.
 
 ## Example
 
@@ -110,6 +110,8 @@ local name), and, in `b/` and `a/`:
 | `a/layout.h` | the JIT layout descriptor: the offset of the request word a compiled poll loads; `free` |
 | `a/code.h` | `GRCORE_Code`: reference-counted compiled code, an opaque handle with a payload and a release callback; the count is atomic because compiled code is shared between contexts (AD-22); `free` |
 | `a/deopt.h` | `grcore_deopt_read` and `grcore_deopt_write_back`: a native frame read into, and its reference slots written back from, an array of interpreter slots by a site's frame state; `free` |
+| `a/registry.h` | the per-context registry of compiled code by address range, entry slots (one word compiled code loads to call), and the retired list: code is released when no JIT activation record is open (AD-28); `free` |
+| `a/compiled.h` | the precise walk of compiled frames from an activation record's frame base and return address, by the frame layout contract (the base word holds the caller's base, the next the return address); a broken chain is an error and never skipped; `free` |
 | `a/codemeta.h` | the code-metadata format: stack maps and deopt records for compiled code, with a validator and a lookup; `free` |
 
 ```c

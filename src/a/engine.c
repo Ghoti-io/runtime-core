@@ -43,6 +43,7 @@
 static void guest_destroy(GRCORE_Context * context, void * value) {
   GRCORE_Stack * stack = value;
   const GRCORE_Allocator * a = grcore_context_allocator(context);
+  grcore_registry_destroy(stack);
   a->free_fn(a->ctx, stack->buffer);
   a->free_fn(a->ctx, (void *)stack->engines);
   a->free_fn(a->ctx, stack->activations);

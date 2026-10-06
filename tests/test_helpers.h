@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
@@ -673,5 +674,127 @@ inline const GRCORE_EngineDescriptor kConv = GRCORE_ENGINE_DESCRIPTOR_INIT(
     GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
     GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, conv_convert,
     conv_reverse);
+
+/* ---- Hand-built compiled code and frames (AD-28) ----------------------- */
+
+/* A region standing in for compiled code, with a stack map for each of its
+ * sites. Site i is at offset 16 * (i + 1); its identity is (100 + i, i); the
+ * frame it describes has this layout below the frame base:
+ *
+ *   -8   a reference                (VALUE in the stack map, and in the state)
+ *   -16  raw bits                   (RAW; looks like a reference when it is)
+ *   -24  a raw 32-bit integer       (RAW, representation I32)
+ *   -32  and further down           (in no map at all)
+ *
+ * `released` counts how often the code's release callback has run. */
+struct HandCode {
+  static constexpr size_t kSites = 64;
+  static constexpr size_t kFrameBytes = 48;
+  std::vector<unsigned char> bytes;
+  GRCORE_CodeLocation live[1];
+  GRCORE_CodeLocation state[3];
+  std::vector<GRCORE_CodeSite> sites;
+  GRCORE_CodeMeta meta;
+  GRCORE_Code * code = nullptr; // the handle; the creator's reference is below
+  bool creator = true;          // whether this fixture still holds that reference
+  /* The count lives on the heap and the release callback owns a share of it,
+   * so a context that outlives the fixture (a registry releasing at destroy)
+   * still has somewhere valid to count. */
+  std::shared_ptr<int> counter = std::make_shared<int>(0);
+  int & released = *counter;
+
+  HandCode() : bytes(16 * (kSites + 2)) {
+    live[0] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_VALUE, -8, GRCORE_REPR_BITS};
+    state[0] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_VALUE, -8, GRCORE_REPR_BITS};
+    state[1] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -16, GRCORE_REPR_BITS};
+    state[2] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -24, GRCORE_REPR_I32};
+    for (size_t i = 0; i < kSites; i++) {
+      GRCORE_CodeSite site{};
+      site.code_offset = static_cast<uint32_t>(16 * (i + 1));
+      site.kind = GRCORE_SITE_GC_POINT_CALL;
+      site.identity = GRCORE_PollIdentity{100 + i, i};
+      site.live = live;
+      site.live_count = 1;
+      site.frame_state = state;
+      site.frame_state_count = 3;
+      sites.push_back(site);
+    }
+    meta = {};
+    meta.version = GRCORE_CODEMETA_FORMAT_VERSION;
+    meta.frame_bytes = kFrameBytes;
+    meta.code_bytes = static_cast<uint32_t>(bytes.size());
+    meta.site_count = sites.size();
+    meta.sites = sites.data();
+    EXPECT_EQ(grcore_code_create(nullptr, new std::shared_ptr<int>(counter),
+                  [](void * payload) {
+                    auto * share = static_cast<std::shared_ptr<int> *>(payload);
+                    ++**share;
+                    delete share;
+                  },
+                  &code),
+        GRCORE_OK);
+  }
+  HandCode(const HandCode &) = delete;
+  HandCode & operator=(const HandCode &) = delete;
+  ~HandCode() { give_up(); }
+  /* Drops the fixture's own reference, so that what the registry and the slots
+   * hold is all there is. `code` stays a valid handle while any of them does. */
+  void give_up() {
+    if (creator) {
+      creator = false;
+      grcore_code_release(code);
+    }
+  }
+  uintptr_t start() const { return reinterpret_cast<uintptr_t>(bytes.data()); }
+  size_t size() const { return bytes.size(); }
+  /* The return address of a call at site i. */
+  uintptr_t at(size_t site) const { return start() + 16 * (site + 1); }
+  GRCORE_Result add_to(GRCORE_Context * c, GRCORE_EngineId engine) {
+    return grcore_code_register(c, engine, code, start(), size(), &meta);
+  }
+};
+
+/* Words standing in for a native stack, with frames built in them. A frame is
+ * eight words: words 0..5 are what lies below the base, word 6 is the base
+ * (holding the caller's base) and word 7 the return address. Frames are laid
+ * out from low to high, innermost first, so each caller is above its callee. */
+struct HandStack {
+  static constexpr size_t kFrameWords = 8;
+  std::vector<uint64_t> words;
+  explicit HandStack(size_t frames, size_t spare_words = 0)
+      : words(frames * kFrameWords + spare_words, 0) {}
+  uintptr_t base_at(size_t word) { return reinterpret_cast<uintptr_t>(&words[word + 6]); }
+  uintptr_t lo() { return reinterpret_cast<uintptr_t>(words.data()); }
+  uintptr_t hi() { return reinterpret_cast<uintptr_t>(words.data() + words.size()); }
+  /* The reference and the look-alike a frame holds, in a way that tells the
+   * frames apart: `tag` is the frame's number. */
+  static uint64_t ref_of(size_t tag) { return 0x100000 + tag * 0x10; }
+  static uint64_t trap_of(size_t tag) { return 0x900000 + tag * 0x10; }
+  /* Builds `n` frames starting at word `first`, the k-th stopped at site
+   * `site0 + k` of `code`. The last frame's return address is `entry` and its
+   * base word `last_caller`. Returns the bases, innermost first. */
+  std::vector<uintptr_t> build(HandCode & code, size_t first, size_t n,
+      size_t site0, uintptr_t entry, uintptr_t last_caller = 0) {
+    std::vector<uintptr_t> bases;
+    for (size_t k = 0; k < n; k++) {
+      size_t w = first + k * kFrameWords;
+      size_t tag = site0 + k;
+      words[w + 5] = ref_of(tag);
+      words[w + 4] = trap_of(tag);       // raw, and a value no frame holds as a reference
+      words[w + 3] = 7 + tag;            // an I32
+      words[w + 2] = trap_of(tag) + 1;   // outside every map
+      words[w + 1] = trap_of(tag) + 2;
+      words[w + 0] = trap_of(tag) + 3;
+      bases.push_back(base_at(w));
+    }
+    for (size_t k = 0; k < n; k++) {
+      size_t w = first + k * kFrameWords;
+      bool last = k + 1 == n;
+      words[w + 6] = last ? last_caller : bases[k + 1];
+      words[w + 7] = last ? entry : code.at(site0 + k + 1);
+    }
+    return bases;
+  }
+};
 
 #endif /* GHOTI_IO_GRCORE_TEST_HELPERS_H */

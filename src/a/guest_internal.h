@@ -32,7 +32,9 @@
 #include <ghoti.io/runtime-core/macros.h>
 
 #include <ghoti.io/runtime-core/a/activation.h>
+#include <ghoti.io/runtime-core/a/compiled.h>
 #include <ghoti.io/runtime-core/a/engine.h>
+#include <ghoti.io/runtime-core/a/registry.h>
 #include <ghoti.io/runtime-core/a/frame.h>
 #include <ghoti.io/runtime-core/a/stack.h>
 #include <ghoti.io/runtime-core/b/key.h>
@@ -72,6 +74,10 @@ typedef struct GRCORE_FrameHeader {
   uint32_t tag;         ///< Derived from the frame's own offset.
 } GRCORE_FrameHeader;
 
+/** @brief The registry, entry slots and retired list of one context
+ *   (registry.c). */
+typedef struct GRCORE_CodeRegistry GRCORE_CodeRegistry;
+
 /** @brief One activation record, as the stack keeps it. */
 typedef struct GRCORE_ActivationRecord {
   uint64_t id;            ///< From the stack's serial; never reused.
@@ -81,6 +87,8 @@ typedef struct GRCORE_ActivationRecord {
   size_t base_frames;     ///< The frame count when it was entered.
   uintptr_t lo;           ///< The C segment, or both zero.
   uintptr_t hi;
+  uintptr_t frame_base;   ///< Innermost compiled frame's base; zero for none.
+  uintptr_t return_address; ///< Where that frame is stopped (AD-28).
 } GRCORE_ActivationRecord;
 
 /** @brief One budget scope A opened, as the stack keeps it. */
@@ -111,6 +119,11 @@ struct GRCORE_Stack {
   GRCORE_ScopeRecord * scopes;
   size_t scope_count;
   size_t scope_capacity;
+  /* Compiled code (AD-28): the registry, entry slots and retired list, made on
+   * first use, and how many JIT activation records are open, which is what
+   * decides when retired code may be released. */
+  GRCORE_CodeRegistry * registry;
+  size_t jit_live;
 };
 
 /* ---- Reading a descriptor ------------------------------------------------
@@ -179,6 +192,19 @@ bool grcore_stack_hook_frame(const GRCORE_Stack * stack, GRCORE_FrameRef ref,
  *   `target` remain. */
 GRCORE_Result grcore_unwind_frames(
     GRCORE_Stack * stack, size_t target, size_t * popped);
+
+/** @brief Releases the retired code once no JIT record is open (registry.c).
+ *   Called when the last one leaves. */
+void grcore_registry_release_retired(GRCORE_Stack * stack);
+
+/** @brief Releases everything the registry holds, retired or not, and frees
+ *   it. For the context's destruction only. */
+void grcore_registry_destroy(GRCORE_Stack * stack);
+
+/** @brief Finds the registered code containing `address`, retired or not
+ *   (registry.c). */
+bool grcore_registry_find(const GRCORE_Stack * stack, uintptr_t address,
+    GRCORE_CodeRange * out);
 
 /** @brief Leaves the top activation, whatever the stack's state: gives back
  *   its native depth and nesting. Returns false if there is none. */

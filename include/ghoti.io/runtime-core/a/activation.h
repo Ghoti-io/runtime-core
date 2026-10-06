@@ -99,6 +99,8 @@ typedef struct GRCORE_ActivationInfo {
   size_t base_frame_count;    ///< Guest frames on the stack when it began.
   uintptr_t segment_lo;       ///< The C segment, or zero.
   uintptr_t segment_hi;       ///< One past it, or zero.
+  uintptr_t frame_base;       ///< Innermost compiled frame's base, or zero.
+  uintptr_t return_address;   ///< Where that frame is stopped, or zero.
 } GRCORE_ActivationInfo;
 
 /**
@@ -179,6 +181,35 @@ GRCORE_API GRCORE_Result grcore_activation_info(const GRCORE_Stack * stack,
  */
 GRCORE_API GRCORE_Result grcore_activation_top(
     const GRCORE_Stack * stack, GRCORE_ActivationRef * out_ref);
+
+/**
+ * @brief Records, or clears, the innermost compiled frame under a record
+ *   (AD-28).
+ *
+ * Compiled code stores these before it calls anything that can reach a GC
+ * point (a native, the poll's slow path), so that the walk in
+ * `a/compiled.h` can find every compiled frame from here. `frame_base` is the
+ * frame base of the innermost compiled frame and `return_address` the address
+ * in its code that the call returns to, which names the site (the stack map).
+ * A record with a non-zero `frame_base` starts a compiled run; zero in both
+ * clears the state, which a record that pauses, or whose compiled frames have
+ * been rebuilt or unwound, must do. Nothing is checked here: a base that is
+ * not a frame is found by the walk, which reports a broken chain.
+ *
+ * The record, and the JIT record in particular, is also what keeps retired
+ * code alive (`a/registry.h`): code retired while a JIT record is open is
+ * released when the last one is left.
+ *
+ * @param stack The stack. The caller must own its context.
+ * @param ref An open record, not necessarily the innermost.
+ * @param frame_base The frame base, or zero.
+ * @param return_address The return address, or zero.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL, a non-owner, a
+ *   stale or forged reference, or a zero `frame_base` with a non-zero
+ *   `return_address`.
+ */
+GRCORE_API GRCORE_Result grcore_activation_set_compiled(GRCORE_Stack * stack,
+    GRCORE_ActivationRef ref, uintptr_t frame_base, uintptr_t return_address);
 
 #ifdef __cplusplus
 }

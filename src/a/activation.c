@@ -86,6 +86,11 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   rec->base_frames = stack->frame_count;
   rec->lo = segment == NULL ? 0 : segment->lo;
   rec->hi = segment == NULL ? 0 : segment->hi;
+  rec->frame_base = 0;
+  rec->return_address = 0;
+  if (kind == GRCORE_ACTIVATION_JIT) {
+    stack->jit_live++;
+  }
   out_ref->id = rec->id;
   return GRCORE_OK;
 }
@@ -100,6 +105,11 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
   }
   if (rec.nested) {
     grcore_context_nested_leave(stack->context);
+  }
+  if (rec.kind == GRCORE_ACTIVATION_JIT && --stack->jit_live == 0) {
+    /* No compiled frame can be on the native stack now, so nothing can return
+     * into retired code (AD-28). */
+    grcore_registry_release_retired(stack);
   }
   return true;
 }
@@ -137,6 +147,8 @@ static void fill_info(
   out->base_frame_count = rec->base_frames;
   out->segment_lo = rec->lo;
   out->segment_hi = rec->hi;
+  out->frame_base = rec->frame_base;
+  out->return_address = rec->return_address;
 }
 
 GRCORE_Result grcore_activation_at(const GRCORE_Stack * stack, size_t index,
@@ -169,4 +181,21 @@ GRCORE_Result grcore_activation_top(
   }
   out_ref->id = stack->activations[stack->activation_count - 1].id;
   return GRCORE_OK;
+}
+
+GRCORE_Result grcore_activation_set_compiled(GRCORE_Stack * stack,
+    GRCORE_ActivationRef ref, uintptr_t frame_base, uintptr_t return_address) {
+  if (!grcore_stack_owned(stack) || ref.id == 0 ||
+      (frame_base == 0 && return_address != 0)) {
+    return GRCORE_ERR_INVALID;
+  }
+  for (size_t i = stack->activation_count; i > 0; i--) {
+    GRCORE_ActivationRecord * rec = &stack->activations[i - 1];
+    if (rec->id == ref.id) {
+      rec->frame_base = frame_base;
+      rec->return_address = return_address;
+      return GRCORE_OK;
+    }
+  }
+  return GRCORE_ERR_INVALID;
 }

@@ -788,6 +788,121 @@ heap during the rebuild (a rebuild could then fail or collect, with the frame
 half raw); and bumping the format version (nothing outside the tree to protect,
 and the version tests would then measure nothing).
 
+## A, part 4: the precise walk of compiled frames (AD-17, AD-28, CAP-2)
+
+Compiled code calling compiled code leaves frames on the native stack that no
+guest stack records, and the collector, the debugger and the frame differential
+must still see every one of them precisely at every GC point. Before this part
+a frame base was a caller-supplied pointer, an activation record held neither
+a frame base nor a return address, nothing mapped a return address to compiled
+code, and nothing kept code alive while a frame returned into it. The new
+headers are `a/registry.h` and `a/compiled.h`; `a/activation.h`, `a/frame.h`
+and A's root source gain what they need. All are `free`; the metadata format
+version stays 1 and `BITS`-only and interpreter-only behaviour is unchanged
+(a record that carries no compiled state is a record that never did).
+
+**The frame layout contract.** The one thing the core trusts about a compiled
+frame, for every backend's internal calling convention: the word at the frame's
+base holds the caller's frame base, and the word after it the return address
+(`rbp` on x86-64, `x29` with the saved link on arm64). The frame lies below its
+base, as `a/codemeta.h` already says. A frame is found from a return address
+inside registered code; its stack map is `grcore_codemeta_find` at the offset
+of that address. Nothing unwinds natively through a compiled frame, and nothing
+else about a frame (its size, its saved registers, its alignment padding) is
+read.
+
+**The registry** (`a/registry.h`) is per context: a sorted array of
+`[start, end)` ranges, each with the engine whose frames the code runs, the
+code's counted reference and its table, searched by bisection (O(log n) from a
+return address to the code). Ranges do not overlap, and registering one that
+does is refused with nothing changed. The table is validated against the range's
+size at registration. It lives with A's guest state, so a context needs an
+engine before it can hold code. Only the owner thread writes it; a collector
+reads it at a poll on that thread.
+
+**Entry slots.** A slot is one word, `entry`, that compiled code loads to call
+a function: the address of its compiled entry, or zero. The slot's memory does
+not move until the context is destroyed, so compiled code may embed its address.
+Setting a slot takes a counted reference to the code; clearing it zeroes the
+word first, so no later call goes through it.
+
+**Code lifetime and the retired list.** The registry and each slot hold a
+counted reference. Clearing a slot, replacing its code or unregistering a range
+does not release that reference while a compiled frame may return into the code;
+it moves to the *retired list*, which is released when the context has no open
+`GRCORE_ACTIVATION_JIT` record (a counter kept by `grcore_activation_enter` and
+the one place a record is dropped, so an unwind releases it too). With none
+open the reference is released at once. A retired range is still found by
+`grcore_code_lookup` (it says it is retired), because a frame that returns into
+it must still be walked, and its addresses are not given to new code until it is
+released. Clearing a slot allocates nothing: the node that carries the retired
+reference is made when the slot takes the code, so discarding code cannot fail
+for want of memory. Everything is released at context destruction whatever is
+open.
+
+**The record's compiled state.** An activation record may carry a frame base
+and a return address (`grcore_activation_set_compiled`; `enter` keeps its
+signature, and the fields are appended to `GRCORE_ActivationInfo`): the base of
+the innermost compiled frame under that record and the address in its code that
+it is stopped at. Compiled code stores them before a native call or a poll's
+slow path. Zero in both clears it, which a record that pauses or whose frames
+were rebuilt must do; the walk reads native memory and so is valid only while
+those frames are on the stack.
+
+**The walk** (`a/compiled.h`) starts at the innermost record that carries
+compiled state. A frame's code is found from its return address, its site from
+the offset in that code; the caller's base and return address are the two words
+at the frame's base. A return address in registered code continues the run; one
+in no registered code is the entry from the interpreter, which ends it, and the
+walk goes on to the next record outward that carries state (a compiled run under
+a nested activation). It checks that each caller base is word-aligned, above its
+callee's and, when the record has a C segment, inside it; that the innermost
+return address is in code at a site; and that runs ascend. **A broken chain is
+never skipped.** `grcore_compiled_walk_next` returns `GRCORE_CWALK_BROKEN` with a
+reason and stays broken, after yielding every good frame before the break. The
+frame walk stops and says so (`grcore_frame_walk_broken`). Root enumeration has
+no result channel, so it prints the reason and aborts: a skipped frame is a
+missed root, which a collector turns into a live object freed, and stopping is
+cheaper than that.
+
+**Roots.** A's root source reports each VALUE slot of each compiled frame once,
+as the address of the native slot, so a moving collector writes through it; only
+what the site's stack map names is reported, so a raw word that looks like a
+reference, an `I32` or an unmapped word never is, and nothing in a compiled
+frame is scanned conservatively. Compiled frames are placed among the guest
+frames: a record's run comes before the guest frames that were on the stack when
+the record was entered (`base_frames`). A conservative range (a record's C
+segment) is reported with every compiled frame's extent cut out of it (from the
+base less the code's `frame_bytes` through the two saved words), so a segment
+that is drawn too wide, or that spans its own record's frames, still scans only
+the C words between them.
+
+**The abstract frame.** The frame walk interleaves compiled frames with the
+interpreter frames in the same order. A compiled frame carries its engine and
+descriptor (from the registry), the identity and location of its site, its
+native base and its site, and no guest frame: its `frame` reference is null and
+the `stack.h` accessors refuse it. `grcore_frame_slot` and the new
+`grcore_frame_slot_tagged` read its slots by the site's frame state, as they are
+in the native frame with their representation, converting nothing (a counting
+conversion in the tests stays at zero); a dead slot reads as raw zero. It has no
+scopes to ask the engine about. Pairing a compiled frame with the guest frame a
+compiled call pushes (CAP-1) is the call story's to decide; this part gives each
+its own place, so that story can decide it with the walk in hand.
+
+Rejected: **a shadow stack of frame records**, pushed by every compiled call
+(a store per call on the hot path of the very feature that exists to make calls
+cheap, and a second source of truth that can drift from the real stack);
+**scanning compiled frames conservatively** (AD-17 forbids it, a moving
+collector could not update what it cannot prove is a reference, and an `I32` or
+a spilled raw word would pin garbage); **a global registry shared by all
+contexts** (a shared structure written on every compile and read at every poll
+needs a lock or a hazard scheme, whereas under AD-22 each context finding code
+by its own registry makes the owner thread the only writer); and **patching the
+return address** to a stub that pops a side record (which breaks a return
+predictor on every call and returns, and means a native unwinder, a profiler or a
+debugger reading the stack sees addresses in no registered code). The walk costs
+one bisection and two loads per compiled frame, and only at a GC point.
+
 ## B, part 3: context snapshots
 
 A snapshot (`b/snapshot.h`) is the first thing in this library that outlives

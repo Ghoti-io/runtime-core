@@ -46,6 +46,8 @@
 
 #include <ghoti.io/runtime-core/macros.h>
 
+#include <ghoti.io/runtime-core/a/codemeta.h>
+#include <ghoti.io/runtime-core/a/compiled.h>
 #include <ghoti.io/runtime-core/a/engine.h>
 #include <ghoti.io/runtime-core/a/stack.h>
 #include <ghoti.io/runtime-core/b/context.h>
@@ -73,13 +75,32 @@ struct GRCORE_AbstractFrame {
   size_t slot_count;                       ///< How many slots.
   size_t depth;                            ///< Zero for the innermost frame.
   GRCORE_FrameRef frame;                   ///< The frame, for stack.h.
+  /**
+   * The base of a compiled frame on the native stack (AD-28), or zero for an
+   * interpreter frame. A compiled frame has no guest frame behind it: `frame`
+   * is the null reference, the stack.h accessors refuse it, and its slots are
+   * read through ::grcore_frame_slot and ::grcore_frame_slot_tagged, which read
+   * the native frame by `site`, as they were, with no conversion.
+   */
+  uintptr_t native_base;
+  /** The site a compiled frame is stopped at (its stack map and frame state);
+   *  NULL for an interpreter frame. Valid while the code is registered. */
+  const GRCORE_CodeSite * site;
 };
 
-/** @brief A walk in progress, innermost frame first. */
+/**
+ * @brief A walk in progress, innermost frame first. The members after `depth`
+ *   are the walk's own; treat them as opaque.
+ */
 typedef struct GRCORE_FrameWalk {
   const GRCORE_Context * context; ///< The context being walked.
   GRCORE_FrameRef next;           ///< The next frame; offset zero at the end.
   size_t depth;                   ///< The depth the next frame gets.
+  GRCORE_CompiledWalk compiled;   ///< The compiled frames, merged in.
+  GRCORE_CompiledFrame pending;   ///< The next compiled frame, if `has_pending`.
+  size_t remaining;               ///< Guest frames not yet yielded.
+  bool has_pending;
+  bool broken;                    ///< The compiled chain is broken.
 } GRCORE_FrameWalk;
 
 /**
@@ -106,7 +127,27 @@ GRCORE_API bool grcore_frame_walk_next(
     GRCORE_FrameWalk * walk, GRCORE_AbstractFrame * out_frame);
 
 /**
+ * @brief Whether a walk stopped because a chain of compiled frames is broken
+ *   (`a/compiled.h`), rather than at the outermost frame.
+ *
+ * The walk never skips a compiled frame: when the chain breaks it yields what
+ * it had and then returns false, and this says that it was a break.
+ *
+ * @param walk The walk.
+ * @param out_reason Receives a static string naming the fault; may be NULL.
+ *   Written only when this returns true.
+ * @return True if the walk is broken.
+ */
+GRCORE_API bool grcore_frame_walk_broken(
+    const GRCORE_FrameWalk * walk, const char ** out_reason);
+
+/**
  * @brief Reads a slot: its kind, as the engine declares it, and its bits.
+ *
+ * For a compiled frame the kind is the one its site's frame state gives the
+ * location (a `DEAD` one is ::GRCORE_SLOT_RAW, zero) and the bits are the
+ * native word as it is, whatever its representation (use
+ * ::grcore_frame_slot_tagged to see that). Nothing is converted.
  *
  * @param frame The frame.
  * @param index From zero to the slot count minus one.
@@ -118,6 +159,23 @@ GRCORE_API bool grcore_frame_walk_next(
  */
 GRCORE_API GRCORE_Result grcore_frame_slot(const GRCORE_AbstractFrame * frame,
     size_t index, GRCORE_SlotKind * out_kind, uint64_t * out_value);
+
+/**
+ * @brief ::grcore_frame_slot, also giving the slot's representation (AD-27).
+ *
+ * @param frame The frame.
+ * @param index From zero to the slot count minus one.
+ * @param out_kind Receives the kind, or may be NULL.
+ * @param out_value Receives the bits, or may be NULL.
+ * @param out_representation Receives the representation, or may be NULL: what
+ *   the frame state says the word is for a compiled frame, and
+ *   ::GRCORE_REPR_BITS for an interpreter frame. Each is written only on
+ *   success.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID as for ::grcore_frame_slot.
+ */
+GRCORE_API GRCORE_Result grcore_frame_slot_tagged(
+    const GRCORE_AbstractFrame * frame, size_t index, GRCORE_SlotKind * out_kind,
+    uint64_t * out_value, GRCORE_Representation * out_representation);
 
 /**
  * @brief Renders a slot as its engine's inspector does.
@@ -137,7 +195,8 @@ GRCORE_API GRCORE_Result grcore_frame_inspect(const GRCORE_AbstractFrame * frame
  * @brief How many scopes the frame has.
  *
  * @param frame The frame.
- * @return The count; zero for NULL, an engine with no scope interface, or an
+ * @return The count; zero for NULL, an engine with no scope interface, a
+ *   compiled frame (it has no guest frame to ask the engine about), or an
  *   unreadable context.
  */
 GRCORE_API size_t grcore_frame_scope_count(const GRCORE_AbstractFrame * frame);

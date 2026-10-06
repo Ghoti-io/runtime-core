@@ -53,10 +53,12 @@
 #include <ghoti.io/runtime-core/a/budget_scope.h>
 #include <ghoti.io/runtime-core/a/code.h>
 #include <ghoti.io/runtime-core/a/codemeta.h>
+#include <ghoti.io/runtime-core/a/compiled.h>
 #include <ghoti.io/runtime-core/a/deopt.h>
 #include <ghoti.io/runtime-core/a/engine.h>
 #include <ghoti.io/runtime-core/a/frame.h>
 #include <ghoti.io/runtime-core/a/layout.h>
+#include <ghoti.io/runtime-core/a/registry.h>
 #include <ghoti.io/runtime-core/a/stack.h>
 #include <ghoti.io/runtime-core/a/unwind.h>
 #include <ghoti.io/runtime-core/b/budget.h>
