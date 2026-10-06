@@ -105,7 +105,11 @@ GRCORE_Result grcore_run(GRCORE_Context * context, GRCORE_EntryFn entry,
   context->entry_state = state;
   begin_run(context);
   grcore_context_transition(context, GRCORE_CONFIG_RUNNING);
-  return settle(context, entry(context, state), out_outcome);
+  /* The native-stack limit is measured from here (AD-28). */
+  grcore_context_native_limit_here(context);
+  GRCORE_Result r = settle(context, entry(context, state), out_outcome);
+  context->native_limit = 0; /* it names a stack nobody is running on now */
+  return r;
 }
 
 GRCORE_Result grcore_resume(
@@ -121,8 +125,12 @@ GRCORE_Result grcore_resume(
   grcore_context_clear_edge_requests(context);
   begin_run(context);
   grcore_context_transition(context, GRCORE_CONFIG_RUNNING);
-  return settle(context, context->entry(context, context->entry_state),
+  /* A resume may be on another thread, and so on another native stack. */
+  grcore_context_native_limit_here(context);
+  GRCORE_Result r = settle(context, context->entry(context, context->entry_state),
       out_outcome);
+  context->native_limit = 0;
+  return r;
 }
 
 GRCORE_Result grcore_context_wait(

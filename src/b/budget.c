@@ -141,6 +141,35 @@ uint64_t grcore_context_memory_refusals(const GRCORE_Context * context) {
   return context == NULL ? 0 : grcore_counting_refusals(&context->counting);
 }
 
+GRCORE_Result grcore_context_native_limit_set(
+    GRCORE_Context * context, uintptr_t sp) {
+  if (context == NULL || !grcore_context_owned_by_caller(context)) {
+    return GRCORE_ERR_INVALID;
+  }
+  uint64_t bytes = grcore_options_get_native_stack_bytes(context->options);
+  context->native_limit =
+      bytes == GRCORE_UNLIMITED || bytes >= sp ? 0 : sp - (uintptr_t)bytes;
+  return GRCORE_OK;
+}
+
+/* Not inlined, so that the address it takes is a frame below its caller's. */
+#if defined(__GNUC__)
+__attribute__((noinline))
+#endif
+GRCORE_Result grcore_context_native_limit_here(GRCORE_Context * context) {
+  volatile char here = 0;
+  return grcore_context_native_limit_set(context, (uintptr_t)&here);
+}
+
+uintptr_t grcore_context_native_limit(const GRCORE_Context * context) {
+  return context == NULL ? 0 : context->native_limit;
+}
+
+uint64_t grcore_context_native_stack_bytes(const GRCORE_Context * context) {
+  return context == NULL ? GRCORE_UNLIMITED
+                         : grcore_options_get_native_stack_bytes(context->options);
+}
+
 GRCORE_Result grcore_context_enter_depth(
     GRCORE_Context * context, GRCORE_DepthKind kind) {
   if (context == NULL || (unsigned)kind > GRCORE_DEPTH_NATIVE) {

@@ -1210,10 +1210,6 @@ TEST(CompiledFrame, AContextWithNoCompiledStateWalksExactlyAsBefore) {
   }
 }
 
-int main(int argc, char ** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}
 
 /* ---- The walk-start cell (a/layout.h) ------------------------------------- */
 
@@ -1482,4 +1478,9 @@ TEST(PairedFrames, AFrameWalkWithAnExtraGuestFrameShowsItFirstAndThenThePairedOn
     EXPECT_EQ(frames[i].identity.function, 99u + i);
     EXPECT_EQ(frames[i].depth, i);
   }
+}
+
+int main(int argc, char ** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

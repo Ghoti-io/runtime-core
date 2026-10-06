@@ -53,6 +53,7 @@
 #include <ghoti.io/runtime-core/core.h>
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -70,6 +71,49 @@ typedef enum {
   GRCORE_DEPTH_GUEST = 0, ///< Guest call depth.
   GRCORE_DEPTH_NATIVE     ///< Native stack depth.
 } GRCORE_DepthKind;
+
+/**
+ * @brief Sets the native-stack limit word from the stack pointer `sp` and the
+ *   native-stack byte budget (AD-28).
+ *
+ * The limit is `sp` less the budget in bytes: the lowest address compiled code
+ * may let the native stack reach. Each callable compiled function compares its
+ * `rsp`, less its own frame, with this word in its prologue (`a/layout.h`
+ * states where it is), and if it would pass it deoptimizes the compiled chain
+ * at the call site and the interpreter continues. With no budget, or a budget
+ * larger than `sp`, the word is zero and nothing is ever refused.
+ *
+ * ::grcore_run and ::grcore_resume call this with their own stack pointer (a
+ * resume may be on another thread, with another stack), and so does the entry
+ * of a nested re-entry that finds the word unset. An engine that enters
+ * compiled code on a path the core does not see calls it too.
+ *
+ * @param context The context. The caller must own it.
+ * @param sp An address on the calling thread's native stack, at or just below
+ *   the base the budget is measured from.
+ * @return ::GRCORE_OK or ::GRCORE_ERR_INVALID for NULL or a non-owner.
+ */
+GRCORE_API GRCORE_Result grcore_context_native_limit_set(
+    GRCORE_Context * context, uintptr_t sp);
+
+/**
+ * @brief ::grcore_context_native_limit_set with the calling function's own
+ *   stack pointer.
+ */
+GRCORE_API GRCORE_Result grcore_context_native_limit_here(GRCORE_Context * context);
+
+/**
+ * @brief The native-stack limit word: the lowest address compiled code may let
+ *   the native stack reach; zero for none. Zero for NULL.
+ */
+GRCORE_API uintptr_t grcore_context_native_limit(const GRCORE_Context * context);
+
+/**
+ * @brief The native stack budget in bytes, as the context was made with.
+ *
+ * @return The budget; ::GRCORE_UNLIMITED if unset or `context` is NULL.
+ */
+GRCORE_API uint64_t grcore_context_native_stack_bytes(const GRCORE_Context * context);
 
 /**
  * @brief Charges fuel. Owner.

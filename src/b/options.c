@@ -46,6 +46,7 @@ struct GRCORE_Options {
   uint64_t memory_reserve;
   uint64_t guest_depth;
   uint64_t native_depth;
+  uint64_t native_stack_bytes;
   Entry * entries;
   size_t count;
 };
@@ -68,6 +69,7 @@ GRCORE_Result grcore_options_create(
   o->memory_reserve = GRCORE_DEFAULT_MEMORY_RESERVE;
   o->guest_depth = GRCORE_UNLIMITED;
   o->native_depth = GRCORE_UNLIMITED;
+  o->native_stack_bytes = GRCORE_UNLIMITED;
   o->entries = NULL;
   o->count = 0;
   *out_options = o;
@@ -118,6 +120,7 @@ uint64_t grcore_options_get_memory_reserve(const GRCORE_Options * options) {
 
 SETTER(guest_depth, guest_depth)
 SETTER(native_depth, native_depth)
+SETTER(native_stack_bytes, native_stack_bytes)
 
 static Entry * find(const GRCORE_Options * options, const GRCORE_Key * key) {
   for (size_t i = 0; i < options->count; i++) {
@@ -198,6 +201,7 @@ GRCORE_Result grcore_options_clone(const GRCORE_Options * source,
     o->memory_reserve = source->memory_reserve;
     o->guest_depth = source->guest_depth;
     o->native_depth = source->native_depth;
+    o->native_stack_bytes = source->native_stack_bytes;
     for (size_t i = 0; i < source->count; i++) {
       r = grcore_options_set_keyed(
           o, source->entries[i].key, source->entries[i].bytes,

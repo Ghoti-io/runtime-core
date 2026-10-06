@@ -140,6 +140,23 @@ GRCORE_API GRCORE_Result grcore_options_set_native_depth(
     GRCORE_Options * options, uint64_t depth);
 
 /**
+ * @brief Sets the native stack budget in bytes (AD-28).
+ *
+ * This is how far compiled code may let the native stack grow below where a
+ * run, a resume or a re-entry began (`b/budget.h`), measured in bytes of stack
+ * and not in frames. Running out deoptimizes the compiled chain and the
+ * interpreter continues, so it never gives a verdict of its own: only the
+ * guest-depth budget does. It is a total for compiled code and C code under
+ * it, so a budget must leave room for the helpers compiled code calls.
+ *
+ * @param options The options.
+ * @param bytes A byte count, or ::GRCORE_UNLIMITED for no limit.
+ * @return ::GRCORE_OK or ::GRCORE_ERR_INVALID for NULL options.
+ */
+GRCORE_API GRCORE_Result grcore_options_set_native_stack_bytes(
+    GRCORE_Options * options, uint64_t bytes);
+
+/**
  * @brief The fuel budget.
  *
  * @param options The options.
@@ -182,6 +199,15 @@ GRCORE_API uint64_t grcore_options_get_guest_depth(
  * @return The budget; ::GRCORE_UNLIMITED if unset or `options` is NULL.
  */
 GRCORE_API uint64_t grcore_options_get_native_depth(
+    const GRCORE_Options * options);
+
+/**
+ * @brief The native stack budget in bytes.
+ *
+ * @param options The options.
+ * @return The budget; ::GRCORE_UNLIMITED if unset or `options` is NULL.
+ */
+GRCORE_API uint64_t grcore_options_get_native_stack_bytes(
     const GRCORE_Options * options);
 
 /**

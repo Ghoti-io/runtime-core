@@ -102,6 +102,13 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
       return r;
     }
   }
+  /* A re-entry finds the native-stack limit set by the run it is inside; one
+   * that finds none (the host entered on a path the run did not see) sets it
+   * from here. */
+  if (kind == GRCORE_ACTIVATION_REENTRY && context->native_limit == 0 &&
+      grcore_context_native_stack_bytes(context) != GRCORE_UNLIMITED) {
+    grcore_context_native_limit_here(context);
+  }
   /* What compiled code recorded belongs to the record that is innermost now,
    * and the one being entered starts with none (AD-28). */
   (void)grcore_activation_absorb_cell(stack);
