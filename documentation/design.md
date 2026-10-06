@@ -911,6 +911,32 @@ two registry bisections (the frame's code, and its caller's, to see whether the
 run goes on), one search for the site and two loads per compiled frame, and
 only at a GC point.
 
+**Derived pointers and a collector that moves (AD-12, CAP-10).** The pass keeps
+a site's derived pointers consistent with their base. For each derived pointer
+it takes `delta = derived - base` from the two frame words as they are, parks
+the delta in the derived pointer's own slot, lets the visitor update the base in
+place, and then stores `base + delta` into the slot. The derived pointer is not
+reported to the visitor: it points into the middle of an object, which a
+collector's precise walk may not be handed. Nothing else reads the slot while
+the walk runs, so parking the delta in it needs no memory and no limit on how
+many derived pointers a site has. With a visitor that moves nothing, which is
+every collector today, the slot is written with the value it already had. The
+delta is taken from the words and not from the metadata's `delta`, so the pass
+preserves what the code holds, and a site whose code holds a different offset
+than it declared is not made worse by a move. A visitor with no `slot` function
+leaves the slot alone. runtime-heap's relocation torture (a test-only mode that
+moves every unpinned object at every collection) is what exercises this pass;
+`CompiledRoots.ADerivedPointerFollowsItsBaseAndKeepsItsDelta` exercises it with a
+visitor that moves every reference, and was seen to fail with the recomputation
+removed.
+
+Rejected: **reporting the derived pointer as a root of its own** (a precise walk
+would find an address that is not the start of an object, and a moving collector
+cannot update it without knowing its base); **recomputing from the metadata's
+`delta`** (the declared offset can differ from the held one, and the held one is
+what the code uses); and **a side array of deltas** (allocation in a pass that
+runs inside a collection, which must not fail).
+
 ## B, part 3: context snapshots
 
 A snapshot (`b/snapshot.h`) is the first thing in this library that outlives

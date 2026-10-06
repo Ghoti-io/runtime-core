@@ -693,6 +693,7 @@ struct HandCode {
   std::vector<unsigned char> bytes;
   GRCORE_CodeLocation live[2];
   GRCORE_CodeLocation state[4];
+  GRCORE_DerivedPointer derived[1];
   std::vector<GRCORE_CodeSite> sites;
   GRCORE_CodeMeta meta;
   GRCORE_Code * code = nullptr; // the handle; the creator's reference is below
@@ -704,9 +705,13 @@ struct HandCode {
   int & released = *counter;
 
   /* `raw_live` adds a RAW entry to the stack map (the validator allows one; it
-   * is never a root), `dead_slot` a fourth frame-state slot that is DEAD. */
-  explicit HandCode(bool raw_live = false, bool dead_slot = false)
+   * is never a root), `dead_slot` a fourth frame-state slot that is DEAD,
+   * `with_derived` a derived pointer at -32 (a word of the frame that no other
+   * entry names) whose base is the reference at -8, 16 bytes in. */
+  explicit HandCode(bool raw_live = false, bool dead_slot = false,
+      bool with_derived = false)
       : bytes(16 * (kSites + 2)) {
+    derived[0] = {-32, -8, 16};
     live[0] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_VALUE, -8, GRCORE_REPR_BITS};
     state[0] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_VALUE, -8, GRCORE_REPR_BITS};
     state[1] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -16, GRCORE_REPR_BITS};
@@ -720,6 +725,8 @@ struct HandCode {
       site.identity = GRCORE_PollIdentity{100 + i, i};
       site.live = live;
       site.live_count = raw_live ? 2 : 1;
+      site.derived = with_derived ? derived : nullptr;
+      site.derived_count = with_derived ? 1 : 0;
       site.frame_state = state;
       site.frame_state_count = dead_slot ? 4 : 3;
       sites.push_back(site);

@@ -37,12 +37,13 @@ const uintptr_t kOutside = reinterpret_cast<uintptr_t>(kOutsideBytes);
 struct CodeHolder {
   HandCode code;
   CodeHolder() = default;
-  CodeHolder(bool raw_live, bool dead_slot) : code(raw_live, dead_slot) {}
+  CodeHolder(bool raw_live, bool dead_slot, bool derived)
+      : code(raw_live, dead_slot, derived) {}
 };
 struct CWorld : CodeHolder, StackWorld {
   explicit CWorld(uint64_t fuel = GRCORE_UNLIMITED, bool raw_live = false,
-      bool dead_slot = false)
-      : CodeHolder(raw_live, dead_slot), StackWorld(fuel) {
+      bool dead_slot = false, bool derived = false)
+      : CodeHolder(raw_live, dead_slot, derived), StackWorld(fuel) {
     EXPECT_EQ(code.add_to(ctx, alpha), GRCORE_OK);
   }
 };
@@ -452,6 +453,80 @@ TEST(CompiledRoots, ARewriteBySomeoneWhoMovedTheObjectLandsInTheNativeFrame) {
   GRCORE_RootVisitor v2 = visitor_for(&again);
   ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v2), GRCORE_OK);
   EXPECT_EQ(again.values[7], HandStack::ref_of(7) + 0x7000);
+}
+
+/* ---- Derived pointers (AD-12, CAP-10) ----------------------------------- */
+
+namespace {
+/* A visitor that moves what it is shown the way a moving collector does:
+ * every reference becomes `value + shift`. It never sees the derived slot. */
+struct Mover {
+  uint64_t shift;
+  std::vector<uint64_t *> seen;
+};
+GRCORE_RootVisitor mover_for(Mover * m) {
+  GRCORE_RootVisitor v = {};
+  v.user = m;
+  v.slot = [](void * user, uint64_t * slot) {
+    auto * mv = static_cast<Mover *>(user);
+    mv->seen.push_back(slot);
+    *slot += mv->shift;
+  };
+  return v;
+}
+} // namespace
+
+TEST(CompiledRoots, ADerivedPointerFollowsItsBaseAndKeepsItsDelta) {
+  CWorld w(GRCORE_UNLIMITED, false, false, /*derived=*/true);
+  ASSERT_EQ(grcore_codemeta_validate(&w.code.meta, w.code.size(), nullptr), GRCORE_OK);
+  HandStack st(50);
+  set_up_run(w, st, 0, 50, 0);
+  for (size_t k = 0; k < 50; k++) {
+    // 16 bytes inside the object for most frames, and a different delta for
+    // some, since the pass must keep what the code holds and not what the
+    // metadata says.
+    st.words[k * 8 + 2] = HandStack::ref_of(k) + (k % 5 == 0 ? 40 : 16);
+  }
+  Mover mover{0x70000, {}};
+  GRCORE_RootVisitor v = mover_for(&mover);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  ASSERT_EQ(mover.seen.size(), 50u) << "the derived slot is not reported";
+  for (size_t k = 0; k < 50; k++) {
+    uint64_t base = HandStack::ref_of(k) + 0x70000;
+    EXPECT_EQ(st.words[k * 8 + 5], base) << k;
+    EXPECT_EQ(st.words[k * 8 + 2], base + (k % 5 == 0 ? 40 : 16)) << k;
+    // Nothing else moved.
+    EXPECT_EQ(st.words[k * 8 + 4], HandStack::trap_of(k));
+    EXPECT_EQ(st.words[k * 8 + 3], 7 + k);
+  }
+}
+
+TEST(CompiledRoots, ADerivedPointerIsRewrittenToTheSameValueWhenNothingMoves) {
+  CWorld w(GRCORE_UNLIMITED, false, false, /*derived=*/true);
+  HandStack st(4);
+  set_up_run(w, st, 0, 4, 0);
+  for (size_t k = 0; k < 4; k++) {
+    st.words[k * 8 + 2] = HandStack::ref_of(k) + 16;
+  }
+  Seen seen; // reads, writes nothing
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  for (size_t k = 0; k < 4; k++) {
+    EXPECT_EQ(st.words[k * 8 + 5], HandStack::ref_of(k));
+    EXPECT_EQ(st.words[k * 8 + 2], HandStack::ref_of(k) + 16);
+  }
+}
+
+TEST(CompiledRoots, AVisitorThatWantsOnlyRangesLeavesTheDerivedSlotAlone) {
+  CWorld w(GRCORE_UNLIMITED, false, false, /*derived=*/true);
+  HandStack st(2);
+  set_up_run(w, st, 0, 2, 0);
+  st.words[2] = 0x1234;
+  Seen seen;
+  seen.take_slots = false;
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  EXPECT_EQ(st.words[2], 0x1234u);
 }
 
 TEST(CompiledRoots, AMixedChainScansOnlyTheNativeSegmentConservatively) {

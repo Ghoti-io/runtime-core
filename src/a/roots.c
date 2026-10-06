@@ -56,14 +56,34 @@ static bool next_compiled(GRCORE_CompiledWalk * walk, GRCORE_CompiledFrame * out
 
 /* The words of a compiled frame the site's stack map names, as addresses the
  * visitor may write through. Nothing else in the frame is reported: a raw word
- * that looks like a reference is not one (AD-27). */
+ * that looks like a reference is not one (AD-27).
+ *
+ * A derived pointer (AD-12) is an interior pointer the site keeps beside its
+ * base. It is not reported: a collector that moves the base would leave it
+ * pointing into the old object. So its delta from the base is taken before the
+ * base is visited, parked in the derived pointer's own slot (nothing else
+ * reads that slot while the walk runs, and no memory is needed for a site with
+ * many of them), and the slot is rebuilt as the base's value afterwards plus
+ * that delta. The delta comes from the two words as they are, not from the
+ * metadata's `delta`, so what the code actually holds is what is preserved.
+ * When the visitor does not move anything, the slot is written with the value
+ * it already had. */
 static void visit_compiled(
     const GRCORE_CompiledFrame * cf, const GRCORE_RootVisitor * visitor) {
   if (visitor->slot == NULL) {
     return;
   }
-  for (size_t i = 0; i < cf->site->live_count; i++) {
-    const GRCORE_CodeLocation * loc = &cf->site->live[i];
+  const GRCORE_CodeSite * site = cf->site;
+  for (size_t i = 0; i < site->derived_count; i++) {
+    const GRCORE_DerivedPointer * d = &site->derived[i];
+    uint64_t * derived =
+        (uint64_t *)(void *)(cf->frame_base + (uintptr_t)(int64_t)d->slot);
+    const uint64_t * base =
+        (const uint64_t *)(void *)(cf->frame_base + (uintptr_t)(int64_t)d->base_slot);
+    *derived -= *base; /* wraps; the sum below wraps back */
+  }
+  for (size_t i = 0; i < site->live_count; i++) {
+    const GRCORE_CodeLocation * loc = &site->live[i];
     /* The validator allows a RAW entry in a stack map; a raw word is never a
      * root (AD-27), so only references are reported. */
     if (loc->kind != GRCORE_LOC_FRAME_SLOT || loc->slot_kind != GRCORE_SLOT_VALUE) {
@@ -72,6 +92,14 @@ static void visit_compiled(
     uint64_t * slot =
         (uint64_t *)(void *)(cf->frame_base + (uintptr_t)(int64_t)loc->value);
     visitor->slot(visitor->user, slot);
+  }
+  for (size_t i = 0; i < site->derived_count; i++) {
+    const GRCORE_DerivedPointer * d = &site->derived[i];
+    uint64_t * derived =
+        (uint64_t *)(void *)(cf->frame_base + (uintptr_t)(int64_t)d->slot);
+    const uint64_t * base =
+        (const uint64_t *)(void *)(cf->frame_base + (uintptr_t)(int64_t)d->base_slot);
+    *derived += *base;
   }
 }
 
