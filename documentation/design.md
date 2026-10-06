@@ -901,7 +901,9 @@ by its own registry makes the owner thread the only writer); and **patching the
 return address** to a stub that pops a side record (which breaks a return
 predictor on every call and returns, and means a native unwinder, a profiler or a
 debugger reading the stack sees addresses in no registered code). The walk costs
-one bisection and two loads per compiled frame, and only at a GC point.
+two registry bisections (the frame's code, and its caller's, to see whether the
+run goes on), one search for the site and two loads per compiled frame, and
+only at a GC point.
 
 ## B, part 3: context snapshots
 
