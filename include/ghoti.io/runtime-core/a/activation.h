@@ -131,11 +131,18 @@ GRCORE_API GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
  *
  * @param stack The stack. The caller must own its context.
  * @param ref The innermost record.
+ * A JIT record whose compiled frames were rebuilt into their guest frames
+ * (::grcore_compiled_rebuild) may be left with those frames still on the stack:
+ * the native frames only returned, and the guest frames above the record's base
+ * are the interpreter's to finish. For every other record the stack must be as
+ * it was when the record was entered.
+ *
  * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID with nothing changed for NULL,
  *   a non-owner, a stale or forged reference, a record that is not the
  *   innermost, a stack whose frame count is not the one the record began
- *   with (frames pushed since were not popped), or a budget scope opened
- *   since that has not been closed.
+ *   with (frames pushed since were not popped; for a rebuilt JIT record, fewer
+ *   than it began with), or a budget scope opened since that has not been
+ *   closed.
  */
 GRCORE_API GRCORE_Result grcore_activation_leave(
     GRCORE_Stack * stack, GRCORE_ActivationRef ref);

@@ -600,6 +600,7 @@ GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
   /* The frames are rebuilt; the native frames only return from here. */
   stack->activations[record].frame_base = 0;
   stack->activations[record].return_address = 0;
+  stack->activations[record].rebuilt = true;
   if (out_frames != NULL) {
     *out_frames = rebuilt;
   }

@@ -318,6 +318,43 @@ TEST(ChainRebuild, ARecordEnteredWithNoGuestFrameHasNothingToRebuildInto) {
   ASSERT_EQ(grcore_activation_leave(w.stack, rec), GRCORE_OK);
 }
 
+TEST(ChainRebuild, ARebuiltJitRecordMayBeLeftWithItsGuestFramesStillOnTheStack) {
+  RW w;
+  Chain c(w, 5);
+  // Before the rebuild the stack must be as it was at entry, as always.
+  EXPECT_EQ(grcore_activation_leave(w.stack, c.rec), GRCORE_ERR_INVALID);
+  ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
+  // The compiled frames only return now; the guest frames stay for the
+  // interpreter, so the record is left with four of them above its base.
+  EXPECT_EQ(grcore_stack_frame_count(w.stack), 5u);
+  EXPECT_EQ(grcore_activation_leave(w.stack, c.rec), GRCORE_OK);
+  EXPECT_EQ(grcore_activation_count(w.stack), 0u);
+  EXPECT_EQ(grcore_stack_frame_count(w.stack), 5u);
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(ChainRebuild, ARebuiltRecordStillRefusesToBeLeftWithFewerFramesThanItBeganWith) {
+  RW w;
+  Chain c(w, 3);
+  ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
+  // The interpreter popped the entry function's own guest frame: the record
+  // began with one, and none is left.
+  while (grcore_stack_frame_count(w.stack) > 0) {
+    ASSERT_EQ(grcore_stack_pop(w.stack), GRCORE_OK);
+  }
+  EXPECT_EQ(grcore_activation_leave(w.stack, c.rec), GRCORE_ERR_INVALID);
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(ChainRebuild, ARecordWhoseRebuildWasRefusedIsNotRebuiltAndKeepsTheStrictRule) {
+  RW w;
+  Chain c(w, 4, 3);
+  c.st.words[3 * 8 + 6] = 0; // a broken chain: the rebuild is refused
+  EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_ERR_CORRUPT);
+  EXPECT_EQ(grcore_activation_leave(w.stack, c.rec), GRCORE_ERR_INVALID);
+  grcore_unwind_all(w.stack, nullptr);
+}
+
 TEST(ChainRebuild, OnlyTheInnermostRunIsRebuiltAndTheOneUnderANativeIsKept) {
   RW w;
   // An outer run of three over a native and then an inner run of two.

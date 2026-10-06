@@ -89,6 +89,9 @@ typedef struct GRCORE_ActivationRecord {
   uintptr_t hi;
   uintptr_t frame_base;   ///< Innermost compiled frame's base; zero for none.
   uintptr_t return_address; ///< Where that frame is stopped (AD-28).
+  bool rebuilt;           ///< A JIT record whose compiled frames were rebuilt
+                          ///< into the guest frames above `base_frames`, which
+                          ///< stay for the interpreter to finish.
 } GRCORE_ActivationRecord;
 
 /** @brief One budget scope A opened, as the stack keeps it. */

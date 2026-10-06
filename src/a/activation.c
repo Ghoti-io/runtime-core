@@ -122,6 +122,7 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   rec->hi = segment == NULL ? 0 : segment->hi;
   rec->frame_base = 0;
   rec->return_address = 0;
+  rec->rebuilt = false;
   if (kind == GRCORE_ACTIVATION_JIT) {
     stack->jit_live++;
   }
@@ -162,7 +163,13 @@ GRCORE_Result grcore_activation_leave(
   }
   const GRCORE_ActivationRecord * top =
       &stack->activations[stack->activation_count - 1];
-  if (top->id != ref.id || stack->frame_count != top->base_frames) {
+  /* Guest frames pushed since the record was entered must have been popped,
+   * with one exception: a JIT record whose compiled frames were rebuilt into
+   * their guest frames (AD-28) leaves those frames on the stack for the
+   * interpreter to finish, because the compiled frames only returned. */
+  if (top->id != ref.id ||
+      (top->rebuilt ? stack->frame_count < top->base_frames
+                    : stack->frame_count != top->base_frames)) {
     return GRCORE_ERR_INVALID;
   }
   /* A scope opened inside this activation must be closed before it. */
