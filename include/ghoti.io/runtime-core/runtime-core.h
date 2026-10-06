@@ -36,8 +36,8 @@
  * A is complete for now too (`a/`: engine descriptors, the guest stack, the
  * abstract frame with its walk and scopes, activation records, the unwinder,
  * budget scopes, the code-metadata format and the JIT layout descriptor).
- * What comes next is the collector, the JIT and the
- * debugger, each in a library of its own.
+ * The collector, the JIT and the debugger are libraries of their own
+ * (`runtime-heap`, `runtime-jit` and `runtime-debug`), built on this one.
  */
 
 #ifndef GHOTI_IO_GRCORE_RUNTIME_CORE_H

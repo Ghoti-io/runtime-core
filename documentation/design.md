@@ -939,15 +939,52 @@ ten-thousandth of the guest's time.
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and sixteen real cases: creating and destroying a context, a
+was taken on, and seventeen real cases, with one more that is not an operation
+but a whole validation, `codemeta-validate`: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
-poll's slow path through one handler in each phase, a post to a port, a push
+poll's slow path through four handlers (one in each phase), a post to a port, a push
 and pop of a guest frame, the engine-aware poll's fast path, a walk of
 sixteen frames at a pause (reported per frame read), an activation record
-entered and left, a budget scope opened, charged and closed, and the
-enumeration of the roots of sixteen frames (reported per frame), a snapshot taken of a context holding one 8 KiB blob (and released), and the restore of it, and one profiler sample at depth one and at depth thirty-two (a request posted, then the poll that takes it). No budgets
-are recorded: the spine records them once a first measurement of a real case
-exists.
+entered and left, a fuel scope opened, charged and closed, the enumeration of the
+roots of sixteen frames (reported per frame), a snapshot taken of a context
+holding one 8 KiB blob (and released), the restore of it, and one profiler sample
+at depth one and at depth thirty-two (a request posted, then the poll that takes
+it). `codemeta-validate` validates a code-metadata table of 100 sites with 1,000 live
+slots and 1,000 derived pointers each, and one of 20,000 sites of 20,000
+functions; its unit is one validation of both.
+
+No budget is asserted, so nothing fails if a figure moves; the spine says a
+budget is recorded once a first measurement of a real case exists, and these are
+those measurements. They were taken with `make bench` on an Intel Core 7 150U
+(12 threads), gcc 14.2.0 `-O2 -g`, release, `-std=c17`, best of seven repeats,
+on 2026-10-05, against runtime-core `e1f0bd6` with this change. The machine was
+not idle: other sessions' builds held the load average between 4.6 and 6.3
+throughout, which is why the calibration case reads 1.73 ns a step here where
+runtime-jit and lang-tang recorded 1.1 to 1.4 on the same machine, and why the
+median of a few cases (keyed lookup, roots) sits well above the best. Read a
+figure against the calibration beside it, and re-measure on a quiet machine
+before treating any of them as a budget.
+
+| Case | Best of seven | Unit |
+| --- | --- | --- |
+| calibration | 1.73 ns | one xorshift step |
+| ctx-create | 104 ns | a context created and destroyed in a group |
+| count-malloc | 30.8 ns | a counting malloc and free pair |
+| keyed-lookup | 4.0 ns | `grcore_context_slot` for a registered key |
+| poll-fast | 1.54 ns | the poll with nothing pending |
+| poll-slow-4 | 104 ns | the poll through four handlers, one in each phase |
+| port-post | 17.1 ns | a post to a port |
+| stack-pushpop | 26.6 ns | a guest frame pushed and popped |
+| stack-poll | 7.87 ns | the engine-aware poll's fast path |
+| frame-walk | 31.0 ns | one frame read, in a walk of sixteen at a pause |
+| activation | 27.2 ns | an activation record entered and left |
+| fuel-scope | 51.5 ns | a fuel scope opened, charged and closed |
+| roots-16 | 12.9 ns | one frame, in an enumeration of the roots of sixteen |
+| snapshot-take | 318 ns | a snapshot of a context holding one 8 KiB blob, and its release |
+| snapshot-restore | 267 ns | the restore of that snapshot |
+| profile-sample-1 | 169 ns | one sample at depth one |
+| profile-sample-32 | 1.66 us | one sample at depth thirty-two |
+| codemeta-validate | 1.82 ms | one validation of both tables above |
 
 ## Continuous integration
 

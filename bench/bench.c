@@ -30,7 +30,9 @@
  * through four handlers, a post to a port, a push and pop of a guest frame,
  * the engine-aware poll's fast path, a walk of sixteen frames at a pause, an
  * activation record entered and left, a fuel scope opened, charged and closed,
- * and the enumeration of the roots of sixteen frames.
+ * the enumeration of the roots of sixteen frames, a snapshot taken and
+ * restored, a profiler sample at depth one and at depth thirty-two, and the
+ * validation of two code-metadata tables.
  *
  * The calibration case is a fixed amount of integer work that touches no
  * library code, run the same way every real case will be, so a figure from a
@@ -43,8 +45,9 @@
  *   bench --smoke   run every case once with a tiny workload (what `make
  *                   test` does); proves the harness builds, links and runs
  *
- * Numeric budgets are not recorded here. AD-26 records them once a first
- * measurement of a real case exists.
+ * Numeric budgets are not asserted here. The first measurement of every case,
+ * with the machine, compiler and flags it was taken on, is recorded in
+ * documentation/design.md, "Benchmarks" (AD-26).
  */
 
 /* clock_gettime(CLOCK_MONOTONIC) is POSIX, and -std=c17 hides it. A benchmark
