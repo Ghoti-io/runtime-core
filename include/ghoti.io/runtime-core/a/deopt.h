@@ -209,6 +209,41 @@ GRCORE_API size_t grcore_deopt_reservation_capacity(
     const GRCORE_DeoptReservation * reservation);
 
 /**
+ * @brief Adds `cells` to a reservation: what each compiled call does for its
+ *   callee (AD-28).
+ *
+ * A chain of compiled frames is rebuilt in one piece (::grcore_compiled_rebuild
+ * in `a/compiled.h`), so the cells it converts into must hold every frame's
+ * values at once. Each compiled call therefore extends the reservation by the
+ * callee's own maximum before the callee runs, so that the rebuild that a guard
+ * or a pause in the callee may start cannot fail for want of one. The memory is
+ * taken here, through the context's allocator, where a refusal can still be
+ * answered: the call site exits instead of making the call.
+ *
+ * @param context The context. The caller must own it.
+ * @param reservation The reservation.
+ * @param cells How many to add; zero is accepted and does nothing.
+ * @return `GRCORE_OK`; `GRCORE_ERR_INVALID` for a NULL argument, a non-owner or
+ *   a count that overflows; `GRCORE_ERR_LIMIT` or `GRCORE_ERR_OOM`, with the
+ *   reservation unchanged.
+ */
+GRCORE_API GRCORE_Result grcore_deopt_reservation_extend(GRCORE_Context * context,
+    GRCORE_DeoptReservation * reservation, size_t cells);
+
+/**
+ * @brief Gives back what ::grcore_deopt_reservation_extend added, once the call
+ *   it was for has returned.
+ *
+ * Never allocates or frees, so it cannot fail; the memory is kept for the next
+ * call. Retracting more than was added leaves the capacity at zero.
+ *
+ * @param reservation The reservation; NULL does nothing.
+ * @param cells How many to give back.
+ */
+GRCORE_API void grcore_deopt_reservation_retract(
+    GRCORE_DeoptReservation * reservation, size_t cells);
+
+/**
  * @brief Removes the root source and frees the reservation.
  *
  * The caller must own the context, as for ::grcore_deopt_reserve. **Release

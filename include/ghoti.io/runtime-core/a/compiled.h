@@ -97,6 +97,7 @@
 #include <ghoti.io/runtime-core/macros.h>
 
 #include <ghoti.io/runtime-core/a/codemeta.h>
+#include <ghoti.io/runtime-core/a/deopt.h>
 #include <ghoti.io/runtime-core/a/engine.h>
 #include <ghoti.io/runtime-core/a/stack.h>
 #include <ghoti.io/runtime-core/b/context.h>
@@ -188,6 +189,61 @@ GRCORE_API GRCORE_CompiledWalkStatus grcore_compiled_walk_next(
  * @return A static string; NULL if the walk is not broken.
  */
 GRCORE_API const char * grcore_compiled_walk_reason(const GRCORE_CompiledWalk * walk);
+
+/**
+ * @brief Rebuilds every compiled frame of the innermost run into its guest
+ *   frame (AD-27, AD-28).
+ *
+ * This is the one rebuild of a deoptimization in a chain: a failed guard, a
+ * pause, a breakpoint, a step, a native stack that would run out, an exit at a
+ * call site. It covers the compiled frames from the innermost down to the
+ * innermost activation record, which is the innermost record that carries a
+ * run. Each frame's guest frame already exists (every guest call pushed one),
+ * so nothing is inserted and no offset moves: the frame's frame-state
+ * locations are written into the guest frame's slots, in slot order. Pairing is
+ * as in ::grcore_compiled_guest_index: the run's outermost frame is the guest
+ * frame the record was entered with, and guest frames above the innermost
+ * compiled frame (a callee that was pushed and not yet entered) are left as
+ * they are. A `DEAD` location writes nothing: the guest frame keeps its own
+ * word.
+ *
+ * It converts in AD-27's two phases across the whole chain: every converting
+ * slot is first filled with null, then every raw value is converted into a
+ * cell of `reservation`, then the slots are written, so no frame is ever seen
+ * half raw. It therefore needs as many cells as the chain's frames have
+ * converting locations, which each compiled call provided by extending the
+ * reservation (::grcore_deopt_reservation_extend). Once the arguments are
+ * checked it allocates nothing, cannot fail and does not collect.
+ *
+ * Everything is checked before anything is written: that the chain walks, that
+ * each frame's guest frame is there, of its engine and function, with as many
+ * slots as the frame state; that the reservation is long enough; that the
+ * engine can convert what the chain holds. A refusal changes nothing.
+ *
+ * On success the record's compiled state, and the walk-start cell, are
+ * cleared: the frames are rebuilt, and the native frames are only going to
+ * return (every compiled call site returns `DEOPTED` through them, and nothing
+ * reaches a GC point on the way). The record stays open, because the code those
+ * frames return into must stay alive until it is left.
+ *
+ * @param context The context. The caller must own it.
+ * @param reservation The cells to convert into; NULL means none, which suffices
+ *   for a chain with no converting location.
+ * @param keep_frames How many guest frames survive: a frame whose guest frame
+ *   is at or above this index (zero for the outermost) is not rebuilt, because
+ *   an unwind that is about to pop it needs no conversion (AD-28). Pass
+ *   `SIZE_MAX` to rebuild every frame.
+ * @param out_frames Receives the number of frames rebuilt; may be NULL.
+ * @return ::GRCORE_OK, also when there is no compiled frame (zero are
+ *   rebuilt); ::GRCORE_ERR_INVALID for a NULL context, a non-owner, a frame
+ *   with no guest frame to rebuild into, a slot count that differs, or a short
+ *   reservation; ::GRCORE_ERR_CORRUPT for a broken chain;
+ *   ::GRCORE_ERR_UNSUPPORTED when the engine has no `convert` for what the
+ *   chain holds.
+ */
+GRCORE_API GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
+    GRCORE_DeoptReservation * reservation, size_t keep_frames,
+    size_t * out_frames);
 
 #ifdef __cplusplus
 }
