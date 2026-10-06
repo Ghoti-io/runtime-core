@@ -225,15 +225,25 @@ size_t grcore_deopt_reservation_capacity(const GRCORE_DeoptReservation * r) {
   return r == NULL ? 0 : r->capacity;
 }
 
-void grcore_deopt_release(
+GRCORE_Result grcore_deopt_release(
     GRCORE_Context * context, GRCORE_DeoptReservation * reservation) {
-  if (context == NULL || reservation == NULL) {
-    return;
+  if (context == NULL || !grcore_context_is_owner(context)) {
+    return GRCORE_ERR_INVALID;
   }
-  grcore_context_remove_root_source(context, &reservation_source, reservation);
+  if (reservation == NULL) {
+    return GRCORE_OK;
+  }
+  GRCORE_Result r =
+      grcore_context_remove_root_source(context, &reservation_source, reservation);
+  if (r != GRCORE_OK) {
+    return r; /* still registered, so still readable: free nothing */
+  }
   const GRCORE_Allocator * a = grcore_context_allocator(context);
-  a->free_fn(a->ctx, reservation->cells);
+  if (reservation->cells != NULL) {
+    a->free_fn(a->ctx, reservation->cells);
+  }
   a->free_fn(a->ctx, reservation);
+  return GRCORE_OK;
 }
 
 GRCORE_Result grcore_deopt_rebuild(GRCORE_Context * context,
@@ -294,6 +304,9 @@ GRCORE_Result grcore_deopt_write_back_checked(
     GRCORE_Context * context, GRCORE_EngineId engine, const GRCORE_CodeSite * site,
     void * frame_base, const uint64_t * slots, size_t slot_count,
     GRCORE_DeoptOutcome * out_outcome, size_t * out_misfit) {
+  if (out_misfit != NULL) {
+    *out_misfit = SIZE_MAX;
+  }
   if (context == NULL || !site_ok(site) || frame_base == NULL || slots == NULL ||
       slot_count != site->frame_state_count || out_outcome == NULL) {
     return GRCORE_ERR_INVALID;
@@ -310,12 +323,13 @@ GRCORE_Result grcore_deopt_write_back_checked(
   if (need && (!GRCORE_ENGINE_DESCRIPTOR_HAS(d, reverse) || d->reverse == NULL)) {
     return GRCORE_ERR_UNSUPPORTED;
   }
-  /* Every value is tested before any word is written. */
+  /* Every value is tested before any word is written. `reverse` is pure, so
+   * the second call below gives the answer of this one. */
   for (size_t i = 0; i < slot_count; i++) {
     const GRCORE_CodeLocation * l = &site->frame_state[i];
     if (converts(l) && l->kind == GRCORE_LOC_FRAME_SLOT) {
-      uint64_t raw;
-      if (!d->reverse(context, l->representation, slots[i], &raw)) {
+      uint64_t probe;
+      if (!d->reverse(context, l->representation, slots[i], &probe)) {
         *out_outcome = GRCORE_DEOPT_EXIT_AT_SITE;
         if (out_misfit != NULL) {
           *out_misfit = i;
@@ -330,8 +344,10 @@ GRCORE_Result grcore_deopt_write_back_checked(
       continue;
     }
     if (converts(l)) {
-      uint64_t raw = 0;
-      d->reverse(context, l->representation, slots[i], &raw);
+      uint64_t raw;
+      if (!d->reverse(context, l->representation, slots[i], &raw)) {
+        return GRCORE_ERR_INTERNAL; /* it fitted a moment ago: not pure */
+      }
       memcpy((unsigned char *)frame_base + l->value, &raw, sizeof raw);
     } else if (l->slot_kind == GRCORE_SLOT_VALUE) {
       memcpy((unsigned char *)frame_base + l->value, &slots[i], sizeof slots[i]);

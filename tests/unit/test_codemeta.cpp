@@ -398,6 +398,43 @@ GRCORE_CodeLocation tagged(int64_t offset, GRCORE_SlotKind kind,
 }
 } // namespace
 
+static_assert(sizeof(GRCORE_CodeLocation) == 24, "the format's location size");
+static_assert(offsetof(GRCORE_CodeLocation, representation) == 16,
+    "the representation follows the three older members");
+
+TEST(CodeMetaRepr, EveryRefusalInThePerSiteLoopNamesItsSite) {
+  {
+    Built b = valid();
+    b.parts[2].offset = 20; // equal to the one before it
+    b.finish(64, 100);
+    size_t site = 0, loc = 0;
+    EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, 100, nullptr, &site, &loc),
+        GRCORE_ERR_CORRUPT);
+    EXPECT_EQ(site, 2u);
+    EXPECT_EQ(loc, SIZE_MAX); // not at a location
+  }
+  {
+    Built b = valid();
+    b.parts[1].offset = 100; // past the code
+    b.parts[2].offset = 101;
+    b.finish(64, 100);
+    size_t site = 0, loc = 0;
+    EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, 100, nullptr, &site, &loc),
+        GRCORE_ERR_CORRUPT);
+    EXPECT_EQ(site, 1u);
+    EXPECT_EQ(loc, SIZE_MAX);
+  }
+  {
+    Built b = valid();
+    b.parts[2].state.pop_back(); // one function, two slot counts
+    b.finish(64, 100);
+    size_t site = 0, loc = 0;
+    EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, 100, nullptr, &site, &loc),
+        GRCORE_ERR_CORRUPT);
+    EXPECT_EQ(site, 2u);
+  }
+}
+
 TEST(CodeMetaRepr, ZeroIsBitsAndTheVersionIsStillOne) {
   EXPECT_EQ(static_cast<int>(GRCORE_REPR_BITS), 0);
   GRCORE_CodeLocation l{};

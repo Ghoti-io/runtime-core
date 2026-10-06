@@ -11,6 +11,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -381,41 +383,66 @@ TEST(DeoptRepr, AValueThatFailsTheTypeTestWritesNothingAndExitsAtTheSite) {
   grcore_deopt_release(w.ctx, res);
 }
 
+namespace {
+
+// The fixture collector's view of a guest frame: the first `count` words of
+// `slots` are the frame's reference slots, and it reports them as roots.
+struct FrameRoots {
+  uint64_t * slots;
+  size_t count;
+};
+void frame_roots_enumerate(
+    GRCORE_Context *, void * value, const GRCORE_RootVisitor * visitor) {
+  auto * f = static_cast<FrameRoots *>(value);
+  for (size_t i = 0; i < f->count; i++) {
+    visitor->slot(visitor->user, &f->slots[i]);
+  }
+}
+const GRCORE_RootSource kFrameRoots =
+    GRCORE_ROOT_SOURCE_INIT("test.frame", frame_roots_enumerate);
+
+std::vector<uint64_t> collect_roots(GRCORE_Context * ctx) {
+  std::vector<uint64_t> roots;
+  GRCORE_RootVisitor v;
+  v.user = &roots;
+  v.slot = [](void * user, uint64_t * p) {
+    static_cast<std::vector<uint64_t> *>(user)->push_back(*p);
+  };
+  v.range = nullptr;
+  EXPECT_EQ(grcore_context_enumerate_roots(ctx, &v), GRCORE_OK);
+  return roots;
+}
+
+} // namespace
+
 TEST(DeoptRepr, ACollectionBetweenConversionsSeesNullsAndConvertedValuesOnly) {
   ConvWorld w;
   Five m;
   GRCORE_DeoptReservation * res = nullptr;
   ASSERT_EQ(grcore_deopt_reserve(w.ctx, 4, &res), GRCORE_OK);
+  // The guest frame's slot array, rooted: slots 0..3 are its reference slots.
   uint64_t slots[5];
   std::memset(slots, 0xEE, sizeof slots); // what a skipped phase 1 would leave
+  FrameRoots frame{slots, 4};
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kFrameRoots, &frame),
+      GRCORE_OK);
   int call = 0, failures = 0;
   w.log.on_convert = [&](GRCORE_Context * ctx) {
-    // A forced collection: enumerate the context's roots now.
-    std::vector<uint64_t> cells;
-    GRCORE_RootVisitor v;
-    v.user = &cells;
-    v.slot = [](void * user, uint64_t * p) {
-      static_cast<std::vector<uint64_t> *>(user)->push_back(*p);
-    };
-    v.range = nullptr;
-    ASSERT_EQ(grcore_context_enumerate_roots(ctx, &v), GRCORE_OK);
-    // The converted cells are the only roots (there is no guest stack here):
-    // all four are visible, the first `call` converted and the rest null.
-    if (cells.size() != 4u) {
+    // A forced collection: the reservation's four cells, then the frame's.
+    std::vector<uint64_t> roots = collect_roots(ctx);
+    if (roots.size() != 8u) {
       failures++;
     } else {
       for (size_t i = 0; i < 4; i++) {
-        bool converted = i < static_cast<size_t>(call);
-        if (converted != (cells[i] != 0)) {
+        // The first `call` cells hold converted values, the rest null.
+        if ((i < static_cast<size_t>(call)) != (roots[i] != 0)) {
           failures++;
         }
-      }
-    }
-    // The slots being rebuilt are null at every point: never a raw word,
-    // never the stale 0xEE.
-    for (int i = 0; i < 4; i++) {
-      if (slots[i] != 0) {
-        failures++;
+        // The frame's slots are all null until the last phase: never a raw
+        // word, never the stale 0xEE, never a converted value.
+        if (roots[4 + i] != 0) {
+          failures++;
+        }
       }
     }
     call++;
@@ -426,17 +453,196 @@ TEST(DeoptRepr, ACollectionBetweenConversionsSeesNullsAndConvertedValuesOnly) {
   EXPECT_EQ(call, 4);
   EXPECT_EQ(failures, 0);
   EXPECT_EQ(slots[4], 0x77u);
-  EXPECT_NE(slots[0], 0u);
 
-  // Afterwards the cells are not roots any more: the slots are.
-  size_t seen = 0;
-  GRCORE_RootVisitor v;
-  v.user = &seen;
-  v.slot = [](void * user, uint64_t *) { ++*static_cast<size_t *>(user); };
-  v.range = nullptr;
-  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
-  EXPECT_EQ(seen, 0u);
-  grcore_deopt_release(w.ctx, res);
+  // Afterwards the reservation is not read any more and the frame's own slots
+  // hold the values: a value left only in the reservation would be missing.
+  w.log.on_convert = nullptr;
+  std::vector<uint64_t> after = collect_roots(w.ctx);
+  ASSERT_EQ(after.size(), 4u);
+  for (int i = 0; i < 4; i++) {
+    EXPECT_EQ(after[i] >> kConvTagShift, static_cast<uint64_t>(i + 1)) << i;
+  }
+  ASSERT_EQ(grcore_context_remove_root_source(w.ctx, &kFrameRoots, &frame),
+      GRCORE_OK);
+  EXPECT_EQ(grcore_deopt_release(w.ctx, res), GRCORE_OK);
+}
+
+TEST(DeoptRepr, ASecondRebuildOnTheSameReservationStartsFromNullCells) {
+  ConvWorld w;
+  Five m;
+  GRCORE_DeoptReservation * res = nullptr;
+  ASSERT_EQ(grcore_deopt_reserve(w.ctx, 4, &res), GRCORE_OK);
+  uint64_t slots[5];
+  ASSERT_EQ(grcore_deopt_rebuild(w.ctx, w.engine, &m.site, m.f.base(), res,
+                slots, 5),
+      GRCORE_OK);
+  int call = 0, stale = 0;
+  w.log.on_convert = [&](GRCORE_Context * ctx) {
+    std::vector<uint64_t> cells = collect_roots(ctx);
+    if (cells.size() != 4u) {
+      stale++;
+    } else {
+      for (size_t i = static_cast<size_t>(call); i < 4; i++) {
+        stale += cells[i] != 0; // the first rebuild's values must be gone
+      }
+    }
+    call++;
+  };
+  ASSERT_EQ(grcore_deopt_rebuild(w.ctx, w.engine, &m.site, m.f.base(), res,
+                slots, 5),
+      GRCORE_OK);
+  EXPECT_EQ(call, 4);
+  EXPECT_EQ(stale, 0);
+  EXPECT_EQ(grcore_deopt_release(w.ctx, res), GRCORE_OK);
+}
+
+TEST(DeoptRepr, ACheckedWriteBackWritesValueSlotsSkipsBitsAndRevalidatesConverted) {
+  ConvWorld w;
+  Frame f;
+  fill(f);
+  // Slot 0 a reference, slot 1 plain bits, slot 2 an I32.
+  GRCORE_CodeLocation locs[3] = {slot(0, GRCORE_SLOT_VALUE),
+      tagged(1, GRCORE_REPR_BITS), tagged(2, GRCORE_REPR_I32)};
+  GRCORE_CodeSite s = site_of(locs, 3);
+  const uint64_t i32_seven = (UINT64_C(1) << kConvTagShift) | 7;
+  uint64_t slots[3] = {0xA0A0, 0xB1B1, i32_seven};
+  for (int i = 0; i < 3; i++) {
+    f.words[i] = kMark + static_cast<uint64_t>(i); // scribble
+  }
+  GRCORE_DeoptOutcome outcome = GRCORE_DEOPT_EXIT_AT_SITE;
+  size_t misfit = 5;
+  ASSERT_EQ(grcore_deopt_write_back_checked(w.ctx, w.engine, &s, f.base(),
+                slots, 3, &outcome, &misfit),
+      GRCORE_OK);
+  EXPECT_EQ(outcome, GRCORE_DEOPT_WRITTEN);
+  EXPECT_EQ(misfit, SIZE_MAX);
+  EXPECT_EQ(f.words[0], 0xA0A0u);      // VALUE: written as it is
+  EXPECT_EQ(f.words[1], kMark + 1);    // BITS: left alone
+  EXPECT_EQ(f.words[2], 7u);           // I32: through reverse
+  EXPECT_EQ(w.log.reverses > 0, true);
+  for (int i = 3; i < 8; i++) {
+    EXPECT_EQ(f.words[i], 0x1000u + static_cast<uint64_t>(i)) << i;
+  }
+  // The converted one is revalidated: a bad value refuses the whole thing.
+  for (int i = 0; i < 3; i++) {
+    f.words[i] = kMark + static_cast<uint64_t>(i);
+  }
+  slots[2] = 7; // an untagged word is not an I32
+  ASSERT_EQ(grcore_deopt_write_back_checked(w.ctx, w.engine, &s, f.base(),
+                slots, 3, &outcome, &misfit),
+      GRCORE_OK);
+  EXPECT_EQ(outcome, GRCORE_DEOPT_EXIT_AT_SITE);
+  EXPECT_EQ(misfit, 2u);
+  EXPECT_EQ(f.words[0], kMark); // the VALUE slot before it is untouched too
+}
+
+TEST(DeoptRepr, BindingValidatesTheTable) {
+  RunWorld w;
+  GRCORE_EngineId conv = 0;
+  ASSERT_EQ(grcore_engine_register(w.ctx, &kConv, &conv), GRCORE_OK);
+  // A converting representation on a reference: the engine could convert it,
+  // and the table is still not one.
+  GRCORE_CodeLocation locs[1] = {tagged(0, GRCORE_REPR_I32, GRCORE_SLOT_VALUE)};
+  GRCORE_CodeSite sites[1] = {site_of(locs, 1)};
+  sites[0].code_offset = 4;
+  GRCORE_CodeMeta meta{GRCORE_CODEMETA_FORMAT_VERSION, 64, 16, 1, sites};
+  const char * why = nullptr;
+  EXPECT_EQ(grcore_deopt_bind(w.ctx, conv, &meta, &why), GRCORE_ERR_CORRUPT);
+  ASSERT_NE(why, nullptr);
+  EXPECT_NE(std::strstr(why, "reference"), nullptr) << why;
+}
+
+TEST(DeoptRepr, AConvertingConstantIsConvertedByRebuildAndSkippedByWriteBack) {
+  ConvWorld w;
+  Frame f;
+  fill(f);
+  GRCORE_CodeLocation locs[3] = {
+      {GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 41, GRCORE_REPR_I32},
+      // Not a valid table (the validator refuses it), so a reader that trusts
+      // the table must still not convert it.
+      {GRCORE_LOC_DEAD, GRCORE_SLOT_RAW, 0, GRCORE_REPR_F32},
+      tagged(2, GRCORE_REPR_I32)};
+  GRCORE_CodeSite s = site_of(locs, 3);
+  EXPECT_EQ(grcore_deopt_converting_count(&s), 2u);
+  GRCORE_DeoptReservation * res = nullptr;
+  ASSERT_EQ(grcore_deopt_reserve(w.ctx, 2, &res), GRCORE_OK);
+  uint64_t slots[3];
+  ASSERT_EQ(grcore_deopt_rebuild(w.ctx, w.engine, &s, f.base(), res, slots, 3),
+      GRCORE_OK);
+  EXPECT_EQ(w.log.converts, 2);
+  EXPECT_EQ(slots[0], (UINT64_C(1) << kConvTagShift) | 41); // the immediate
+  EXPECT_EQ(slots[1], 0u);                                  // DEAD: zero
+  EXPECT_EQ(slots[2] >> kConvTagShift, 1u);
+  // Write-back installs only the frame slot.
+  Frame before = f;
+  GRCORE_DeoptOutcome outcome = GRCORE_DEOPT_EXIT_AT_SITE;
+  slots[0] = (UINT64_C(1) << kConvTagShift) | 99;
+  ASSERT_EQ(grcore_deopt_write_back_checked(w.ctx, w.engine, &s, f.base(),
+                slots, 3, &outcome, nullptr),
+      GRCORE_OK);
+  EXPECT_EQ(outcome, GRCORE_DEOPT_WRITTEN);
+  EXPECT_EQ(f.words[2], before.words[2] & 0xFFFFFFFFull);
+  for (int i : {0, 1, 3, 4, 5, 6, 7}) {
+    EXPECT_EQ(f.words[i], before.words[i]) << i;
+  }
+  EXPECT_EQ(grcore_deopt_release(w.ctx, res), GRCORE_OK);
+}
+
+TEST(DeoptRepr, ReserveSaysLimitForABudgetRefusalAndOomForAnAllocatorOne) {
+  // A budget refusal.
+  {
+    RunWorld w(GRCORE_UNLIMITED, GRCORE_UNLIMITED, 0);
+    ASSERT_EQ(grcore_context_set_memory_bytes(
+                  w.ctx, grcore_context_memory_in_use(w.ctx)),
+        GRCORE_OK);
+    GRCORE_DeoptReservation * res = reinterpret_cast<GRCORE_DeoptReservation *>(8);
+    uint64_t refusals = grcore_context_memory_refusals(w.ctx);
+    EXPECT_EQ(grcore_deopt_reserve(w.ctx, 4, &res), GRCORE_ERR_LIMIT);
+    EXPECT_GT(grcore_context_memory_refusals(w.ctx), refusals);
+    EXPECT_EQ(res, reinterpret_cast<GRCORE_DeoptReservation *>(8)); // untouched
+    EXPECT_EQ(grcore_context_root_source_count(w.ctx), 0u);
+  }
+  // The allocator fails each of the three allocations in turn: the
+  // reservation's record, its cells, and the root-source table. Nothing is
+  // left behind by any of them, and a fourth try, which fails nothing, works.
+  TrackingAllocator t;
+  {
+    RunWorld w(GRCORE_UNLIMITED, GRCORE_UNLIMITED, GRCORE_DEFAULT_MEMORY_RESERVE,
+        GRCORE_UNLIMITED, GRCORE_UNLIMITED, t.get());
+    long live = t.live;
+    for (long k = 1; k <= 3; k++) {
+      t.calls = 0;
+      t.fail_at = k;
+      GRCORE_DeoptReservation * res = nullptr;
+      EXPECT_EQ(grcore_deopt_reserve(w.ctx, 4, &res), GRCORE_ERR_OOM) << k;
+      EXPECT_EQ(res, nullptr) << k;
+      EXPECT_EQ(t.live, live) << "leaked after failing allocation " << k;
+      EXPECT_EQ(grcore_context_root_source_count(w.ctx), 0u) << k;
+    }
+    t.fail_at = 0;
+    GRCORE_DeoptReservation * res = nullptr;
+    ASSERT_EQ(grcore_deopt_reserve(w.ctx, 4, &res), GRCORE_OK);
+    EXPECT_EQ(grcore_context_root_source_count(w.ctx), 1u);
+    EXPECT_EQ(grcore_deopt_release(w.ctx, res), GRCORE_OK);
+    EXPECT_EQ(grcore_context_root_source_count(w.ctx), 0u);
+    EXPECT_EQ(t.live, live);
+  }
+  // Released before the context is destroyed, nothing is left.
+  EXPECT_EQ(t.live, 0);
+}
+
+TEST(DeoptRepr, ReleaseRequiresOwnershipAndAcceptsNullAndAZeroCapacityReservation) {
+  RunWorld w;
+  GRCORE_DeoptReservation * res = nullptr;
+  ASSERT_EQ(grcore_deopt_reserve(w.ctx, 0, &res), GRCORE_OK);
+  EXPECT_EQ(grcore_deopt_release(nullptr, res), GRCORE_ERR_INVALID);
+  GRCORE_Result from_elsewhere = GRCORE_OK;
+  std::thread([&] { from_elsewhere = grcore_deopt_release(w.ctx, res); }).join();
+  EXPECT_EQ(from_elsewhere, GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_context_root_source_count(w.ctx), 1u); // refused: still there
+  EXPECT_EQ(grcore_deopt_release(w.ctx, nullptr), GRCORE_OK);
+  EXPECT_EQ(grcore_deopt_release(w.ctx, res), GRCORE_OK); // cells are NULL
+  EXPECT_EQ(grcore_context_root_source_count(w.ctx), 0u);
 }
 
 TEST(DeoptRepr, AShortReservationIsRefusedBeforeAnythingIsWritten) {

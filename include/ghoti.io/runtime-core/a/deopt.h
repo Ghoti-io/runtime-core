@@ -191,7 +191,8 @@ GRCORE_API size_t grcore_deopt_converting_count(const GRCORE_CodeSite * site);
  * The cells are allocated through the context's allocator, charged to it, and
  * the reservation is added to the context as a root source that reports every
  * cell a rebuild has filled, as a precise root. The caller must own the
- * context.
+ * context. The collector reads the reservation at a poll, on the thread that
+ * owns the context, so it needs no synchronization.
  *
  * @param context The context.
  * @param capacity The cells; may be zero.
@@ -207,13 +208,30 @@ GRCORE_API GRCORE_Result grcore_deopt_reserve(GRCORE_Context * context,
 GRCORE_API size_t grcore_deopt_reservation_capacity(
     const GRCORE_DeoptReservation * reservation);
 
-/** @brief Removes the root source and frees the reservation. NULL is
- *    accepted. */
-GRCORE_API void grcore_deopt_release(
+/**
+ * @brief Removes the root source and frees the reservation.
+ *
+ * The caller must own the context, as for ::grcore_deopt_reserve. **Release
+ * every reservation before the context is destroyed**: destruction frees the
+ * root-source table but cannot know a reservation, whose memory would be
+ * leaked.
+ *
+ * @param context The context the reservation was taken from.
+ * @param reservation The reservation; NULL is accepted and does nothing.
+ * @return `GRCORE_OK`; `GRCORE_ERR_INVALID` for a NULL context, a non-owner or
+ *   a context that is tearing down, or when the root source cannot be
+ *   removed. A refusal frees nothing, because a collector could still read
+ *   what was not removed.
+ */
+GRCORE_API GRCORE_Result grcore_deopt_release(
     GRCORE_Context * context, GRCORE_DeoptReservation * reservation);
 
 /**
  * @brief Rebuilds one site's interpreter frame, converting raw values.
+ *
+ * A converting `CONSTANT` location is converted too (its immediate is the raw
+ * value); ::grcore_deopt_write_back_checked skips it, since a constant has no
+ * frame word to write. A `DEAD` location is never converted: it reads as zero.
  *
  * Phase 0 reads every word as ::grcore_deopt_read does. Phase 1 puts null (0)
  * in every slot of a converting location. Phase 2 converts each raw value,
@@ -229,8 +247,12 @@ GRCORE_API void grcore_deopt_release(
  * @param frame_base The frame base.
  * @param reservation Must hold at least ::grcore_deopt_converting_count cells.
  * @param slots Receives `slot_count` slots, the engine's values for the
- *   converted ones. Written only on success; while `convert` runs it holds
- *   the nulls of phase 1 and the words of the others.
+ *   converted ones. It is the guest frame's own slot array, which the
+ *   collector scans (the engine's slot kinds say which are references), so a
+ *   converted value is a root the moment it is written and until then the slot
+ *   is null; the reservation holds the value only while it is being
+ *   converted. Written only on success; while `convert` runs it holds the
+ *   nulls of phase 1 and the words of the others.
  * @param slot_count Must equal `site->frame_state_count`.
  * @return `GRCORE_OK`; `GRCORE_ERR_INVALID` for a NULL argument, a wrong
  *   count or a reservation that is short; `GRCORE_ERR_UNSUPPORTED` when the
@@ -254,7 +276,8 @@ typedef enum GRCORE_DeoptOutcome {
  * Every `FRAME_SLOT` of a converting representation is installed through the
  * engine's `reverse`, which is its type test. All of them are tested before
  * any word is written, so a value that does not fit leaves the frame exactly
- * as it was and `*out_outcome` is ::GRCORE_DEOPT_EXIT_AT_SITE. Otherwise
+ * as it was and `*out_outcome` is ::GRCORE_DEOPT_EXIT_AT_SITE. A converting
+ * `CONSTANT` location is skipped (it has no frame word). Otherwise
  * `VALUE` slots and converted slots are written, and nothing else is.
  *
  * @param context The context.
@@ -265,7 +288,7 @@ typedef enum GRCORE_DeoptOutcome {
  * @param slot_count Must equal `site->frame_state_count`.
  * @param out_outcome Receives the outcome on `GRCORE_OK`.
  * @param out_misfit Receives the slot index of the first value that did not
- *   fit; may be NULL.
+ *   fit, and `SIZE_MAX` otherwise (also on a refusal); may be NULL.
  * @return `GRCORE_OK` (read `*out_outcome`); `GRCORE_ERR_INVALID` for a NULL
  *   argument or a wrong count; `GRCORE_ERR_UNSUPPORTED` when the engine has
  *   no `reverse` and the site needs one.

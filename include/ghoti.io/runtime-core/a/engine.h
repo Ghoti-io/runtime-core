@@ -279,7 +279,8 @@ typedef struct GRCORE_EngineDescriptor {
  * decoder and NULL where unused.
  * @code
  * static const GRCORE_EngineDescriptor engine = GRCORE_ENGINE_DESCRIPTOR_INIT(
- *     "mine", slot_kind, locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL);
+ *     "mine", slot_kind, locate, NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL,
+ *     NULL, NULL);
  * @endcode
  */
 #define GRCORE_ENGINE_DESCRIPTOR_INIT(...) \

@@ -774,7 +774,11 @@ is not enough (an integer slot does not accept a float whose bits would read as
 one). All values are tested before any word is written, and a value that fails
 leaves the frame untouched and reports `GRCORE_DEOPT_EXIT_AT_SITE`, which the
 engine maps to its existing exit-at-this-site path. The old
-`grcore_deopt_write_back` is unchanged (reference slots only).
+`grcore_deopt_write_back` is unchanged (reference slots only). A reservation must be released
+(`grcore_deopt_release`, owner thread only) before its context is destroyed:
+destruction frees the root-source table but cannot know the reservation. The
+rebuilt `slots` are the guest frame's own array, which the collector already
+scans; the reservation holds a value only while it is converted.
 
 Rejected: a representation as another `GRCORE_SlotKind` (the collector's enum
 would then carry cases it must never act on); converting at every poll (a poll

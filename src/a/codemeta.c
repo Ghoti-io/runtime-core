@@ -31,8 +31,13 @@
 #include <ghoti.io/runtime-core/allocator.h>
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+_Static_assert(sizeof(GRCORE_CodeLocation) == 24 &&
+        offsetof(GRCORE_CodeLocation, representation) == 16,
+    "GRCORE_CodeLocation's layout is part of the format (version 1)");
 
 #define CORRUPT(why) \
   do { \
@@ -234,6 +239,7 @@ GRCORE_Result grcore_codemeta_validate_at(const GRCORE_CodeMeta * meta,
   size_t bad_loc = SIZE_MAX;
   for (size_t i = 0; i < meta->site_count && result == GRCORE_OK; i++) {
     const GRCORE_CodeSite * s = &meta->sites[i];
+    bad_site = i; /* reported only if this iteration is the one that refuses */
     if (s->code_offset >= meta->code_bytes) {
       why = "site offset is past the code";
       result = GRCORE_ERR_CORRUPT;
@@ -246,7 +252,6 @@ GRCORE_Result grcore_codemeta_validate_at(const GRCORE_CodeMeta * meta,
     }
     result = check_site(s, meta->frame_bytes, marks, &why, &bad_loc);
     if (result != GRCORE_OK) {
-      bad_site = i;
       break;
     }
     /* One function, one interpreter frame size: compare with the first
