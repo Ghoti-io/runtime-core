@@ -157,6 +157,18 @@ GRCORE_API size_t grcore_code_registered_count(const GRCORE_Context * context);
 GRCORE_API size_t grcore_code_retired_count(const GRCORE_Context * context);
 
 /**
+ * @brief The most references the retired list has held at once, since the
+ *   context was made. Zero for NULL.
+ *
+ * Retired code is released only when no JIT activation is open, so a long
+ * compiled run that keeps replacing code in its slots retains the old code
+ * without a bound; no bound is imposed (AD-28), and this is the measurement of
+ * it. Each retired reference holds one compiled function's code, so the figure
+ * is a count of functions, not of bytes.
+ */
+GRCORE_API size_t grcore_code_retired_peak(const GRCORE_Context * context);
+
+/**
  * @brief The word of an entry slot whose function cannot be compiled.
  *
  * A call site loads the slot's entry word and compares it once: above this it

@@ -153,6 +153,7 @@
 #define grcore_code_release GHOTIIO_RUNTIME_CORE(grcore_code_release)
 #define grcore_code_retain GHOTIIO_RUNTIME_CORE(grcore_code_retain)
 #define grcore_code_retired_count GHOTIIO_RUNTIME_CORE(grcore_code_retired_count)
+#define grcore_code_retired_peak GHOTIIO_RUNTIME_CORE(grcore_code_retired_peak)
 #define grcore_code_unregister GHOTIIO_RUNTIME_CORE(grcore_code_unregister)
 #define grcore_codemeta_find GHOTIIO_RUNTIME_CORE(grcore_codemeta_find)
 #define grcore_codemeta_validate GHOTIIO_RUNTIME_CORE(grcore_codemeta_validate)

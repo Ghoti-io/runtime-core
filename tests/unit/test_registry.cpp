@@ -452,6 +452,54 @@ TEST(Retire, ASlotClearedUnderALiveJitRecordIsReleasedWhenTheLastOneLeavesAndNot
   EXPECT_EQ(grcore_code_retired_count(w.ctx), 0u);
 }
 
+TEST(Retire, ThePeakIsTheMostThatWaitedAtOnceAndOutlivesTheRelease) {
+  RWorld w;
+  GRCORE_EntrySlot * s = nullptr;
+  ASSERT_EQ(grcore_entry_slot_create(w.ctx, &s), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_peak(w.ctx), 0u);
+  EXPECT_EQ(grcore_code_retired_peak(nullptr), 0u);
+  // With nothing live, a replacement is released at once and the list never
+  // grows.
+  ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, w.code.at(0)), GRCORE_OK);
+  ASSERT_EQ(grcore_entry_slot_clear(w.ctx, s), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_peak(w.ctx), 0u);
+  // Under one long-lived JIT activation, every replacement waits.
+  constexpr size_t kReplacements = 300;
+  std::vector<std::unique_ptr<HandCode>> versions;
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  for (size_t i = 0; i < kReplacements; i++) {
+    versions.push_back(std::make_unique<HandCode>());
+    ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, versions.back()->code, versions.back()->at(0)),
+        GRCORE_OK);
+    versions.back()->give_up();
+  }
+  ASSERT_EQ(grcore_entry_slot_clear(w.ctx, s), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_count(w.ctx), kReplacements);
+  EXPECT_EQ(grcore_code_retired_peak(w.ctx), kReplacements);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_count(w.ctx), 0u);
+  EXPECT_EQ(grcore_code_retired_peak(w.ctx), kReplacements) << "a high-water mark stays";
+  for (const auto & v : versions) {
+    EXPECT_EQ(v->released, 1);
+  }
+  // A later, shorter wait does not lower it.
+  GRCORE_ActivationRef again = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, w.code.at(1)), GRCORE_OK);
+  ASSERT_EQ(grcore_entry_slot_clear(w.ctx, s), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_peak(w.ctx), kReplacements);
+  ASSERT_EQ(grcore_activation_leave(w.stack, again), GRCORE_OK);
+}
+
+TEST(Retire, ARetiredRangeCountsTowardThePeakToo) {
+  RWorld w;
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_code_unregister(w.ctx, w.code.start()), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_peak(w.ctx), 1u);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_peak(w.ctx), 1u);
+}
+
 TEST(Retire, ClearingWithNoJitRecordLiveReleasesAtOnceEvenUnderOtherRecords) {
   RWorld w;
   GRCORE_EntrySlot * s = nullptr;

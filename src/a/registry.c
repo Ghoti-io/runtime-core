@@ -68,8 +68,17 @@ struct GRCORE_CodeRegistry {
   size_t retired_entries;  ///< Entries flagged `retired`.
   RetireNode * retired;    ///< Slot code waiting to be released.
   size_t retired_nodes;
+  size_t retired_peak;     ///< The most `retired_entries + retired_nodes` has been.
   SlotRec * slots;
 };
+
+/* Notes the retired list's length after it grew. */
+static void note_retired_peak(GRCORE_CodeRegistry * r) {
+  size_t now = r->retired_entries + r->retired_nodes;
+  if (now > r->retired_peak) {
+    r->retired_peak = now;
+  }
+}
 
 /* The first entry whose `end` is above `address`: the only one that can
  * contain it, since ranges do not overlap. */
@@ -184,6 +193,7 @@ GRCORE_Result grcore_code_unregister(GRCORE_Context * context, uintptr_t start) 
   } else {
     r->entries[at].retired = true;
     r->retired_entries++;
+    note_retired_peak(r);
   }
   return GRCORE_OK;
 }
@@ -230,6 +240,11 @@ size_t grcore_code_retired_count(const GRCORE_Context * context) {
       : stack->registry->retired_entries + stack->registry->retired_nodes;
 }
 
+size_t grcore_code_retired_peak(const GRCORE_Context * context) {
+  const GRCORE_Stack * stack = context == NULL ? NULL : grcore_context_stack(context);
+  return stack == NULL || stack->registry == NULL ? 0 : stack->registry->retired_peak;
+}
+
 /* ---- Entry slots -------------------------------------------------------- */
 
 GRCORE_Result grcore_entry_slot_create(
@@ -270,6 +285,7 @@ static void retire(GRCORE_Stack * stack, GRCORE_Code * code, RetireNode * node) 
   node->next = r->retired;
   r->retired = node;
   r->retired_nodes++;
+  note_retired_peak(r);
 }
 
 static SlotRec * own_slot(GRCORE_CodeRegistry * r, GRCORE_EntrySlot * slot) {
