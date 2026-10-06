@@ -44,6 +44,16 @@
  * (`a/registry.h`) at a site's offset. The walk starts at the innermost record
  * that carries one.
  *
+ * Compiled code does not call ::grcore_activation_set_compiled: before any call
+ * that can reach a GC point it stores the two words into the *walk-start cell*
+ * of its context, at the offset `a/layout.h` gives. The cell is a stable place
+ * (the array of records may move; the context does not). Core moves its value
+ * into the innermost record at the next activation entry, so a native that
+ * records an activation leaves the compiled run below it described by the
+ * record below, and at every walk, so the walk starts from it. Leaving a JIT
+ * record clears the cell. A cell that is set while the innermost record is not a
+ * JIT one is a broken walk.
+ *
  * **How it proceeds.** A frame's code is found from its return address, and its
  * site, with the stack map and the identity, from `grcore_codemeta_find` at the
  * address's offset in that code. The caller's base and return address are the

@@ -206,6 +206,14 @@ void grcore_registry_destroy(GRCORE_Stack * stack);
 bool grcore_registry_find(const GRCORE_Stack * stack, uintptr_t address,
     GRCORE_CodeRange * out);
 
+/** @brief Moves the walk-start cell compiled code stored (a/layout.h) into the
+ *   innermost activation record, and clears it (activation.c).
+ *
+ *  @return False if the cell is set and the innermost record is not a JIT one,
+ *    which compiled code cannot have done: the cell is left alone and the
+ *    walk reports it. True otherwise, including for an empty cell. */
+bool grcore_activation_absorb_cell(GRCORE_Stack * stack);
+
 /** @brief Leaves the top activation, whatever the stack's state: gives back
  *   its native depth and nesting. Returns false if there is none. */
 bool grcore_activation_drop_top(GRCORE_Stack * stack);

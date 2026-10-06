@@ -37,6 +37,8 @@ static const GRCORE_JitLayout layout = {
     (uint32_t)offsetof(GRCORE_Context, request_word),
     (uint32_t)sizeof(((GRCORE_Context *)0)->request_word),
     true,
+    (uint32_t)offsetof(GRCORE_Context, walk_cell),
+    (uint32_t)offsetof(GRCORE_Context, native_limit),
 };
 
 const GRCORE_JitLayout * grcore_jit_layout(void) {

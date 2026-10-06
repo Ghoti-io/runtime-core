@@ -33,12 +33,36 @@
 
 #include "guest_internal.h"
 
+#include "../b/context_internal.h"
+
 #include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/poll.h>
 
 static bool enters_native_depth(GRCORE_ActivationKind kind) {
   return kind == GRCORE_ACTIVATION_JIT || kind == GRCORE_ACTIVATION_NATIVE ||
       kind == GRCORE_ACTIVATION_REENTRY;
+}
+
+bool grcore_activation_absorb_cell(GRCORE_Stack * stack) {
+  GRCORE_Context * context = stack->context;
+  if (context->walk_cell[0] == 0) {
+    return true;
+  }
+  if (stack->activation_count == 0 ||
+      stack->activations[stack->activation_count - 1].kind !=
+          GRCORE_ACTIVATION_JIT) {
+    /* Compiled code stores the cell only inside a JIT record, and every entry
+     * and leave moves it, so this is stale or forged. It is left where it is
+     * for the walk to report. */
+    return false;
+  }
+  GRCORE_ActivationRecord * rec =
+      &stack->activations[stack->activation_count - 1];
+  rec->frame_base = context->walk_cell[0];
+  rec->return_address = context->walk_cell[1];
+  context->walk_cell[0] = 0;
+  context->walk_cell[1] = 0;
+  return true;
 }
 
 GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
@@ -78,6 +102,9 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
       return r;
     }
   }
+  /* What compiled code recorded belongs to the record that is innermost now,
+   * and the one being entered starts with none (AD-28). */
+  (void)grcore_activation_absorb_cell(stack);
   GRCORE_ActivationRecord * rec = &stack->activations[stack->activation_count++];
   rec->id = ++stack->activation_serial;
   rec->kind = kind;
@@ -100,6 +127,12 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
     return false;
   }
   GRCORE_ActivationRecord rec = stack->activations[--stack->activation_count];
+  if (rec.kind == GRCORE_ACTIVATION_JIT) {
+    /* Its compiled frames are gone, and so is anything compiled code recorded
+     * for them: a later walk must not read frames that were left. */
+    stack->context->walk_cell[0] = 0;
+    stack->context->walk_cell[1] = 0;
+  }
   if (enters_native_depth(rec.kind)) {
     grcore_context_leave_depth(stack->context, GRCORE_DEPTH_NATIVE);
   }

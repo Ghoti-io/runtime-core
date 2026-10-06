@@ -1155,3 +1155,112 @@ int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+/* ---- The walk-start cell (a/layout.h) ------------------------------------- */
+
+namespace {
+
+/* The cell, through the offset the layout descriptor states: the only way
+ * compiled code knows it. */
+uintptr_t * cell_of(GRCORE_Context * c) {
+  return reinterpret_cast<uintptr_t *>(
+      reinterpret_cast<unsigned char *>(c) + grcore_jit_layout()->walk_cell_offset);
+}
+
+} // namespace
+
+TEST(WalkCell, TheLayoutNamesTwoWordsThatAreNeitherTheRequestWordNorEachOther) {
+  const GRCORE_JitLayout * l = grcore_jit_layout();
+  EXPECT_EQ(l->walk_cell_offset % sizeof(uintptr_t), 0u);
+  EXPECT_EQ(l->native_limit_offset % sizeof(uintptr_t), 0u);
+  EXPECT_GT(l->walk_cell_offset, 0u);
+  EXPECT_NE(l->walk_cell_offset, l->request_word_offset);
+  EXPECT_NE(l->native_limit_offset, l->request_word_offset);
+  // The cell is two words, and the limit is not one of them.
+  EXPECT_TRUE(l->native_limit_offset >= l->walk_cell_offset + 2 * sizeof(uintptr_t) ||
+      l->native_limit_offset + sizeof(uintptr_t) <= l->walk_cell_offset);
+}
+
+TEST(WalkCell, AWalkStartsFromTheCellAndMovesItIntoTheInnermostRecord) {
+  CWorld w;
+  HandStack st(8);
+  std::vector<uintptr_t> bases = st.build(w.code, 0, 3, 0, kOutside);
+  GRCORE_ActivationRef rec = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  cell_of(w.ctx)[0] = bases[0];
+  cell_of(w.ctx)[1] = w.code.at(0);
+  Walked got = walk_compiled(w.ctx);
+  ASSERT_EQ(got.frames.size(), 3u);
+  EXPECT_EQ(got.frames[0].frame_base, bases[0]);
+  EXPECT_EQ(got.frames[0].return_address, w.code.at(0));
+  EXPECT_EQ(got.end, GRCORE_CWALK_END);
+  // Moved, not copied: the cell is empty and the record carries it.
+  EXPECT_EQ(cell_of(w.ctx)[0], 0u);
+  EXPECT_EQ(cell_of(w.ctx)[1], 0u);
+  GRCORE_ActivationInfo info;
+  ASSERT_EQ(grcore_activation_info(w.stack, rec, &info), GRCORE_OK);
+  EXPECT_EQ(info.frame_base, bases[0]);
+  EXPECT_EQ(info.return_address, w.code.at(0));
+  // The walk can be taken again, now from the record.
+  EXPECT_EQ(walk_compiled(w.ctx).frames.size(), 3u);
+  ASSERT_EQ(grcore_activation_leave(w.stack, rec), GRCORE_OK);
+}
+
+TEST(WalkCell, AnActivationEntryMovesTheCellIntoTheRecordBelowAndTheNewOneStartsEmpty) {
+  CWorld w;
+  HandStack st(8);
+  std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  cell_of(w.ctx)[0] = bases[0];
+  cell_of(w.ctx)[1] = w.code.at(0);
+  // A native the compiled code called records its own activation.
+  GRCORE_ActivationRef native = enter(w.stack, GRCORE_ACTIVATION_NATIVE);
+  EXPECT_EQ(cell_of(w.ctx)[0], 0u);
+  GRCORE_ActivationInfo info;
+  ASSERT_EQ(grcore_activation_info(w.stack, jit, &info), GRCORE_OK);
+  EXPECT_EQ(info.frame_base, bases[0]);
+  EXPECT_EQ(info.return_address, w.code.at(0));
+  ASSERT_EQ(grcore_activation_info(w.stack, native, &info), GRCORE_OK);
+  EXPECT_EQ(info.frame_base, 0u);
+  // A walk inside the native still sees the compiled run below it.
+  EXPECT_EQ(walk_compiled(w.ctx).frames.size(), 2u);
+  ASSERT_EQ(grcore_activation_leave(w.stack, native), GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+}
+
+TEST(WalkCell, LeavingTheJitRecordClearsTheCellSoLaterWalksReadNoDeadFrames) {
+  CWorld w;
+  HandStack st(8);
+  std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  cell_of(w.ctx)[0] = bases[0];
+  cell_of(w.ctx)[1] = w.code.at(0);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  EXPECT_EQ(cell_of(w.ctx)[0], 0u);
+  EXPECT_EQ(cell_of(w.ctx)[1], 0u);
+  Walked got = walk_compiled(w.ctx);
+  EXPECT_TRUE(got.frames.empty());
+  EXPECT_EQ(got.end, GRCORE_CWALK_END);
+}
+
+TEST(WalkCell, ACellSetWhileTheInnermostRecordIsNotAJitOneIsABrokenWalkAndAborts) {
+  CWorld w;
+  HandStack st(8);
+  std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
+  GRCORE_ActivationRef native = enter(w.stack, GRCORE_ACTIVATION_NATIVE);
+  cell_of(w.ctx)[0] = bases[0];
+  cell_of(w.ctx)[1] = w.code.at(0);
+  Walked got = walk_compiled(w.ctx);
+  EXPECT_TRUE(got.frames.empty());
+  EXPECT_EQ(got.end, GRCORE_CWALK_BROKEN);
+  EXPECT_NE(got.reason.find("no JIT activation"), std::string::npos) << got.reason;
+  // Root enumeration cannot return an error, so it stops the process.
+  ChildResult r = in_child([&] {
+    Seen seen;
+    GRCORE_RootVisitor v = visitor_for(&seen);
+    grcore_context_enumerate_roots(w.ctx, &v);
+  });
+  EXPECT_TRUE(r.aborted) << r.err;
+  cell_of(w.ctx)[0] = 0;
+  cell_of(w.ctx)[1] = 0;
+  ASSERT_EQ(grcore_activation_leave(w.stack, native), GRCORE_OK);
+}

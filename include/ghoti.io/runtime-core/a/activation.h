@@ -196,6 +196,11 @@ GRCORE_API GRCORE_Result grcore_activation_top(
  * been rebuilt or unwound, must do. Nothing is checked here: a base that is
  * not a frame is found by the walk, which reports a broken chain.
  *
+ * Compiled code does not use this: it stores the same two words in the
+ * context's walk-start cell (`a/layout.h`), which core moves into the innermost
+ * record at the next activation entry and at a walk (`a/compiled.h`). This is
+ * for an engine or a test that has the words in hand.
+ *
  * The record, and the JIT record in particular, is also what keeps retired
  * code alive (`a/registry.h`): code retired while a JIT record is open is
  * released when the last one is left.

@@ -97,6 +97,18 @@ struct GRCORE_Context {
   /* Requests (AD-4). The word and the kind count are the only fields another
    * thread reads, and only a port does, under its mutex. */
   uint64_t request_word; ///< Bit k is kind k below 63; bit 63: overflow.
+
+  /* Compiled code (AD-28). Both are read and written by compiled code at the
+   * offsets a/layout.h states, so they sit in the context, which compiled code
+   * already holds, and never move. Owner thread only. `walk_cell` is where
+   * compiled code records its frame base and the return address of the call it
+   * is about to make, before any call that can reach a GC point; it is moved
+   * into the innermost activation record at the next activation entry and at a
+   * walk (a/compiled.h). `native_limit` is the lowest address compiled code may
+   * grow the native stack to, set at every run, resume and re-entry from the
+   * native-stack byte budget; zero means no limit. */
+  uintptr_t walk_cell[2];
+  uintptr_t native_limit;
   uint32_t kind_count;   ///< Service kinds defined. `__atomic` builtins.
   const GRCORE_Key ** kind_keys; ///< Owner only; `kind_count` entries.
   size_t kind_capacity;

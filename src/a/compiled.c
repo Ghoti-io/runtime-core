@@ -43,6 +43,15 @@ GRCORE_Result grcore_compiled_walk_begin(
   memset(out_walk, 0, sizeof *out_walk);
   out_walk->context = context;
   out_walk->next_record = stack == NULL ? 0 : stack->activation_count;
+  /* What compiled code recorded in the context's cell belongs to the innermost
+   * record (a/layout.h). The walk is the owner's, at a poll or in a native, so
+   * moving it is not a data race; the context is const here only because
+   * reading frames never changes the guest's state. */
+  if (stack != NULL && !grcore_activation_absorb_cell((GRCORE_Stack *)stack)) {
+    out_walk->failing = true;
+    out_walk->reason =
+        "compiled code recorded where a walk starts with no JIT activation open";
+  }
   return GRCORE_OK;
 }
 
