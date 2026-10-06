@@ -930,6 +930,16 @@ moves every unpinned object at every collection) is what exercises this pass;
 visitor that moves every reference, and was seen to fail with the recomputation
 removed.
 
+The decision behind it is runtime-heap's relocation torture (its `design.md`): a
+test-only build mode that moves every unpinned object at every collection and
+poisons the old cell, which proves that every reference a precise walk reports is
+one a collector may rewrite. This pass is the half of it that lives here. The
+alternatives that were rejected there apply here too: checking reported slots
+against a shadow without moving anything (a stale reference to an object that did
+not move reads good data), relocating only the roots (the defect worth finding is
+a field reported through a copy), and shipping the mode in every build behind a
+flag (the shipped collector must be shown to move nothing).
+
 Rejected: **reporting the derived pointer as a root of its own** (a precise walk
 would find an address that is not the start of an object, and a moving collector
 cannot update it without knowing its base); **recomputing from the metadata's
