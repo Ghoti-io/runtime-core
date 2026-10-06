@@ -77,15 +77,28 @@ struct GRCORE_AbstractFrame {
   GRCORE_FrameRef frame;                   ///< The frame, for stack.h.
   /**
    * The base of a compiled frame on the native stack (AD-28), or zero for an
-   * interpreter frame. A compiled frame has no guest frame behind it: `frame`
-   * is the null reference, the stack.h accessors refuse it, and its slots are
-   * read through ::grcore_frame_slot and ::grcore_frame_slot_tagged, which read
-   * the native frame by `site`, as they were, with no conversion.
+   * interpreter frame. `frame` is the null reference for a compiled frame, the
+   * stack.h accessors refuse it, and its slots are read through
+   * ::grcore_frame_slot and ::grcore_frame_slot_tagged, which read the native
+   * frame by `site`, as they were, with no conversion. The guest frame it
+   * stands for, if any, is `guest_frame`.
    */
   uintptr_t native_base;
   /** The site a compiled frame is stopped at (its stack map and frame state);
    *  NULL for an interpreter frame. Valid while the code is registered. */
   const GRCORE_CodeSite * site;
+  /**
+   * For a compiled frame that has a guest frame, that frame: every guest call
+   * pushes the callee's guest frame, compiled or not (AD-28), so the compiled
+   * frame and its guest frame are one frame here, shown once, by the compiled
+   * frame's identity and slots. The guest frame's own slots are stale until the
+   * compiled frames are rebuilt and the walk does not show them. The null
+   * reference for an interpreter frame, and for a compiled frame whose guest
+   * frame is not there (a run whose record had none, or whose function does not
+   * match). Its header and anchors (budget scopes, engine call records) belong
+   * to it; do not read its slots.
+   */
+  GRCORE_FrameRef guest_frame;
 };
 
 /**

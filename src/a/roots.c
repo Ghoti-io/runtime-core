@@ -157,9 +157,14 @@ static void visit_range(GRCORE_Context * context, const GRCORE_Stack * stack,
  * has no decoder of its own, so its words are read as the addresses they are.
  *
  * Compiled frames (AD-28) are reported precisely, by their stack maps, in
- * place among the guest frames: a compiled frame of a record comes before the
- * guest frames that were on the stack when the record was entered. A range
- * leaves out the compiled frames it contains. A broken chain aborts.
+ * place among the guest frames. Every guest call pushes the callee's guest
+ * frame, so a compiled frame normally has one (`grcore_compiled_guest_index`):
+ * the two are one frame, read through the stack map, and the guest frame's own
+ * slots, which are stale until a rebuild, are not reported (its engine `roots`
+ * hook still is, since what it reports is not a slot). A compiled frame with no
+ * guest frame to pair with comes before the guest frames that were on the stack
+ * when its record was entered. A range leaves out the compiled frames it
+ * contains. A broken chain aborts.
  * Nothing here pushes or polls, so the buffer does not move. */
 static void guest_enumerate(
     GRCORE_Context * context, void * value, const GRCORE_RootVisitor * visitor) {
@@ -172,20 +177,39 @@ static void guest_enumerate(
   grcore_compiled_walk_begin(context, &walk);
   bool have = next_compiled(&walk, &cf);
   while (true) {
-    while (have && cf.base_frames >= remaining) {
-      visit_compiled(&cf, visitor);
-      have = next_compiled(&walk, &cf);
-    }
-    if (ref.offset == 0) {
-      break;
-    }
     GRCORE_AbstractFrame frame;
     GRCORE_FrameHeader h;
-    if (!grcore_stack_hook_frame(stack, ref, depth, &frame, &h)) {
+    bool have_guest = ref.offset != 0 &&
+        grcore_stack_hook_frame(stack, ref, depth, &frame, &h);
+    /* A compiled frame that has a guest frame (every guest call pushes one) is
+     * one frame, read through its stack map: the guest frame's own slots are
+     * stale until a rebuild, and are not reported (AD-28). */
+    bool paired = false;
+    while (have) {
+      size_t index;
+      bool can_pair = grcore_compiled_guest_index(&cf, &index);
+      if (have_guest && can_pair && index == remaining - 1 &&
+          h.engine == cf.engine && h.function == cf.identity.function) {
+        visit_compiled(&cf, visitor);
+        have = next_compiled(&walk, &cf);
+        paired = true;
+        break;
+      }
+      if (have_guest && can_pair && remaining - 1 > index) {
+        break; /* a guest frame above this compiled frame's own */
+      }
+      if (!have_guest || cf.base_frames >= remaining) {
+        visit_compiled(&cf, visitor);
+        have = next_compiled(&walk, &cf);
+        continue;
+      }
+      break;
+    }
+    if (!have_guest) {
       break;
     }
     const GRCORE_EngineDescriptor * d = frame.descriptor;
-    if (visitor->slot != NULL && d->slot_kind != NULL) {
+    if (!paired && visitor->slot != NULL && d->slot_kind != NULL) {
       for (size_t i = 0; i < h.slot_count; i++) {
         if (d->slot_kind(&frame, i) == GRCORE_SLOT_VALUE) {
           uint64_t * slot = (uint64_t *)(void *)(stack->buffer + ref.offset +
@@ -194,6 +218,8 @@ static void guest_enumerate(
         }
       }
     }
+    /* The engine's own roots for the frame (an open upvalue, a side table) are
+     * the frame's whether or not its slots are stale. */
     if (grcore_engine_roots(d) != NULL) {
       grcore_engine_roots(d)(context, &frame, visitor);
     }

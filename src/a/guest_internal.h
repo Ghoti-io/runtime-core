@@ -206,6 +206,23 @@ void grcore_registry_destroy(GRCORE_Stack * stack);
 bool grcore_registry_find(const GRCORE_Stack * stack, uintptr_t address,
     GRCORE_CodeRange * out);
 
+/**
+ * @brief Where, in the guest stack, the guest frame of a compiled frame is.
+ *
+ * Every guest call pushes the callee's guest frame, compiled or not (AD-28), so
+ * the frames of a compiled run stand for consecutive guest frames: the run's
+ * outermost frame is the function the interpreter entered (its guest frame is
+ * the last one the record's `base_frames` counts), and each frame inward is
+ * the next guest frame above it. Guest frames above the innermost compiled
+ * frame's are not paired (a callee pushed and not yet entered).
+ *
+ * @param out_index Receives the index from the outermost frame, zero based.
+ * @return False when the record had no guest frame at its entry, so nothing
+ *   is paired.
+ */
+bool grcore_compiled_guest_index(
+    const GRCORE_CompiledFrame * frame, size_t * out_index);
+
 /** @brief Moves the walk-start cell compiled code stored (a/layout.h) into the
  *   innermost activation record, and clears it (activation.c).
  *

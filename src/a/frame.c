@@ -68,8 +68,10 @@ GRCORE_Result grcore_frame_walk_begin(
   return GRCORE_OK;
 }
 
-/* A compiled frame, as an abstract frame (AD-28). It is placed before the guest
- * frames that were on the stack when its record was entered. */
+/* A compiled frame, as an abstract frame (AD-28). It is placed by the guest
+ * frame it stands for when there is one (every guest call pushes one), and
+ * otherwise before the guest frames that were on the stack when its record was
+ * entered. */
 static void compiled_abstract_frame(GRCORE_FrameWalk * walk,
     const GRCORE_Stack * stack, GRCORE_AbstractFrame * out) {
   const GRCORE_CompiledFrame * cf = &walk->pending;
@@ -111,18 +113,39 @@ bool grcore_frame_walk_next(
     return false;
   }
   const GRCORE_Stack * stack = grcore_context_stack(walk->context);
-  if (walk->has_pending &&
-      (walk->next.offset == 0 || walk->pending.base_frames >= walk->remaining)) {
-    compiled_abstract_frame(walk, stack, out_frame);
-    walk->depth++;
-    pull_compiled(walk);
-    return true;
-  }
-  if (walk->next.offset == 0) {
-    return false;
-  }
   GRCORE_FrameHeader h;
-  if (!grcore_stack_read_frame(stack, walk->next, &h)) {
+  bool have_guest =
+      walk->next.offset != 0 && grcore_stack_read_frame(stack, walk->next, &h);
+  if (walk->has_pending) {
+    /* A compiled frame with a guest frame is that one frame, shown by the
+     * compiled frame's identity and read through its stack map; the guest
+     * frame's slots are stale until a rebuild, so it is not shown again. */
+    size_t index;
+    bool can_pair = have_guest && grcore_compiled_guest_index(&walk->pending, &index);
+    bool paired = can_pair && index == walk->remaining - 1 &&
+        h.engine == walk->pending.engine &&
+        h.function == walk->pending.identity.function;
+    bool emit;
+    if (paired) {
+      emit = true;
+    } else if (can_pair && walk->remaining - 1 > index) {
+      emit = false; /* a guest frame above this compiled frame's own */
+    } else {
+      emit = walk->next.offset == 0 || walk->pending.base_frames >= walk->remaining;
+    }
+    if (emit) {
+      compiled_abstract_frame(walk, stack, out_frame);
+      walk->depth++;
+      pull_compiled(walk);
+      if (paired) {
+        out_frame->guest_frame = walk->next;
+        walk->next.offset = (size_t)h.prev;
+        walk->remaining--;
+      }
+      return true;
+    }
+  }
+  if (!have_guest) {
     return false;
   }
   const GRCORE_EngineDescriptor * d = stack->engines[h.engine - 1];
@@ -142,6 +165,7 @@ bool grcore_frame_walk_next(
   f.frame = walk->next;
   f.native_base = 0;
   f.site = NULL;
+  f.guest_frame.offset = 0;
   *out_frame = f;
   walk->next.offset = (size_t)h.prev;
   walk->depth++;
@@ -169,6 +193,7 @@ bool grcore_stack_hook_frame(const GRCORE_Stack * stack, GRCORE_FrameRef ref,
   out->frame = ref;
   out->native_base = 0;
   out->site = NULL;
+  out->guest_frame.offset = 0;
   *header = h;
   return true;
 }

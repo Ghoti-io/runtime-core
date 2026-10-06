@@ -1323,3 +1323,163 @@ TEST(WalkCell, ACellSetWhileTheInnermostRecordIsNotAJitOneIsABrokenWalkAndAborts
   cell_of(w.ctx)[1] = 0;
   ASSERT_EQ(grcore_activation_leave(w.stack, native), GRCORE_OK);
 }
+
+/* ---- A compiled frame and its guest frame are one frame (AD-28) ------------ */
+
+namespace {
+
+/* What a compiled call chain leaves: every guest call pushed the callee's guest
+ * frame, so the interpreter's entry function and each callee below it have a
+ * guest frame of their own, stale until a rebuild. Three compiled frames, the
+ * innermost stopped at site 0 (function 100) and the outermost at site 2
+ * (function 102), over guest frames 102, 101, 100 (outermost first), entered
+ * with one guest frame on the stack. An optional extra frame sits above the
+ * innermost: a callee that was pushed and has not been entered. */
+struct PairedScene {
+  HandStack st{3};
+  void guest(CWorld & w, GRCORE_Stack * s, uint64_t fn, uint64_t first) {
+    GRCORE_FrameRef f;
+    EXPECT_EQ(grcore_stack_push(s, w.alpha, 2, &f), GRCORE_OK);
+    grcore_stack_slot_set(s, f, 0, first);
+    grcore_stack_slot_set(s, f, 1, first + 1); // alpha's VALUE slot
+    grcore_stack_set_identity(s, f, GRCORE_PollIdentity{fn, 0});
+  }
+  void setup(CWorld & w, GRCORE_Stack * s, uint64_t extra_fn = 0,
+      uint64_t innermost_fn = 100) {
+    guest(w, s, 102, 10);
+    GRCORE_ActivationRef rec = enter(s, GRCORE_ACTIVATION_JIT);
+    std::vector<uintptr_t> b = st.build(w.code, 0, 3, 0, kOutside);
+    EXPECT_EQ(grcore_activation_set_compiled(s, rec, b[0], w.code.at(0)), GRCORE_OK);
+    guest(w, s, 101, 20);
+    guest(w, s, innermost_fn, 30);
+    if (extra_fn != 0) {
+      guest(w, s, extra_fn, 40);
+    }
+  }
+};
+
+} // namespace
+
+TEST(PairedFrames, EachCompiledFrameAndItsGuestFrameAreReportedAsRootsOnlyOnce) {
+  CWorld w;
+  PairedScene scene;
+  scene.setup(w, w.stack);
+  Seen seen;
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  // The compiled frames' stack-map references, innermost first, and none of the
+  // guest frames' stale VALUE slots (11, 21, 31).
+  EXPECT_EQ(seen.values,
+      (std::vector<uint64_t>{HandStack::ref_of(0), HandStack::ref_of(1),
+          HandStack::ref_of(2)}));
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(PairedFrames, AGuestFrameAboveTheInnermostCompiledFrameIsStillAnOrdinaryFrame) {
+  // A callee that was pushed and has not been entered has no compiled frame: it
+  // is reported through its own slots, and the compiled frames below it keep
+  // their pairing.
+  CWorld w;
+  PairedScene scene;
+  scene.setup(w, w.stack, /*extra_fn=*/999);
+  Seen seen;
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  EXPECT_EQ(seen.values,
+      (std::vector<uint64_t>{41, HandStack::ref_of(0), HandStack::ref_of(1),
+          HandStack::ref_of(2)}));
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(PairedFrames, AGuestFrameThatIsNotTheCompiledFramesFunctionIsNotPairedAndNothingIsLost) {
+  // The pairing is a claim about the stack; where it does not hold, the frames
+  // are reported as before, which can retain too much and never too little.
+  CWorld w;
+  PairedScene scene;
+  scene.setup(w, w.stack, 0, /*innermost_fn=*/555);
+  Seen seen;
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  // The innermost compiled frame's guest frame is the wrong function, and the
+  // one next to it is read as its own too, so both of those are reported; the
+  // outermost pairs as it should and its stale slot (11) is not.
+  std::multiset<uint64_t> got(seen.values.begin(), seen.values.end());
+  for (uint64_t want : {HandStack::ref_of(0), HandStack::ref_of(1),
+           HandStack::ref_of(2), uint64_t{21}, uint64_t{31}}) {
+    EXPECT_EQ(got.count(want), 1u) << want;
+  }
+  EXPECT_EQ(got.size(), 5u);
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(PairedFrames, ARecordEnteredWithNoGuestFrameHasNothingToPairWith) {
+  CWorld w;
+  HandStack st(3);
+  set_up_run(w, st, 0, 3, 0);
+  GRCORE_FrameRef f;
+  ASSERT_EQ(grcore_stack_push(w.stack, w.alpha, 2, &f), GRCORE_OK);
+  grcore_stack_slot_set(w.stack, f, 1, 77);
+  grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{102, 0});
+  Seen seen;
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  EXPECT_EQ(std::multiset<uint64_t>(seen.values.begin(), seen.values.end()),
+      (std::multiset<uint64_t>{HandStack::ref_of(0), HandStack::ref_of(1),
+          HandStack::ref_of(2), 77}));
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(PairedFrames, TheAbstractWalkShowsEachPairedFrameOnceByTheCompiledFramesIdentity) {
+  CWorld w(0);
+  PairedScene scene;
+  PauseGuest g;
+  g.setup = [&](GRCORE_Stack * s) { scene.setup(w, s, 0); };
+  g.poll_function = 100;
+  g.poll_offset = 0;
+  pause_with(w, g);
+  bool broken = true;
+  std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx, &broken);
+  EXPECT_FALSE(broken);
+  ASSERT_EQ(frames.size(), 3u);
+  for (size_t i = 0; i < 3; i++) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(frames[i].depth, i);
+    EXPECT_NE(frames[i].native_base, 0u);
+    EXPECT_EQ(frames[i].identity.function, 100u + i);
+    EXPECT_EQ(frames[i].frame.offset, 0u) << "the stack.h accessors stay refused";
+    EXPECT_NE(frames[i].guest_frame.offset, 0u) << "the guest frame it stands for";
+    // The slots are the compiled frame's, through its stack map.
+    GRCORE_SlotKind kind;
+    uint64_t value;
+    ASSERT_EQ(grcore_frame_slot(&frames[i], 0, &kind, &value), GRCORE_OK);
+    EXPECT_EQ(kind, GRCORE_SLOT_VALUE);
+    EXPECT_EQ(value, HandStack::ref_of(i));
+  }
+  // The guest frames the compiled frames stand for are the three on the stack,
+  // innermost first.
+  GRCORE_FrameRef top = grcore_stack_top(w.stack);
+  EXPECT_EQ(frames[0].guest_frame.offset, top.offset);
+  EXPECT_EQ(frames[1].guest_frame.offset, grcore_stack_caller(w.stack, top).offset);
+}
+
+TEST(PairedFrames, AFrameWalkWithAnExtraGuestFrameShowsItFirstAndThenThePairedOnes) {
+  CWorld w(0);
+  PairedScene scene;
+  PauseGuest g;
+  g.setup = [&](GRCORE_Stack * s) { scene.setup(w, s, 999); };
+  g.poll_function = 999;
+  g.poll_offset = 0;
+  pause_with(w, g);
+  bool broken = true;
+  std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx, &broken);
+  EXPECT_FALSE(broken);
+  ASSERT_EQ(frames.size(), 4u);
+  EXPECT_EQ(frames[0].native_base, 0u);
+  EXPECT_EQ(frames[0].identity.function, 999u);
+  EXPECT_EQ(frames[0].guest_frame.offset, 0u);
+  for (size_t i = 1; i < 4; i++) {
+    EXPECT_NE(frames[i].native_base, 0u);
+    EXPECT_EQ(frames[i].identity.function, 99u + i);
+    EXPECT_EQ(frames[i].depth, i);
+  }
+}

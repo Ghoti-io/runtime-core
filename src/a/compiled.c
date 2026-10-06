@@ -199,6 +199,15 @@ GRCORE_CompiledWalkStatus grcore_compiled_walk_next(
   return st;
 }
 
+bool grcore_compiled_guest_index(
+    const GRCORE_CompiledFrame * frame, size_t * out_index) {
+  if (frame->base_frames == 0 || frame->run_depth >= frame->run_length) {
+    return false;
+  }
+  *out_index = frame->base_frames - 1u + (frame->run_length - 1u - frame->run_depth);
+  return true;
+}
+
 const char * grcore_compiled_walk_reason(const GRCORE_CompiledWalk * walk) {
   return walk != NULL && walk->broken ? walk->reason : NULL;
 }
