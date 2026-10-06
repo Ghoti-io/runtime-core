@@ -101,12 +101,16 @@ typedef enum GRCORE_CodeLocationKind {
  *
  * `slot_kind` tells a consumer whether the word is a reference
  * (::GRCORE_SLOT_VALUE) or plain bits (::GRCORE_SLOT_RAW). For a `CONSTANT`
- * the immediate is `(uint64_t)value`.
+ * the immediate is `(uint64_t)value`. `representation` says what a raw word
+ * means; it is last, so that a producer which sets the first three members
+ * leaves it zero, which is ::GRCORE_REPR_BITS. The format version stays 1: the
+ * struct grew, and every producer in the tree was updated with it.
  */
 typedef struct GRCORE_CodeLocation {
   GRCORE_CodeLocationKind kind; ///< Which of the three.
   GRCORE_SlotKind slot_kind;    ///< Reference or raw bits.
   int64_t value;                ///< Offset or immediate; zero for `DEAD`.
+  GRCORE_Representation representation; ///< What a raw word is (AD-27).
 } GRCORE_CodeLocation;
 
 /**
@@ -168,7 +172,9 @@ typedef struct GRCORE_CodeMeta {
  * argument; offsets that are not strictly increasing or that are not inside
  * the code; a site kind or location kind that is not one of the enum's; a
  * slot offset that is not 8-byte aligned or not inside `frame_bytes`; a stack
- * map entry that is not a frame slot; a derived pointer whose base is not a
+ * map entry that is not a frame slot; a representation that is not one of the
+ * enum's; a converting representation on a ::GRCORE_SLOT_VALUE location, on a
+ * `DEAD` location, or in a stack map (a raw value is never a reference); a derived pointer whose base is not a
  * live reference of the same site; a function identity whose interpreter-slot
  * count differs between two of its sites; and a NULL array with a non-zero
  * count. Reads only the table it is given. The cost is the sites times the
@@ -183,6 +189,19 @@ typedef struct GRCORE_CodeMeta {
  */
 GRCORE_API GRCORE_Result grcore_codemeta_validate(
     const GRCORE_CodeMeta * meta, size_t code_bytes, const char ** out_reason);
+
+/**
+ * @brief ::grcore_codemeta_validate, also naming where the offence is.
+ *
+ * On `GRCORE_ERR_CORRUPT`, `*out_site` is the index in `meta->sites` of the
+ * site that was refused and `*out_location` the index of the offending entry
+ * within that site's stack map or frame state (the reason string says which),
+ * or `SIZE_MAX` when the offence is not at a location or not at a site (a
+ * wrong version, say). Both are `SIZE_MAX` on success. Either may be NULL.
+ */
+GRCORE_API GRCORE_Result grcore_codemeta_validate_at(const GRCORE_CodeMeta * meta,
+    size_t code_bytes, const char ** out_reason, size_t * out_site,
+    size_t * out_location);
 
 /**
  * @brief Finds the site at exactly `code_offset`.

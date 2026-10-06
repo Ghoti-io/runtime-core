@@ -66,7 +66,7 @@ static_assert(offsetof(OldDescriptor, name) ==
 GRCORE_EngineDescriptor tripwire_descriptor(const char * name) {
   return GRCORE_ENGINE_DESCRIPTOR_INIT(name, value_slot, nullptr, nullptr,
       GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, tripwire_roots, tripwire_unwind);
+      GRCORE_ConservativeDecoder{0, 0, 0}, tripwire_roots, tripwire_unwind, nullptr, nullptr);
 }
 
 // An exactly-sized heap block holding an OldDescriptor. Reading one byte past
@@ -105,7 +105,7 @@ TEST(EngineSize, TheInitialiserWritesTheSizeOfTheStructItWasCompiledAgainst) {
   static const GRCORE_EngineDescriptor d = GRCORE_ENGINE_DESCRIPTOR_INIT("d",
       nullptr, nullptr, nullptr,
       GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, nullptr, nullptr);
   EXPECT_EQ(d.size, sizeof(GRCORE_EngineDescriptor));
   EXPECT_GE(d.size, GRCORE_ENGINE_DESCRIPTOR_MIN_SIZE);
   EXPECT_TRUE(grcore_engine_descriptor_valid(&d));
@@ -231,6 +231,100 @@ TEST(EngineSize, ADescriptorFromANewerHeaderIsAcceptedAndItsUnknownTailIgnored) 
     EXPECT_EQ(g_unwind_calls, 1);
   }
   std::free(block);
+}
+
+// The generation between: everything through `unwind`, and no conversion.
+struct MidDescriptor {
+  OldDescriptor old;
+  void (*roots)(GRCORE_Context *, const GRCORE_AbstractFrame *,
+      const GRCORE_RootVisitor *);
+  void (*unwind)(GRCORE_Context *, const GRCORE_AbstractFrame *);
+};
+static_assert(offsetof(MidDescriptor, unwind) ==
+        offsetof(GRCORE_EngineDescriptor, unwind),
+    "the middle layout is a prefix of the current one");
+
+namespace {
+GRCORE_CodeLocation loc_of(GRCORE_Representation r) {
+  GRCORE_CodeLocation l{};
+  l.kind = GRCORE_LOC_FRAME_SLOT;
+  l.slot_kind = GRCORE_SLOT_RAW;
+  l.value = -8;
+  l.representation = r;
+  return l;
+}
+
+// Binds one site whose only location has representation `r`.
+GRCORE_Result bind_with(RunWorld & w, GRCORE_EngineId id, GRCORE_Representation r,
+    const char ** why) {
+  GRCORE_CodeLocation loc = loc_of(r);
+  GRCORE_CodeSite site{};
+  site.code_offset = 4;
+  site.frame_state = &loc;
+  site.frame_state_count = 1;
+  GRCORE_CodeMeta meta{};
+  meta.version = GRCORE_CODEMETA_FORMAT_VERSION;
+  meta.frame_bytes = 16;
+  meta.code_bytes = 16;
+  meta.site_count = 1;
+  meta.sites = &site;
+  return grcore_deopt_bind(w.ctx, id, &meta, why);
+}
+} // namespace
+
+TEST(EngineSize, ADescriptorFromBeforeConversionsBindsBitsAndRefusesAnythingElse) {
+  const GRCORE_EngineDescriptor * old = old_descriptor_on_heap();
+  auto * mid = static_cast<MidDescriptor *>(std::malloc(sizeof(MidDescriptor)));
+  std::memset(mid, 0, sizeof *mid);
+  mid->old.size = sizeof(MidDescriptor);
+  mid->old.name = "mid";
+  mid->old.slot_kind = value_slot;
+  {
+    RunWorld w;
+    GRCORE_EngineId old_id = 0, mid_id = 0;
+    ASSERT_EQ(grcore_engine_register(w.ctx, old, &old_id), GRCORE_OK);
+    ASSERT_EQ(grcore_engine_register(w.ctx,
+                  reinterpret_cast<const GRCORE_EngineDescriptor *>(mid),
+                  &mid_id),
+        GRCORE_OK);
+    for (GRCORE_EngineId id : {old_id, mid_id}) {
+      const char * why = nullptr;
+      // It reads as BITS: verbatim code binds.
+      EXPECT_EQ(bind_with(w, id, GRCORE_REPR_BITS, &why), GRCORE_OK);
+      // Anything it would have to convert is refused, naming the kind.
+      const char * names[] = {"I32", "I64", "F32", "F64"};
+      int k = 0;
+      for (GRCORE_Representation r : {GRCORE_REPR_I32, GRCORE_REPR_I64,
+               GRCORE_REPR_F32, GRCORE_REPR_F64}) {
+        why = nullptr;
+        EXPECT_EQ(bind_with(w, id, r, &why), GRCORE_ERR_UNSUPPORTED);
+        ASSERT_NE(why, nullptr);
+        EXPECT_NE(std::strstr(why, names[k]), nullptr) << why;
+        k++;
+      }
+    }
+  }
+  std::free(const_cast<GRCORE_EngineDescriptor *>(old));
+  std::free(mid);
+}
+
+TEST(EngineSize, TheConversionsBeyondTheStatedSizeAreNotReadAndAtFullSizeAre) {
+  // The control for the test above: the same full-size descriptor binds
+  // converting code, and shortened to the old size it does not, with both
+  // callbacks armed in the tail. A core that ignored `size` binds both.
+  ConvLog log;
+  g_conv = &log;
+  GRCORE_EngineDescriptor full = kConv;
+  GRCORE_EngineDescriptor shortened = kConv;
+  shortened.size = offsetof(GRCORE_EngineDescriptor, unwind) + sizeof(void *);
+  RunWorld w;
+  GRCORE_EngineId full_id = 0, short_id = 0;
+  ASSERT_EQ(grcore_engine_register(w.ctx, &full, &full_id), GRCORE_OK);
+  ASSERT_EQ(grcore_engine_register(w.ctx, &shortened, &short_id), GRCORE_OK);
+  const char * why = nullptr;
+  EXPECT_EQ(bind_with(w, full_id, GRCORE_REPR_F32, &why), GRCORE_OK);
+  EXPECT_EQ(bind_with(w, short_id, GRCORE_REPR_F32, &why), GRCORE_ERR_UNSUPPORTED);
+  g_conv = nullptr;
 }
 
 int main(int argc, char ** argv) {

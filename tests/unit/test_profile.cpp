@@ -229,7 +229,7 @@ TEST(Profiler, ALocationIsKeyedByTheTextOfItsFileNotByThePointer) {
   };
   static const GRCORE_EngineDescriptor twin = GRCORE_ENGINE_DESCRIPTOR_INIT("twin", nullptr, Twin::locate,
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, nullptr, nullptr);
   RunWorld w;
   GRCORE_EngineId id = 0;
   ASSERT_EQ(grcore_engine_register(w.ctx, &twin, &id), GRCORE_OK);

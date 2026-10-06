@@ -729,6 +729,61 @@ reader to each code generator or engine: the format is the core's (AD-14), and
 a reader written beside each writer is how a writer and a reader come to agree
 only with each other.
 
+**Representation-tagged frame state (AD-27, CAP-9 of the calls spec).**
+A frame-state location carries a representation after its three older members:
+`BITS` (zero), `I32`, `I64`, `F32` or `F64` (`GRCORE_Representation`, declared
+in `a/engine.h` because the descriptor's callbacks take it, and used by
+`a/codemeta.h`). Zero is `BITS`, so a location a producer built from before the
+field existed, or zero-initialised, means "copy the word verbatim", which is what
+pc, sp and fuel always meant; every existing producer and consumer therefore
+behaves as it did. A representation is never a new `GRCORE_SlotKind`: whether a
+word is a reference is the collector's question and is answered by the slot
+kind alone, and a raw `I32` must never be answerable as "a reference" by any
+reader of that enum. The validator refuses a representation out of range, a
+converting one on a `VALUE` location (a raw value is not a reference), on a
+`DEAD` location (nothing to convert) and in a stack map (a raw value never
+appears there as a reference), and `grcore_codemeta_validate_at` says which
+site and which entry. The format version stays 1, by decision: the library is
+unreleased, so no table outside the tree exists to misread, and every producer
+in the tree was updated with the struct, which grew at its end.
+
+The engine descriptor gains `convert` and `reverse` at its end, read only where
+`size` covers them (an older descriptor reads as having neither, so it converts
+nothing and binds only `BITS` code). `grcore_deopt_bind` is the binding check:
+code with a converting location is refused with `GRCORE_ERR_UNSUPPORTED`, the
+reason naming the representation, unless both callbacks exist. A missing
+conversion is an error and never a default, because the plausible default (copy
+the bits) is exactly a raw word reaching a slot the engine reads as a value.
+Reading shows a raw slot with its representation (`grcore_deopt_read_tagged`)
+and converts nothing, so inspection, DECIDE and OBSERVE handlers never cause a
+conversion.
+
+A rebuild (`grcore_deopt_rebuild`) is two-phase and draws on a reservation
+(`grcore_deopt_reserve`) taken when compiled code is entered, sized by the
+compiler for the most converting locations live at any site. It reads every
+non-converting word and writes null into every converting slot; converts each
+raw value, through `convert`, into a cell of the reservation, which is
+registered as a root source so a collection sees it; and only then copies the
+cells into the slots. Every refusal (a short reservation, a missing callback, a
+wrong count) happens before the first write, so after that the rebuild cannot
+fail, allocates nothing and does not collect, and a collector sees at any
+moment null or a converted value, never a raw word and never a half-written
+frame. Write-back (`grcore_deopt_write_back_checked`) installs each converting
+slot through `reverse`, which is the engine's type test: being representable
+is not enough (an integer slot does not accept a float whose bits would read as
+one). All values are tested before any word is written, and a value that fails
+leaves the frame untouched and reports `GRCORE_DEOPT_EXIT_AT_SITE`, which the
+engine maps to its existing exit-at-this-site path. The old
+`grcore_deopt_write_back` is unchanged (reference slots only).
+
+Rejected: a representation as another `GRCORE_SlotKind` (the collector's enum
+would then carry cases it must never act on); converting at every poll (a poll
+with nothing pending would pay for values nobody reads); a default conversion
+that copies the bits (above); allocating the converted values from the engine's
+heap during the rebuild (a rebuild could then fail or collect, with the frame
+half raw); and bumping the format version (nothing outside the tree to protect,
+and the version tests would then measure nothing).
+
 ## B, part 3: context snapshots
 
 A snapshot (`b/snapshot.h`) is the first thing in this library that outlives

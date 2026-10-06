@@ -322,7 +322,7 @@ inline GRCORE_Result alpha_variable(const GRCORE_AbstractFrame * frame,
 inline const GRCORE_EngineDescriptor kAlpha = GRCORE_ENGINE_DESCRIPTOR_INIT("alpha", alpha_slot_kind,
     alpha_locate, alpha_inspect,
     GRCORE_ScopeInterface{alpha_scope_count, alpha_scope, alpha_variable},
-    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
+    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, nullptr, nullptr);
 
 inline GRCORE_SlotKind beta_slot_kind(
     const GRCORE_AbstractFrame *, size_t) {
@@ -340,11 +340,11 @@ inline size_t beta_inspect(const GRCORE_Context *, GRCORE_SlotKind,
 }
 inline const GRCORE_EngineDescriptor kBeta = GRCORE_ENGINE_DESCRIPTOR_INIT("beta", beta_slot_kind,
     beta_locate, beta_inspect, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0xFFFF0, 4, 0x1000}, nullptr, nullptr);
+    GRCORE_ConservativeDecoder{0xFFFF0, 4, 0x1000}, nullptr, nullptr, nullptr, nullptr);
 
 inline const GRCORE_EngineDescriptor kGamma = GRCORE_ENGINE_DESCRIPTOR_INIT("gamma", nullptr, nullptr,
     nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
+    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, nullptr, nullptr);
 
 /* A RunWorld with the two engines registered. */
 struct StackWorld : RunWorld {
@@ -415,7 +415,7 @@ inline void delta_unwind(
 }
 inline const GRCORE_EngineDescriptor kDelta = GRCORE_ENGINE_DESCRIPTOR_INIT("delta", delta_slot_kind, nullptr,
     nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-    GRCORE_ConservativeDecoder{0xFF00, 8, 0x40}, delta_roots, delta_unwind);
+    GRCORE_ConservativeDecoder{0xFF00, 8, 0x40}, delta_roots, delta_unwind, nullptr, nullptr);
 
 /* A StackWorld that also has the hooked engine, and a log the hooks write. */
 struct HookWorld : StackWorld {
@@ -589,5 +589,89 @@ class MigrantThread {
   std::atomic<bool> done_{false};
   std::thread thread_;
 };
+
+/* "conv": an engine that converts every AD-27 representation, and a log.
+ *
+ * Its values are tagged words: the top byte says what the value is (1 an
+ * integer-32, 2 an integer-64, 3 a float-32, 4 a float-64) and the low 56 bits
+ * are the payload. The 64-bit ones do not fit in a payload, so they are boxed
+ * in a pool the test sized beforehand (the "reservation": `convert` allocates
+ * nothing, it only takes the next entry and counts it). `reverse` is the type
+ * test: a value fits a representation only if its tag is that
+ * representation's, so an integer is not accepted where a float is expected
+ * even though its bits could be read as one.
+ *
+ * `on_convert` runs inside every `convert`: a test hangs a forced collection
+ * (a root enumeration) there, to see what a collector would see in the middle
+ * of a rebuild. */
+struct ConvLog {
+  std::vector<uint64_t> pool;       // boxed 64-bit raws; reserved by the test
+  size_t pool_limit = 0;            // entries the reservation allows
+  int converts = 0;                 // calls of convert
+  int reverses = 0;                 // calls of reverse
+  int pool_overruns = 0;            // convert needed an entry past the limit
+  std::function<void(GRCORE_Context *)> on_convert;
+};
+inline ConvLog * g_conv = nullptr;
+
+constexpr uint64_t kConvTagShift = 56;
+constexpr uint64_t kConvPayload = (UINT64_C(1) << kConvTagShift) - 1;
+inline uint64_t conv_tag_of(GRCORE_Representation r) {
+  switch (r) {
+  case GRCORE_REPR_I32: return 1;
+  case GRCORE_REPR_I64: return 2;
+  case GRCORE_REPR_F32: return 3;
+  case GRCORE_REPR_F64: return 4;
+  default: return 0;
+  }
+}
+inline void conv_convert(GRCORE_Context * context,
+    GRCORE_Representation rep, uint64_t raw, uint64_t * out_root) {
+  ConvLog & log = *g_conv;
+  log.converts++;
+  if (log.on_convert) {
+    log.on_convert(context);
+  }
+  uint64_t payload = raw & 0xFFFFFFFFull;
+  if (rep == GRCORE_REPR_I64 || rep == GRCORE_REPR_F64) {
+    if (log.pool.size() >= log.pool_limit) {
+      log.pool_overruns++;
+      *out_root = 0;
+      return;
+    }
+    payload = log.pool.size();
+    log.pool.push_back(raw);
+  }
+  *out_root = (conv_tag_of(rep) << kConvTagShift) | payload;
+}
+inline bool conv_reverse(GRCORE_Context *, GRCORE_Representation rep,
+    uint64_t value, uint64_t * out_raw) {
+  ConvLog & log = *g_conv;
+  log.reverses++;
+  if ((value >> kConvTagShift) != conv_tag_of(rep) || conv_tag_of(rep) == 0) {
+    return false;
+  }
+  uint64_t payload = value & kConvPayload;
+  if (rep == GRCORE_REPR_I64 || rep == GRCORE_REPR_F64) {
+    if (payload >= log.pool.size()) {
+      return false;
+    }
+    *out_raw = log.pool[payload];
+    return true;
+  }
+  if (payload > 0xFFFFFFFFull) {
+    return false;
+  }
+  *out_raw = payload;
+  return true;
+}
+inline GRCORE_SlotKind conv_slot_kind(const GRCORE_AbstractFrame *, size_t) {
+  return GRCORE_SLOT_VALUE;
+}
+inline const GRCORE_EngineDescriptor kConv = GRCORE_ENGINE_DESCRIPTOR_INIT(
+    "conv", conv_slot_kind, nullptr, nullptr,
+    GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
+    GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, conv_convert,
+    conv_reverse);
 
 #endif /* GHOTI_IO_GRCORE_TEST_HELPERS_H */

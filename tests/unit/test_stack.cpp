@@ -492,7 +492,7 @@ TEST(StackPoll, TheDescriptorIsNotAskedWhereAPollIsUnlessSomethingIsPending) {
         return GRCORE_Location{"x", 1};
       },
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
-      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr);
+      GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, nullptr, nullptr);
   RunWorld w;
   GRCORE_EngineId e;
   ASSERT_EQ(grcore_engine_register(w.ctx, &counting, &e), GRCORE_OK);

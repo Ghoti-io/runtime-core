@@ -71,6 +71,26 @@ typedef enum {
 } GRCORE_SlotKind;
 
 /**
+ * @brief What a raw word in a frame-state location stands for (AD-27).
+ *
+ * ::GRCORE_REPR_BITS is zero, so a location built without the field (zero
+ * initialised, or written by a producer from before the field existed) is a
+ * ::GRCORE_REPR_BITS one: a word copied verbatim, as pc, sp and fuel are.
+ * The others are raw machine values that the engine converts into its own
+ * value when a frame is rebuilt (`a/deopt.h`; the location is in `a/codemeta.h`). A raw value is never a
+ * reference: a converting representation is valid only on a
+ * ::GRCORE_SLOT_RAW location, and never in a stack map.
+ */
+typedef enum GRCORE_Representation {
+  GRCORE_REPR_BITS = 0, ///< Copied verbatim; no conversion.
+  GRCORE_REPR_I32,      ///< A 32-bit integer, in the low 32 bits.
+  GRCORE_REPR_I64,      ///< A 64-bit integer.
+  GRCORE_REPR_F32,      ///< A 32-bit float, its bits in the low 32 bits.
+  GRCORE_REPR_F64,      ///< A 64-bit float, its bits.
+  GRCORE_REPR_COUNT     ///< Not a representation; closes the enum.
+} GRCORE_Representation;
+
+/**
  * @brief How to read an address out of a word, without knowing the engine
  *   (AD-18).
  *
@@ -152,9 +172,10 @@ typedef struct GRCORE_ScopeInterface {
  * ::GRCORE_Key's (b/key.h has the argument and the rejected alternatives). The
  * first member, `size`, is the `sizeof(GRCORE_EngineDescriptor)` of the header
  * the descriptor was compiled against, and ::GRCORE_ENGINE_DESCRIPTOR_INIT
- * writes it. A member after `decoder` (`roots`, `unwind`) is read only where
+ * writes it. A member after `decoder` (`roots`, `unwind`, `convert`, `reverse`) is read only where
  * `size` covers it (::GRCORE_ENGINE_DESCRIPTOR_HAS), an absent one being NULL,
- * which for both means the engine has nothing to say. ::grcore_engine_register
+ * which for the first two means the engine has nothing to say and for the
+ * last two means it converts nothing (so it binds only `BITS` code). ::grcore_engine_register
  * refuses with ::GRCORE_ERR_INVALID a descriptor that
  * ::grcore_engine_descriptor_valid does not accept: a `size` below
  * ::GRCORE_ENGINE_DESCRIPTOR_MIN_SIZE (which includes zero) or off the
@@ -213,6 +234,30 @@ typedef struct GRCORE_EngineDescriptor {
    *  frame's `location` is not filled in. Absent (and so NULL) in a
    *  descriptor whose `size` ends before it. */
   void (*unwind)(GRCORE_Context * context, const GRCORE_AbstractFrame * frame);
+  /** Converts a raw value of representation `representation` (one of
+   *  ::GRCORE_REPR_I32 to ::GRCORE_REPR_F64; never ::GRCORE_REPR_BITS) into
+   *  the engine's own value, and writes that value to `*out_root` (AD-27).
+   *  `out_root` is a cell core provides, which a collector sees as a precise
+   *  root, so the converted value is safe in it. The hook **cannot fail and
+   *  must not collect**: every allocation it makes draws on memory reserved
+   *  beforehand, and it must not poll, push, pop or call the unwinder. It
+   *  runs only when a frame is rebuilt (`a/deopt.h`). NULL means the engine
+   *  converts nothing, and code with a converting location is refused at
+   *  binding (::grcore_deopt_bind); it is never defaulted. Absent (and so NULL)
+   *  in a descriptor whose `size` ends before it, which therefore binds only
+   *  ::GRCORE_REPR_BITS code. */
+  void (*convert)(GRCORE_Context * context,
+      GRCORE_Representation representation, uint64_t raw, uint64_t * out_root);
+  /** The reverse of `convert`, and the engine's type test: if `value` is a
+   *  value of the engine that is a valid `representation`, writes its raw
+   *  form to `*out_raw` and returns true. Otherwise returns false and writes
+   *  nothing. Being representable is not enough; the value must pass the
+   *  engine's own test for that representation (an integer slot does not
+   *  accept a float that merely happens to hold an integral number). Pure:
+   *  it allocates nothing and may be called twice for one value. NULL and
+   *  absent as for `convert`. */
+  bool (*reverse)(GRCORE_Context * context,
+      GRCORE_Representation representation, uint64_t value, uint64_t * out_raw);
 } GRCORE_EngineDescriptor;
 
 /**
@@ -226,7 +271,7 @@ typedef struct GRCORE_EngineDescriptor {
 /**
  * @brief The initialiser of an engine descriptor:
  *   `GRCORE_ENGINE_DESCRIPTOR_INIT(name, slot_kind, locate, inspect, scopes,
- *   decoder, roots, unwind)`.
+ *   decoder, roots, unwind, convert, reverse)`.
  *
  * Expands to a braced initialiser that begins with
  * `sizeof(GRCORE_EngineDescriptor)`, a constant expression in C17 and C++20.

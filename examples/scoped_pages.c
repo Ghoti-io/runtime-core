@@ -50,7 +50,7 @@ static void toy_unwind(
 }
 
 static const GRCORE_EngineDescriptor toy_engine = GRCORE_ENGINE_DESCRIPTOR_INIT("toy", NULL, NULL, NULL,
-    {NULL, NULL, NULL}, {0, 0, 0}, NULL, toy_unwind);
+    {NULL, NULL, NULL}, {0, 0, 0}, NULL, toy_unwind, NULL, NULL);
 
 typedef struct {
   const char * name;

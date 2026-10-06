@@ -71,7 +71,7 @@ static GRCORE_Location toy_locate(
 }
 
 static const GRCORE_EngineDescriptor toy_engine = GRCORE_ENGINE_DESCRIPTOR_INIT("toy", NULL, toy_locate,
-    NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL);
+    NULL, {NULL, NULL, NULL}, {0, 0, 0}, NULL, NULL, NULL, NULL);
 
 #define HOT_STEPS 40u
 #define COLD_STEPS 40u

@@ -53,7 +53,7 @@ struct Built {
 };
 
 GRCORE_CodeLocation slot(int64_t offset, GRCORE_SlotKind kind) {
-  return {GRCORE_LOC_FRAME_SLOT, kind, offset};
+  return {GRCORE_LOC_FRAME_SLOT, kind, offset, GRCORE_REPR_BITS};
 }
 
 /* Three sites of one function with two interpreter slots, one frame of 64. */
@@ -67,7 +67,7 @@ Built valid() {
     s.live = {slot(-8, GRCORE_SLOT_VALUE), slot(-16, GRCORE_SLOT_VALUE)};
     s.derived = {{-24, -8, 16}};
     s.state = {slot(-8, GRCORE_SLOT_VALUE),
-        {GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 99}};
+        {GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 99, GRCORE_REPR_BITS}};
     b.parts.push_back(s);
   }
   b.finish(64, 100);
@@ -224,7 +224,7 @@ TEST(CodeMeta, ADerivedPointersOwnAndBaseSlotsAreRangeChecked) {
 
 TEST(CodeMeta, TwoSitesOfOneFunctionMustAgreeOnTheSlotCount) {
   Built b = valid();
-  b.parts[2].state.push_back({GRCORE_LOC_DEAD, GRCORE_SLOT_RAW, 0});
+  b.parts[2].state.push_back({GRCORE_LOC_DEAD, GRCORE_SLOT_RAW, 0, GRCORE_REPR_BITS});
   b.finish(64, 100);
   EXPECT_NE(std::strstr(refuse(b), "slot count"), nullptr);
   // A different function may have a different count.
@@ -269,14 +269,14 @@ TEST(CodeMeta, WideSitesAndManyFunctionsAreValidatedAndTheirFlawsStillFound) {
     s.offset = 4 + i * 4;
     s.kind = GRCORE_SITE_GUARD;
     s.identity = {1000 + i, 0};
-    s.state = {{GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 1}};
+    s.state = {{GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 1, GRCORE_REPR_BITS}};
     many.parts.push_back(s);
   }
   many.finish(64, 4 * kMany + 8);
   EXPECT_EQ(grcore_codemeta_validate(&many.meta, many.meta.code_bytes, nullptr), GRCORE_OK);
   // The last site now names the first site's function with another slot count.
   many.parts.back().identity.function = 1000;
-  many.parts.back().state.push_back({GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 2});
+  many.parts.back().state.push_back({GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 2, GRCORE_REPR_BITS});
   many.finish(64, 4 * kMany + 8);
   why = refuse(many);
   EXPECT_NE(std::string(why).find("disagree on the slot count"), std::string::npos) << why;
@@ -354,7 +354,7 @@ TEST(CodeMeta, ARandomisedBuildValidateFindProperty) {
       for (size_t k = 0; k < count; k++) {
         p.state.push_back(rng() % 2 ? slot(-8, GRCORE_SLOT_VALUE)
                                     : GRCORE_CodeLocation{GRCORE_LOC_DEAD,
-                                          GRCORE_SLOT_RAW, 0});
+                                          GRCORE_SLOT_RAW, 0, GRCORE_REPR_BITS});
       }
     }
     b.finish(frame_bytes, code_bytes);
@@ -385,6 +385,101 @@ TEST(CodeMeta, TheUmbrellaIncludesTheHeaderFromCxx) {
   GRCORE_CodeMeta m{};
   EXPECT_EQ(m.site_count, 0u);
   EXPECT_EQ(GRCORE_CODEMETA_FORMAT_VERSION, 1u);
+}
+
+// ---- Representations (AD-27) ------------------------------------------------
+
+namespace {
+GRCORE_CodeLocation tagged(int64_t offset, GRCORE_SlotKind kind,
+    GRCORE_Representation r) {
+  GRCORE_CodeLocation l = slot(offset, kind);
+  l.representation = r;
+  return l;
+}
+} // namespace
+
+TEST(CodeMetaRepr, ZeroIsBitsAndTheVersionIsStillOne) {
+  EXPECT_EQ(static_cast<int>(GRCORE_REPR_BITS), 0);
+  GRCORE_CodeLocation l{};
+  EXPECT_EQ(l.representation, GRCORE_REPR_BITS);
+  EXPECT_EQ(GRCORE_CODEMETA_FORMAT_VERSION, 1u);
+  // A location a producer built with the first three members only.
+  GRCORE_CodeLocation old = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -8, {}};
+  EXPECT_EQ(old.representation, GRCORE_REPR_BITS);
+}
+
+TEST(CodeMetaRepr, EveryConvertingRepresentationOnARawSlotOrConstantIsValid) {
+  for (GRCORE_Representation r : {GRCORE_REPR_BITS, GRCORE_REPR_I32,
+           GRCORE_REPR_I64, GRCORE_REPR_F32, GRCORE_REPR_F64}) {
+    Built b = valid();
+    b.parts[1].state = {tagged(-8, GRCORE_SLOT_RAW, r),
+        {GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 99, r}};
+    b.finish(64, 100);
+    const char * why = nullptr;
+    EXPECT_EQ(grcore_codemeta_validate(&b.meta, 100, &why), GRCORE_OK)
+        << r << ": " << (why != nullptr ? why : "");
+  }
+}
+
+TEST(CodeMetaRepr, ABadRepresentationIsRefusedNamingTheSiteAndTheLocation) {
+  struct Case {
+    const char * what;
+    GRCORE_CodeLocation loc;
+    bool in_live; // the entry goes in the stack map, not the frame state
+    const char * needle;
+  };
+  const Case cases[] = {
+      {"out of range", tagged(-8, GRCORE_SLOT_RAW, GRCORE_REPR_COUNT), false,
+          "representation"},
+      {"far out of range",
+          tagged(-8, GRCORE_SLOT_RAW, static_cast<GRCORE_Representation>(-1)),
+          false, "representation"},
+      {"on a reference", tagged(-8, GRCORE_SLOT_VALUE, GRCORE_REPR_I64), false,
+          "reference"},
+      {"on a dead location",
+          {GRCORE_LOC_DEAD, GRCORE_SLOT_RAW, 0, GRCORE_REPR_F32}, false, "dead"},
+      {"in a stack map", tagged(-8, GRCORE_SLOT_VALUE, GRCORE_REPR_I32), true,
+          "stack map"},
+      {"raw in a stack map", tagged(-8, GRCORE_SLOT_RAW, GRCORE_REPR_F64), true,
+          "stack map"},
+  };
+  for (const Case & c : cases) {
+    Built b = valid();
+    // Site 1, entry 1 (so the index is not the first one by luck).
+    if (c.in_live) {
+      b.parts[1].live[1] = c.loc;
+    } else {
+      b.parts[1].state[1] = c.loc;
+    }
+    b.finish(64, 100);
+    const char * why = nullptr;
+    size_t site = 0, loc = 0;
+    EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, 100, &why, &site, &loc),
+        GRCORE_ERR_CORRUPT)
+        << c.what;
+    ASSERT_NE(why, nullptr) << c.what;
+    EXPECT_NE(std::strstr(why, c.needle), nullptr) << c.what << ": " << why;
+    EXPECT_EQ(site, 1u) << c.what;
+    EXPECT_EQ(loc, 1u) << c.what;
+    // The shorter entry point refuses it too, with the same reason.
+    const char * why2 = nullptr;
+    EXPECT_EQ(grcore_codemeta_validate(&b.meta, 100, &why2), GRCORE_ERR_CORRUPT);
+    EXPECT_STREQ(why2, why);
+  }
+}
+
+TEST(CodeMetaRepr, ValidateAtReportsNothingOnSuccessAndForAWholeTableOffence) {
+  Built b = valid();
+  size_t site = 7, loc = 7;
+  EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, 100, nullptr, &site, &loc),
+      GRCORE_OK);
+  EXPECT_EQ(site, SIZE_MAX);
+  EXPECT_EQ(loc, SIZE_MAX);
+  b.meta.version = 2;
+  EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, 100, nullptr, &site, &loc),
+      GRCORE_ERR_CORRUPT);
+  EXPECT_EQ(site, SIZE_MAX);
+  EXPECT_EQ(loc, SIZE_MAX);
 }
 
 int main(int argc, char ** argv) {

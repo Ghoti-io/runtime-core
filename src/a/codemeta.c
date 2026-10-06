@@ -82,7 +82,8 @@ static void mark_slots(const GRCORE_CodeSite * s, uint64_t * marks, bool on) {
 }
 
 static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
-    uint64_t * marks, const char ** out_reason) {
+    uint64_t * marks, const char ** out_reason, size_t * loc) {
+  *loc = SIZE_MAX;
   if ((unsigned)s->kind >= (unsigned)GRCORE_SITE_KIND_COUNT) {
     CORRUPT("site kind is not one of the kinds");
   }
@@ -93,6 +94,7 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
   }
   for (size_t i = 0; i < s->live_count; i++) {
     const GRCORE_CodeLocation * l = &s->live[i];
+    *loc = i;
     if (l->kind != GRCORE_LOC_FRAME_SLOT) {
       CORRUPT("stack map entry is not a frame slot");
     }
@@ -102,7 +104,14 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
     if (!slot_ok(l->value, frame_bytes)) {
       CORRUPT("stack map slot is misaligned or outside the frame");
     }
+    if ((unsigned)l->representation >= (unsigned)GRCORE_REPR_COUNT) {
+      CORRUPT("stack map entry's representation is not one of the representations");
+    }
+    if (l->representation != GRCORE_REPR_BITS) {
+      CORRUPT("stack map entry carries a converting representation");
+    }
   }
+  *loc = SIZE_MAX;
   if (marks != NULL) {
     mark_slots(s, marks, true);
   }
@@ -133,6 +142,7 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
   }
   for (size_t i = 0; i < s->frame_state_count; i++) {
     const GRCORE_CodeLocation * l = &s->frame_state[i];
+    *loc = i;
     if ((unsigned)l->kind >= (unsigned)GRCORE_LOC_KIND_COUNT) {
       CORRUPT("location kind is not one of the kinds");
     }
@@ -142,7 +152,19 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
     if (l->kind == GRCORE_LOC_FRAME_SLOT && !slot_ok(l->value, frame_bytes)) {
       CORRUPT("frame state slot is misaligned or outside the frame");
     }
+    if ((unsigned)l->representation >= (unsigned)GRCORE_REPR_COUNT) {
+      CORRUPT("frame state representation is not one of the representations");
+    }
+    if (l->representation != GRCORE_REPR_BITS) {
+      if (l->slot_kind == GRCORE_SLOT_VALUE) {
+        CORRUPT("frame state location is a reference with a converting representation");
+      }
+      if (l->kind == GRCORE_LOC_DEAD) {
+        CORRUPT("frame state location is dead with a converting representation");
+      }
+    }
   }
+  *loc = SIZE_MAX;
   return GRCORE_OK;
 }
 
@@ -165,6 +187,18 @@ static size_t fn_home(uint64_t function, size_t mask) {
 
 GRCORE_Result grcore_codemeta_validate(
     const GRCORE_CodeMeta * meta, size_t code_bytes, const char ** out_reason) {
+  return grcore_codemeta_validate_at(meta, code_bytes, out_reason, NULL, NULL);
+}
+
+GRCORE_Result grcore_codemeta_validate_at(const GRCORE_CodeMeta * meta,
+    size_t code_bytes, const char ** out_reason, size_t * out_site,
+    size_t * out_location) {
+  if (out_site != NULL) {
+    *out_site = SIZE_MAX;
+  }
+  if (out_location != NULL) {
+    *out_location = SIZE_MAX;
+  }
   if (meta == NULL) {
     return GRCORE_ERR_INVALID;
   }
@@ -196,6 +230,8 @@ GRCORE_Result grcore_codemeta_validate(
 
   GRCORE_Result result = GRCORE_OK;
   const char * why = NULL;
+  size_t bad_site = SIZE_MAX;
+  size_t bad_loc = SIZE_MAX;
   for (size_t i = 0; i < meta->site_count && result == GRCORE_OK; i++) {
     const GRCORE_CodeSite * s = &meta->sites[i];
     if (s->code_offset >= meta->code_bytes) {
@@ -208,8 +244,9 @@ GRCORE_Result grcore_codemeta_validate(
       result = GRCORE_ERR_CORRUPT;
       break;
     }
-    result = check_site(s, meta->frame_bytes, marks, &why);
+    result = check_site(s, meta->frame_bytes, marks, &why, &bad_loc);
     if (result != GRCORE_OK) {
+      bad_site = i;
       break;
     }
     /* One function, one interpreter frame size: compare with the first
@@ -243,6 +280,12 @@ GRCORE_Result grcore_codemeta_validate(
   a->free_fn(a->ctx, functions);
   if (result != GRCORE_OK && out_reason != NULL) {
     *out_reason = why;
+  }
+  if (result != GRCORE_OK && out_site != NULL) {
+    *out_site = bad_site;
+  }
+  if (result != GRCORE_OK && out_location != NULL) {
+    *out_location = bad_loc;
   }
   return result;
 }

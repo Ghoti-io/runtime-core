@@ -122,7 +122,7 @@ static GRCORE_Result toy_variable(const GRCORE_AbstractFrame * frame,
 
 static const GRCORE_EngineDescriptor toy_engine = GRCORE_ENGINE_DESCRIPTOR_INIT("toy", toy_slot_kind,
     toy_locate, toy_inspect, {toy_scope_count, toy_scope, toy_variable},
-    {0, 0, 0}, NULL, NULL);
+    {0, 0, 0}, NULL, NULL, NULL, NULL);
 
 /* ---- The guest -------------------------------------------------------- */
 
