@@ -359,6 +359,48 @@ TEST(EntrySlot, ArgumentsAreCheckedAndAnotherContextsSlotIsRefused) {
   EXPECT_EQ(mine->entry, 0u);
 }
 
+TEST(EntrySlot, ARefusedSlotHoldsTheOneWordCallSitesCompareAndNoCode) {
+  RWorld w;
+  GRCORE_EntrySlot * s = nullptr;
+  ASSERT_EQ(grcore_entry_slot_create(w.ctx, &s), GRCORE_OK);
+  EXPECT_EQ(GRCORE_ENTRY_REFUSED % 2, 1u);
+  uintptr_t * word = &s->entry;
+  ASSERT_EQ(grcore_entry_slot_refuse(w.ctx, s), GRCORE_OK);
+  EXPECT_EQ(*word, GRCORE_ENTRY_REFUSED);
+  EXPECT_EQ(grcore_entry_slot_code(s), nullptr);
+  // Neither of the two words below a code address is accepted as one.
+  EXPECT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, 0), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, GRCORE_ENTRY_REFUSED),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(*word, GRCORE_ENTRY_REFUSED) << "a refusal changes nothing";
+  // A tier-up replaces the mark, and refusing again retires what it held.
+  ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, w.code.at(1)), GRCORE_OK);
+  EXPECT_EQ(*word, w.code.at(1));
+  EXPECT_EQ(grcore_code_refcount(w.code.code), 2u);
+  ASSERT_EQ(grcore_entry_slot_refuse(w.ctx, s), GRCORE_OK);
+  EXPECT_EQ(*word, GRCORE_ENTRY_REFUSED);
+  EXPECT_EQ(grcore_code_refcount(w.code.code), 1u) << "no JIT record is open";
+  // Clearing makes it empty again, and an empty one is asked about again.
+  ASSERT_EQ(grcore_entry_slot_clear(w.ctx, s), GRCORE_OK);
+  EXPECT_EQ(*word, 0u);
+  EXPECT_EQ(grcore_entry_slot_refuse(w.ctx, nullptr), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_entry_slot_refuse(nullptr, s), GRCORE_ERR_INVALID);
+}
+
+TEST(EntrySlot, RefusingASlotUnderALiveJitRecordRetiresItsCodeLikeAClear) {
+  RWorld w;
+  GRCORE_EntrySlot * s = nullptr;
+  ASSERT_EQ(grcore_entry_slot_create(w.ctx, &s), GRCORE_OK);
+  ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, w.code.at(0)), GRCORE_OK);
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_entry_slot_refuse(w.ctx, s), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_count(w.ctx), 1u);
+  EXPECT_EQ(grcore_code_refcount(w.code.code), 2u) << "held until the frame can no longer return into it";
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  EXPECT_EQ(grcore_code_retired_count(w.ctx), 0u);
+  EXPECT_EQ(grcore_code_refcount(w.code.code), 1u);
+}
+
 TEST(EntrySlot, ReplacingCodeRetiresTheOldReferenceAndTakesANewOne) {
   RWorld w;
   HandCode second;

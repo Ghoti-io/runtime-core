@@ -267,6 +267,7 @@
 #define grcore_entry_slot_clear GHOTIIO_RUNTIME_CORE(grcore_entry_slot_clear)
 #define grcore_entry_slot_code GHOTIIO_RUNTIME_CORE(grcore_entry_slot_code)
 #define grcore_entry_slot_create GHOTIIO_RUNTIME_CORE(grcore_entry_slot_create)
+#define grcore_entry_slot_refuse GHOTIIO_RUNTIME_CORE(grcore_entry_slot_refuse)
 #define grcore_entry_slot_set GHOTIIO_RUNTIME_CORE(grcore_entry_slot_set)
 #define grcore_frame_inspect GHOTIIO_RUNTIME_CORE(grcore_frame_inspect)
 #define grcore_frame_scope GHOTIIO_RUNTIME_CORE(grcore_frame_scope)

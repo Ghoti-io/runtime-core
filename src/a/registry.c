@@ -285,7 +285,8 @@ GRCORE_Result grcore_entry_slot_set(GRCORE_Context * context,
     return res;
   }
   SlotRec * s = own_slot(r, slot);
-  if (s == NULL || code == NULL || entry == 0) {
+  if (s == NULL || code == NULL || entry <= GRCORE_ENTRY_REFUSED) {
+    /* Zero is empty and one is refused: neither is an address of code. */
     return GRCORE_ERR_INVALID;
   }
   /* The one step that can be refused comes first: the node that will retire
@@ -307,8 +308,9 @@ GRCORE_Result grcore_entry_slot_set(GRCORE_Context * context,
   return GRCORE_OK;
 }
 
-GRCORE_Result grcore_entry_slot_clear(
-    GRCORE_Context * context, GRCORE_EntrySlot * slot) {
+/* Empties the slot and sets its word to `word`; the code, if any, is retired. */
+static GRCORE_Result empty_slot(
+    GRCORE_Context * context, GRCORE_EntrySlot * slot, uintptr_t word) {
   GRCORE_CodeRegistry * r;
   GRCORE_Result res = registry_of(context, false, &r);
   if (res != GRCORE_OK) {
@@ -318,7 +320,7 @@ GRCORE_Result grcore_entry_slot_clear(
   if (s == NULL) {
     return GRCORE_ERR_INVALID;
   }
-  s->pub.entry = 0;
+  s->pub.entry = word;
   if (s->code != NULL) {
     GRCORE_Code * code = s->code;
     RetireNode * node = s->node;
@@ -327,6 +329,16 @@ GRCORE_Result grcore_entry_slot_clear(
     retire(grcore_context_stack(context), code, node);
   }
   return GRCORE_OK;
+}
+
+GRCORE_Result grcore_entry_slot_clear(
+    GRCORE_Context * context, GRCORE_EntrySlot * slot) {
+  return empty_slot(context, slot, 0);
+}
+
+GRCORE_Result grcore_entry_slot_refuse(
+    GRCORE_Context * context, GRCORE_EntrySlot * slot) {
+  return empty_slot(context, slot, GRCORE_ENTRY_REFUSED);
 }
 
 GRCORE_Code * grcore_entry_slot_code(const GRCORE_EntrySlot * slot) {

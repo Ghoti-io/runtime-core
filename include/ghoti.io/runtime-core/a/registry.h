@@ -157,6 +157,17 @@ GRCORE_API size_t grcore_code_registered_count(const GRCORE_Context * context);
 GRCORE_API size_t grcore_code_retired_count(const GRCORE_Context * context);
 
 /**
+ * @brief The word of an entry slot whose function cannot be compiled.
+ *
+ * A call site loads the slot's entry word and compares it once: above this it
+ * is compiled code to call; zero it is empty, and the engine's compile-at-call
+ * hook is asked; this it is *refused*, and the site exits without asking
+ * (AD-28: a callee that cannot be compiled is an exit, remembered so it costs
+ * one compare). It is odd, and below any address code is mapped at.
+ */
+#define GRCORE_ENTRY_REFUSED ((uintptr_t)1)
+
+/**
  * @brief An entry slot. Compiled code loads `entry` to call the function.
  *
  * Only the owner thread writes it, and only through the functions below. The
@@ -164,7 +175,9 @@ GRCORE_API size_t grcore_code_retired_count(const GRCORE_Context * context);
  * destroyed.
  */
 typedef struct GRCORE_EntrySlot {
-  uintptr_t entry; ///< The compiled entry address; zero when the slot is empty.
+  uintptr_t entry; ///< The compiled entry address; zero when the slot is empty;
+                   ///< ::GRCORE_ENTRY_REFUSED when its function cannot be
+                   ///< compiled.
   void * reserved; ///< The library's; never read or written by a consumer.
 } GRCORE_EntrySlot;
 
@@ -190,9 +203,9 @@ GRCORE_API GRCORE_Result grcore_entry_slot_create(
  * @param context The context. The caller must own it.
  * @param slot A slot of this context.
  * @param code The handle that owns the code at `entry`.
- * @param entry The entry address; non-zero.
- * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, a zero
- *   `entry`, a non-owner or a slot that is not this context's;
+ * @param entry The entry address; above ::GRCORE_ENTRY_REFUSED.
+ * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, an `entry`
+ *   that is not above ::GRCORE_ENTRY_REFUSED, a non-owner or a slot that is not this context's;
  *   ::GRCORE_ERR_LIMIT or ::GRCORE_ERR_OOM, with the slot unchanged.
  */
 GRCORE_API GRCORE_Result grcore_entry_slot_set(GRCORE_Context * context,
@@ -213,7 +226,24 @@ GRCORE_API GRCORE_Result grcore_entry_slot_set(GRCORE_Context * context,
 GRCORE_API GRCORE_Result grcore_entry_slot_clear(
     GRCORE_Context * context, GRCORE_EntrySlot * slot);
 
-/** @brief The code a slot holds a reference to; NULL for an empty slot. */
+/**
+ * @brief Marks a slot's function as one that cannot be compiled.
+ *
+ * Like ::grcore_entry_slot_clear (any code it held is retired, and it never
+ * allocates) but the entry word becomes ::GRCORE_ENTRY_REFUSED, so a call
+ * site that finds it exits at once instead of asking the engine again. A later
+ * ::grcore_entry_slot_set or ::grcore_entry_slot_clear replaces the mark.
+ *
+ * @param context The context. The caller must own it.
+ * @param slot A slot of this context.
+ * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for a NULL argument, a
+ *   non-owner or a slot that is not this context's.
+ */
+GRCORE_API GRCORE_Result grcore_entry_slot_refuse(
+    GRCORE_Context * context, GRCORE_EntrySlot * slot);
+
+/** @brief The code a slot holds a reference to; NULL for an empty or refused
+ *   slot. */
 GRCORE_API GRCORE_Code * grcore_entry_slot_code(const GRCORE_EntrySlot * slot);
 
 #ifdef __cplusplus
