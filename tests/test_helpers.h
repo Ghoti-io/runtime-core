@@ -13,10 +13,12 @@
 
 #include <ghoti.io/runtime-core/runtime-core.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -481,5 +483,81 @@ inline GRCORE_Step frame_guest_entry(GRCORE_Context * c, void * state) {
   }
   return GRCORE_STEP_FINISHED;
 }
+
+/* A thread that takes a context over by the library's own hand-off and by
+ * nothing else. std::thread's start and join order memory by themselves, so a
+ * test that hands a context over by starting a thread after releasing it and
+ * joining before reading proves nothing about grcore_context_release and
+ * grcore_context_acquire: weaken either and ThreadSanitizer still sees no
+ * race. This one is built before the owner writes the state the migrant will
+ * read, is told to go through a relaxed flag (which orders nothing), spins on
+ * grcore_context_acquire, runs the body, and is taken back from by the owner
+ * spinning on the same call.
+ * Only the release store and the acquire exchange order the context's memory.
+ *
+ * The body must end by releasing the context and must not touch anything the
+ * owner reads afterwards once it has done so. */
+class MigrantThread {
+ public:
+  MigrantThread(GRCORE_Context * context, std::function<void()> body)
+      : context_(context), thread_([this, body = std::move(body)] {
+          while (!go_.load(std::memory_order_relaxed)) {
+            if (quit_.load(std::memory_order_relaxed)) {
+              return;
+            }
+            std::this_thread::yield();
+          }
+          while (grcore_context_acquire(context_) != GRCORE_OK) {
+            std::this_thread::yield();
+          }
+          taken_.store(true, std::memory_order_relaxed);
+          body();
+          done_.store(true, std::memory_order_relaxed);
+        }) {}
+  MigrantThread(const MigrantThread &) = delete;
+  MigrantThread & operator=(const MigrantThread &) = delete;
+  ~MigrantThread() {
+    quit_.store(true, std::memory_order_relaxed);
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+  }
+  /* The owner has released the context: tell the migrant to take it. */
+  void go() { go_.store(true, std::memory_order_relaxed); }
+  /* Spin on the library's acquire until the migrant has released the context
+   * and this thread owns it again; false if the body finished without
+   * releasing it. Only then may the owner read what the migrant wrote. */
+  bool take_back() {
+    // The context is unowned between the owner's release and the migrant's
+    // acquire, so an acquire here before the migrant has its turn would
+    // succeed and prove nothing. The flag orders nothing either.
+    while (!taken_.load(std::memory_order_relaxed)) {
+      if (done_.load(std::memory_order_relaxed)) {
+        return false;
+      }
+      std::this_thread::yield();
+    }
+    for (;;) {
+      bool finished = done_.load(std::memory_order_relaxed);
+      if (grcore_context_acquire(context_) == GRCORE_OK) {
+        return true;
+      }
+      if (finished) {
+        return false;
+      }
+      std::this_thread::yield();
+    }
+  }
+  /* Reap the thread after take_back(); the join is housekeeping. */
+  void join() { thread_.join(); }
+
+ private:
+  GRCORE_Context * context_;
+  std::atomic<bool> go_{false};
+  std::atomic<bool> taken_{false};
+  std::atomic<bool> quit_{false};
+  std::atomic<bool> done_{false};
+  std::thread thread_;
+};
 
 #endif /* GHOTI_IO_GRCORE_TEST_HELPERS_H */

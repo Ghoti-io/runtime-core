@@ -347,25 +347,32 @@ TEST(Migrate, APausedContextResumesOnAnotherThreadWithTheSameOutputAsAStraightRu
   }
   RunWorld w(30);
   CountingGuest g;
+  // Built before the guest runs, so that nothing but the library's hand-off
+  // orders what the run writes against what the migrant reads.
+  GRCORE_Result r = GRCORE_ERR_INTERNAL;
+  GRCORE_Outcome there = GRCORE_OUTCOME_PAUSED;
+  bool readable = false;
+  GRCORE_Result fuel_result = GRCORE_ERR_INTERNAL;
+  MigrantThread migrant(w.ctx, [&] {
+    readable = grcore_context_guest_state_readable(w.ctx);
+    fuel_result = grcore_context_set_fuel(w.ctx, GRCORE_UNLIMITED);
+    r = grcore_resume(w.ctx, &there);
+    grcore_context_release(w.ctx);
+  });
   GRCORE_Outcome outcome;
   ASSERT_EQ(grcore_run(w.ctx, counting_entry, &g, &outcome), GRCORE_OK);
   ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
   ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
   EXPECT_FALSE(grcore_context_is_owner(w.ctx));
-  GRCORE_Result r = GRCORE_ERR_INTERNAL;
-  GRCORE_Outcome there = GRCORE_OUTCOME_PAUSED;
-  std::thread([&] {
-    ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
-    EXPECT_TRUE(grcore_context_guest_state_readable(w.ctx));
-    ASSERT_EQ(grcore_context_set_fuel(w.ctx, GRCORE_UNLIMITED), GRCORE_OK);
-    r = grcore_resume(w.ctx, &there);
-    ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
-  }).join();
+  migrant.go();
+  ASSERT_TRUE(migrant.take_back());
+  migrant.join();
+  EXPECT_TRUE(readable);
+  EXPECT_EQ(fuel_result, GRCORE_OK);
   EXPECT_EQ(r, GRCORE_OK);
   EXPECT_EQ(there, GRCORE_OUTCOME_FINISHED);
   EXPECT_EQ(g.sum, straight.sum);
   EXPECT_EQ(g.pos, straight.pos);
-  ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
 }
 
 TEST(Migrate, AContextPingPongsBetweenThreadsAcrossManyPauses) {
@@ -376,16 +383,20 @@ TEST(Migrate, AContextPingPongsBetweenThreadsAcrossManyPauses) {
   ASSERT_EQ(grcore_run(w.ctx, counting_entry, &g, &outcome), GRCORE_OK);
   int hops = 0;
   while (outcome == GRCORE_OUTCOME_PAUSED) {
+    GRCORE_Result step[3] = {GRCORE_ERR_INTERNAL, GRCORE_ERR_INTERNAL,
+        GRCORE_ERR_INTERNAL};
+    MigrantThread migrant(w.ctx, [&] {
+      step[0] = grcore_context_set_fuel(w.ctx, grcore_context_fuel_used(w.ctx) + 7);
+      step[1] = grcore_resume(w.ctx, &outcome);
+      step[2] = grcore_context_release(w.ctx);
+    });
     ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
-    std::thread([&] {
-      ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
-      ASSERT_EQ(grcore_context_set_fuel(w.ctx,
-                    grcore_context_fuel_used(w.ctx) + 7),
-          GRCORE_OK);
-      ASSERT_EQ(grcore_resume(w.ctx, &outcome), GRCORE_OK);
-      ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
-    }).join();
-    ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
+    migrant.go();
+    ASSERT_TRUE(migrant.take_back());
+    migrant.join();
+    for (GRCORE_Result s : step) {
+      ASSERT_EQ(s, GRCORE_OK);
+    }
     hops++;
   }
   EXPECT_GT(hops, 20);

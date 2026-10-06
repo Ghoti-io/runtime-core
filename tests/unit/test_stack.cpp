@@ -661,23 +661,15 @@ TEST(Stack, APausedContextWithFramesMigratesAndResumesOnAnotherThread) {
   FrameGuest g;
   g.engine = w.alpha;
   g.n = 30;
-  GRCORE_Outcome outcome;
-  ASSERT_EQ(grcore_run(w.ctx, frame_guest_entry, &g, &outcome), GRCORE_OK);
-  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
-  size_t frames = grcore_stack_frame_count(w.stack);
-  ASSERT_GT(frames, 0u);
-  ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
-
+  // Built before the guest runs, so that nothing but the library's hand-off
+  // orders what the run writes against what the migrant reads.
   GRCORE_Result r = GRCORE_ERR_INTERNAL;
   GRCORE_Outcome there = GRCORE_OUTCOME_PAUSED;
   size_t seen_frames = 0;
   uint64_t seen_slot = 0;
   int pauses = 0;
-  std::thread([&] {
-    r = grcore_context_acquire(w.ctx);
-    if (r != GRCORE_OK) {
-      return;
-    }
+  MigrantThread migrant(w.ctx, [&] {
+    r = GRCORE_OK;
     GRCORE_Stack * s = grcore_context_stack(w.ctx);
     seen_frames = grcore_stack_frame_count(s);
     grcore_stack_slot_get(s, grcore_stack_top(s), 0, &seen_slot);
@@ -692,12 +684,20 @@ TEST(Stack, APausedContextWithFramesMigratesAndResumesOnAnotherThread) {
     }
     // Pops happen on this thread too: the stack went with the context.
     grcore_context_release(w.ctx);
-  }).join();
+  });
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, frame_guest_entry, &g, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  size_t frames = grcore_stack_frame_count(w.stack);
+  ASSERT_GT(frames, 0u);
+  ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
+  migrant.go();
+  ASSERT_TRUE(migrant.take_back());
+  migrant.join();
   ASSERT_EQ(r, GRCORE_OK);
   EXPECT_EQ(there, GRCORE_OUTCOME_FINISHED);
   EXPECT_EQ(seen_frames, frames); // intact on arrival
   EXPECT_EQ(seen_slot, frames);   // the top frame's own counter
-  ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
   // The same output as an uninterrupted run.
   EXPECT_EQ(g.sum, 30u * 31u / 2u);
   EXPECT_EQ(grcore_stack_frame_count(w.stack), 0u);
