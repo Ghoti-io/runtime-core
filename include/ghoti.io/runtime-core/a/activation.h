@@ -201,11 +201,12 @@ GRCORE_API GRCORE_Result grcore_activation_top(
  * released when the last one is left.
  *
  * @param stack The stack. The caller must own its context.
- * @param ref An open record, not necessarily the innermost.
+ * @param ref An open ::GRCORE_ACTIVATION_JIT record, not necessarily the
+ *   innermost: only those keep retired code alive.
  * @param frame_base The frame base, or zero.
  * @param return_address The return address, or zero.
  * @return ::GRCORE_OK, or ::GRCORE_ERR_INVALID for NULL, a non-owner, a
- *   stale or forged reference, or a zero `frame_base` with a non-zero
+ *   stale or forged reference, a record that is not a JIT one, or a zero `frame_base` with a non-zero
  *   `return_address`.
  */
 GRCORE_API GRCORE_Result grcore_activation_set_compiled(GRCORE_Stack * stack,

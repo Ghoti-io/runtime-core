@@ -243,53 +243,73 @@ TEST(Registry, ManyRangesRegisteredOutOfOrderAreEachFoundAndNoOtherAddressIs) {
   }
 }
 
-TEST(Registry, ARefusedAllocationLeavesTheRegistryAsItWas) {
+TEST(Registry, ARefusedAllocationOnTheFirstRegistrationLeavesNothingBehind) {
   TrackingAllocator alloc;
   {
     RWorld w(alloc.get());
-    HandCode second;
-    ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
-    size_t refs = grcore_code_refcount(second.code);
-    bool refused = false, succeeded = false;
-    for (long n = 1; n < 20 && !succeeded; n++) {
-      alloc.fail_at = alloc.calls + n;
-      GRCORE_Result r = second.add_to(w.ctx, w.alpha);
-      alloc.fail_at = 0;
-      if (r == GRCORE_OK) {
-        succeeded = true;
-        break;
-      }
-      refused = true;
-      EXPECT_TRUE(r == GRCORE_ERR_OOM || r == GRCORE_ERR_LIMIT);
-      EXPECT_EQ(grcore_code_registered_count(w.ctx), 1u);
-      EXPECT_EQ(grcore_code_refcount(second.code), refs);
-    }
-    // The first registration already grew the array, so a second may need no
-    // allocation at all: the sweep is on the path, not on this particular count.
-    EXPECT_TRUE(refused || succeeded);
-    GRCORE_EntrySlot * slot = nullptr;
-    bool slot_refused = false;
+    size_t refs = grcore_code_refcount(w.code.code);
+    int refusals = 0;
     for (long n = 1; n < 20; n++) {
       alloc.fail_at = alloc.calls + n;
-      GRCORE_Result r = grcore_entry_slot_create(w.ctx, &slot);
+      GRCORE_Result r = w.code.add_to(w.ctx, w.alpha);
       alloc.fail_at = 0;
       if (r == GRCORE_OK) {
         break;
       }
-      slot_refused = true;
-      EXPECT_EQ(slot, nullptr);
+      refusals++;
+      EXPECT_TRUE(r == GRCORE_ERR_OOM || r == GRCORE_ERR_LIMIT) << n;
+      EXPECT_EQ(grcore_code_registered_count(w.ctx), 0u) << n;
+      EXPECT_EQ(grcore_code_refcount(w.code.code), refs) << n;
+      GRCORE_CodeRange range;
+      EXPECT_FALSE(grcore_code_lookup(w.ctx, w.code.start(), &range)) << n;
     }
-    EXPECT_TRUE(slot_refused);
-    ASSERT_NE(slot, nullptr);
-    // A slot that cannot get its node is left as it was.
-    alloc.fail_at = alloc.calls + 1;
-    EXPECT_EQ(grcore_entry_slot_set(w.ctx, slot, w.code.code, w.code.at(0)),
-        GRCORE_ERR_OOM);
-    alloc.fail_at = 0;
-    EXPECT_EQ(slot->entry, 0u);
-    EXPECT_EQ(grcore_entry_slot_code(slot), nullptr);
+    // The registry and its array are two allocations, so the first two points
+    // of failure are refused; the sweep must have hit them, or it proved nothing.
+    ASSERT_GE(refusals, 2);
+    EXPECT_EQ(grcore_code_registered_count(w.ctx), 1u);
+    EXPECT_EQ(grcore_code_refcount(w.code.code), refs + 1);
   }
-  EXPECT_EQ(alloc.live, 0) << "everything the registry allocated is freed at destroy";
+  EXPECT_EQ(alloc.live, 0);
+}
+
+TEST(Registry, ARefusedSlotCreateOrSetLeavesTheSlotAsItWas) {
+  TrackingAllocator alloc;
+  RWorld w(alloc.get());
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  GRCORE_EntrySlot * slot = nullptr;
+  alloc.fail_at = alloc.calls + 1;
+  EXPECT_EQ(grcore_entry_slot_create(w.ctx, &slot), GRCORE_ERR_OOM);
+  alloc.fail_at = 0;
+  EXPECT_EQ(slot, nullptr);
+  ASSERT_EQ(grcore_entry_slot_create(w.ctx, &slot), GRCORE_OK);
+  alloc.fail_at = alloc.calls + 1;
+  EXPECT_EQ(grcore_entry_slot_set(w.ctx, slot, w.code.code, w.code.at(0)),
+      GRCORE_ERR_OOM);
+  alloc.fail_at = 0;
+  EXPECT_EQ(slot->entry, 0u);
+  EXPECT_EQ(grcore_entry_slot_code(slot), nullptr);
+}
+
+TEST(Registry, ARefusedRegistrationAllocatesNothingWhateverTheReason) {
+  TrackingAllocator alloc;
+  RWorld w(alloc.get());
+  HandCode & c = w.code;
+  GRCORE_CodeMeta wrong = c.meta;
+  wrong.code_bytes += 16;
+  long calls = alloc.calls;
+  EXPECT_NE(grcore_code_register(w.ctx, w.alpha, nullptr, c.start(), c.size(), &c.meta), GRCORE_OK);
+  EXPECT_NE(grcore_code_register(w.ctx, w.alpha, c.code, c.start(), c.size(), nullptr), GRCORE_OK);
+  EXPECT_NE(grcore_code_register(w.ctx, w.alpha, c.code, c.start(), 0, &c.meta), GRCORE_OK);
+  EXPECT_NE(grcore_code_register(w.ctx, 0, c.code, c.start(), c.size(), &c.meta), GRCORE_OK);
+  EXPECT_NE(grcore_code_register(w.ctx, 99, c.code, c.start(), c.size(), &c.meta), GRCORE_OK);
+  EXPECT_NE(grcore_code_register(w.ctx, w.alpha, c.code, c.start(), c.size(), &wrong), GRCORE_OK);
+  EXPECT_NE(grcore_code_register(w.ctx, w.alpha, c.code, UINTPTR_MAX - 8, c.size(), &c.meta), GRCORE_OK);
+  EXPECT_EQ(alloc.calls, calls) << "a refusal that needs no memory must ask for none";
+}
+
+TEST(EntrySlot, AZeroedSlotHoldsNoCode) {
+  GRCORE_EntrySlot zero = {};
+  EXPECT_EQ(grcore_entry_slot_code(&zero), nullptr);
 }
 
 /* ---- Entry slots -------------------------------------------------------- */

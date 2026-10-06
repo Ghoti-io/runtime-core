@@ -32,7 +32,10 @@
  * honours one layout: a compiled frame's *base* word holds the caller's frame
  * base, and the word after it holds the return address. That is `rbp` on
  * x86-64 and `x29` with the saved link on arm64. The frame lies below its
- * base. Nothing else about a frame is assumed.
+ * base. Its *extent*, which a conservative scan must leave out, is from the
+ * base less the code's `frame_bytes` (`a/codemeta.h`) up through those two
+ * words. Nothing else about a frame (its saved registers, its padding) is
+ * read.
  *
  * **Where it starts.** An activation record may carry the frame base and the
  * return address of the innermost compiled frame under it
@@ -61,7 +64,13 @@
  * The walk reads native memory at the frame bases, so it is valid only while
  * those frames are on the native stack: for the owner thread at a poll, or in
  * a native called from compiled code. It reads the registry at the moment of
- * the call and holds no reference.
+ * the call and holds no reference, so a frame's `meta` and `site` are valid
+ * only while its code stays registered (a retired range counts, until the last
+ * JIT record leaves).
+ *
+ * A record with no segment has nothing to bound its frames, so the walk trusts
+ * its frame base and checks only alignment and order. The caller must keep a
+ * record's compiled state clear whenever its frames are not live.
  */
 
 #ifndef GHOTI_IO_GRCORE_A_COMPILED_H

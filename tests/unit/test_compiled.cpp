@@ -36,9 +36,13 @@ const uintptr_t kOutside = reinterpret_cast<uintptr_t>(kOutsideBytes);
  * fixture's. */
 struct CodeHolder {
   HandCode code;
+  CodeHolder() = default;
+  CodeHolder(bool raw_live, bool dead_slot) : code(raw_live, dead_slot) {}
 };
 struct CWorld : CodeHolder, StackWorld {
-  explicit CWorld(uint64_t fuel = GRCORE_UNLIMITED) : StackWorld(fuel) {
+  explicit CWorld(uint64_t fuel = GRCORE_UNLIMITED, bool raw_live = false,
+      bool dead_slot = false)
+      : CodeHolder(raw_live, dead_slot), StackWorld(fuel) {
     EXPECT_EQ(code.add_to(ctx, alpha), GRCORE_OK);
   }
 };
@@ -191,6 +195,21 @@ TEST(ActivationCompiled, AFreshRecordCarriesNoStateAndTheSetterWritesAndClearsIt
   ASSERT_EQ(grcore_activation_info(w.stack, rec, &info), GRCORE_OK);
   EXPECT_EQ(info.frame_base, 0u);
   EXPECT_EQ(info.return_address, 0u);
+}
+
+TEST(ActivationCompiled, OnlyAJitRecordMayCarryTheStateBecauseOnlyThoseKeepRetiredCodeAlive) {
+  CWorld w;
+  for (GRCORE_ActivationKind kind :
+      {GRCORE_ACTIVATION_HOST, GRCORE_ACTIVATION_INTERPRETER,
+          GRCORE_ACTIVATION_NATIVE, GRCORE_ACTIVATION_REENTRY}) {
+    GRCORE_ActivationRef rec = enter(w.stack, kind);
+    EXPECT_EQ(grcore_activation_set_compiled(w.stack, rec, 0x40, 0x50),
+        GRCORE_ERR_INVALID) << kind;
+    GRCORE_ActivationInfo info;
+    ASSERT_EQ(grcore_activation_info(w.stack, rec, &info), GRCORE_OK);
+    EXPECT_EQ(info.frame_base, 0u);
+  }
+  EXPECT_TRUE(walk_compiled(w.ctx).frames.empty());
 }
 
 TEST(ActivationCompiled, ARecordThatIsNotInnermostCanBeSetAndBadArgumentsAreRefused) {
@@ -563,6 +582,25 @@ TEST(CompiledRoots, ACompiledFrameComesInPlaceAmongTheGuestFramesAndIsNotCounted
   grcore_unwind_all(w.stack, nullptr);
 }
 
+TEST(CompiledRoots, ARawEntryInAStackMapIsNeverReportedAsARoot) {
+  // The validator lets a stack map hold a RAW frame slot; it is not a
+  // reference, and handing it to a collector as a writable root is what AD-27
+  // forbids. The raw word at -16 of each frame is the one that would be.
+  CWorld w(GRCORE_UNLIMITED, /*raw_live=*/true);
+  ASSERT_EQ(grcore_codemeta_validate(&w.code.meta, w.code.size(), nullptr), GRCORE_OK);
+  HandStack st(3);
+  set_up_run(w, st, 0, 3, 0);
+  Seen seen;
+  seen.rewrite_add = 1;
+  GRCORE_RootVisitor v = visitor_for(&seen);
+  ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
+  ASSERT_EQ(seen.values.size(), 3u);
+  for (size_t k = 0; k < 3; k++) {
+    EXPECT_EQ(seen.values[k], HandStack::ref_of(k));
+    EXPECT_EQ(st.words[k * 8 + 4], HandStack::trap_of(k)) << "the raw word was written";
+  }
+}
+
 TEST(CompiledRoots, AGuestFrameThatCannotBeReadDoesNotHideTheCompiledFrames) {
   // The guest walk gives up at a frame whose header is damaged, as it always
   // has; the compiled frames are not guest frames and must still be reported,
@@ -890,6 +928,92 @@ TEST(CompiledFrame, ReadingACompiledFrameNeverConvertsAnything) {
   g_conv = nullptr;
 }
 
+TEST(CompiledFrame, ADeadFrameStateSlotReadsAsRawZeroWithNoRepresentation) {
+  CWorld w(0, /*raw_live=*/false, /*dead_slot=*/true);
+  HandStack st(1);
+  PauseGuest g;
+  g.setup = [&](GRCORE_Stack * s) {
+    GRCORE_ActivationRef rec = enter(s, GRCORE_ACTIVATION_JIT);
+    std::vector<uintptr_t> b = st.build(w.code, 0, 1, 0, kOutside);
+    EXPECT_EQ(grcore_activation_set_compiled(s, rec, b[0], w.code.at(0)), GRCORE_OK);
+  };
+  GRCORE_FrameRef f;
+  pause_with(w, g);
+  (void)f;
+  std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx);
+  const GRCORE_AbstractFrame * c = nullptr;
+  for (const auto & fr : frames) {
+    if (fr.native_base != 0) {
+      c = &fr;
+    }
+  }
+  ASSERT_NE(c, nullptr);
+  ASSERT_EQ(c->slot_count, 4u);
+  GRCORE_SlotKind kind = GRCORE_SLOT_VALUE;
+  uint64_t value = 77;
+  GRCORE_Representation rep = GRCORE_REPR_I32;
+  ASSERT_EQ(grcore_frame_slot_tagged(c, 3, &kind, &value, &rep), GRCORE_OK);
+  EXPECT_EQ(kind, GRCORE_SLOT_RAW) << "the site says VALUE, but nothing is there";
+  EXPECT_EQ(value, 0u);
+  EXPECT_EQ(rep, GRCORE_REPR_BITS);
+}
+
+TEST(CompiledFrame, ABreakFoundByTheLookaheadStillYieldsEveryGuestFrame) {
+  // The record is entered first, so the compiled run lies outside the two
+  // guest frames, and its innermost base is misaligned: the break is met when
+  // the walk begins.
+  CWorld w(0);
+  HandStack st(2);
+  PauseGuest g;
+  g.setup = [&](GRCORE_Stack * s) {
+    GRCORE_ActivationRef rec = enter(s, GRCORE_ACTIVATION_JIT);
+    std::vector<uintptr_t> b = st.build(w.code, 0, 2, 0, kOutside);
+    EXPECT_EQ(grcore_activation_set_compiled(s, rec, b[0] + 4, w.code.at(0)), GRCORE_OK);
+    GRCORE_FrameRef f;
+    for (int i = 0; i < 2; i++) {
+      EXPECT_EQ(grcore_stack_push(s, w.alpha, 1, &f), GRCORE_OK);
+    }
+  };
+  pause_with(w, g);
+  GRCORE_FrameWalk walk;
+  ASSERT_EQ(grcore_frame_walk_begin(w.ctx, &walk), GRCORE_OK);
+  GRCORE_AbstractFrame f;
+  ASSERT_TRUE(grcore_frame_walk_next(&walk, &f));
+  EXPECT_FALSE(grcore_frame_walk_broken(&walk, nullptr)) << "not yet: frames remain";
+  ASSERT_TRUE(grcore_frame_walk_next(&walk, &f));
+  EXPECT_FALSE(grcore_frame_walk_next(&walk, &f));
+  const char * why = nullptr;
+  EXPECT_TRUE(grcore_frame_walk_broken(&walk, &why));
+  EXPECT_NE(why, nullptr);
+}
+
+TEST(CompiledFrame, GuestFramesBetweenAGoodCompiledFrameAndTheBreakAreStillYielded) {
+  // G0, then a record whose run has one good frame and a bad caller, then G1:
+  // the order is G1, the compiled frame, G0, and only then the break.
+  CWorld w(0);
+  HandStack st(2);
+  PauseGuest g;
+  g.poll_function = 2;
+  g.poll_offset = 6;
+  g.setup = [&](GRCORE_Stack * s) {
+    GRCORE_FrameRef f;
+    EXPECT_EQ(grcore_stack_push(s, w.alpha, 1, &f), GRCORE_OK);
+    GRCORE_ActivationRef rec = enter(s, GRCORE_ACTIVATION_JIT);
+    std::vector<uintptr_t> b = st.build(w.code, 0, 2, 0, kOutside);
+    st.words[6] = b[0]; // the caller's base is its own
+    EXPECT_EQ(grcore_activation_set_compiled(s, rec, b[0], w.code.at(0)), GRCORE_OK);
+    EXPECT_EQ(grcore_stack_push(s, w.alpha, 1, &f), GRCORE_OK);
+  };
+  pause_with(w, g);
+  bool broken = false;
+  std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx, &broken);
+  EXPECT_TRUE(broken);
+  ASSERT_EQ(frames.size(), 3u);
+  EXPECT_EQ(frames[0].native_base, 0u);
+  EXPECT_NE(frames[1].native_base, 0u);
+  EXPECT_EQ(frames[2].native_base, 0u) << "the guest frame below the compiled one";
+}
+
 TEST(CompiledFrame, ABrokenChainEndsTheFrameWalkAfterWhatWasGoodAndSaysSo) {
   CWorld w(0);
   Interleaved scene;
@@ -905,9 +1029,10 @@ TEST(CompiledFrame, ABrokenChainEndsTheFrameWalkAfterWhatWasGoodAndSaysSo) {
   std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx, &broken, &why);
   EXPECT_TRUE(broken);
   EXPECT_FALSE(why.empty());
-  // G2, run b (two), G1, then the first frame of run a; the walk stops there
-  // rather than going on to G0 as if nothing were wrong.
-  ASSERT_EQ(frames.size(), 5u);
+  // G2, run b (two), G1, the first frame of run a, and G0: the break is after
+  // every good frame, and the guest frames below it are not dropped.
+  ASSERT_EQ(frames.size(), 6u);
+  EXPECT_EQ(frames[5].identity.function, 1u);
   EXPECT_EQ(frames[4].identity.function, 102u);
   // A walk that is not broken says it was not.
   CWorld ok(0);

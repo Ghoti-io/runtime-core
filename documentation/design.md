@@ -807,9 +807,10 @@ base holds the caller's frame base, and the word after it the return address
 (`rbp` on x86-64, `x29` with the saved link on arm64). The frame lies below its
 base, as `a/codemeta.h` already says. A frame is found from a return address
 inside registered code; its stack map is `grcore_codemeta_find` at the offset
-of that address. Nothing unwinds natively through a compiled frame, and nothing
-else about a frame (its size, its saved registers, its alignment padding) is
-read.
+of that address. A frame's extent, which a conservative scan must leave out, is
+from its base less the code's `frame_bytes` up through the two words. Nothing
+unwinds natively through a compiled frame, and nothing else about a frame (its
+saved registers, its alignment padding) is read.
 
 **The registry** (`a/registry.h`) is per context: a sorted array of
 `[start, end)` ranges, each with the engine whose frames the code runs, the
@@ -847,7 +848,12 @@ the innermost compiled frame under that record and the address in its code that
 it is stopped at. Compiled code stores them before a native call or a poll's
 slow path. Zero in both clears it, which a record that pauses or whose frames
 were rebuilt must do; the walk reads native memory and so is valid only while
-those frames are on the stack.
+those frames are on the stack. A record with no segment has nothing to bound
+its frames, so the walk trusts its base and checks only alignment and order;
+the caller keeps the state clear whenever its frames are not live. Only a JIT
+record may carry the state, because only those count toward releasing retired
+code. A compiled frame's `meta` and `site` are valid only while its code stays
+registered, and entry slots live until the context is destroyed.
 
 **The walk** (`a/compiled.h`) starts at the innermost record that carries
 compiled state. A frame's code is found from its return address, its site from

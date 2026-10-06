@@ -64,7 +64,9 @@ static void visit_compiled(
   }
   for (size_t i = 0; i < cf->site->live_count; i++) {
     const GRCORE_CodeLocation * loc = &cf->site->live[i];
-    if (loc->kind != GRCORE_LOC_FRAME_SLOT) {
+    /* The validator allows a RAW entry in a stack map; a raw word is never a
+     * root (AD-27), so only references are reported. */
+    if (loc->kind != GRCORE_LOC_FRAME_SLOT || loc->slot_kind != GRCORE_SLOT_VALUE) {
       continue;
     }
     uint64_t * slot =

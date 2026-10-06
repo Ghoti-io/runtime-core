@@ -192,6 +192,11 @@ GRCORE_Result grcore_activation_set_compiled(GRCORE_Stack * stack,
   for (size_t i = stack->activation_count; i > 0; i--) {
     GRCORE_ActivationRecord * rec = &stack->activations[i - 1];
     if (rec->id == ref.id) {
+      /* Only a JIT record is counted toward the release of retired code, so
+       * state on any other kind could outlive the code it names. */
+      if (rec->kind != GRCORE_ACTIVATION_JIT) {
+        return GRCORE_ERR_INVALID;
+      }
       rec->frame_base = frame_base;
       rec->return_address = return_address;
       return GRCORE_OK;

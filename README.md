@@ -14,7 +14,8 @@ B: groups, contexts, options, keys, the lifecycle and ownership rules,
 memory accounting, requests and ports, the four-phase poll, `run` and `resume`,
 the budgets with their fuel scopes, and root sources; and all of A: the guest
 stack, engine descriptors, the abstract frame, the frame walk and scopes,
-activation records (with the compiled-frame state), the unwinder, budget scopes, the code registry and the walk of compiled frames.
+activation records (with the compiled-frame state), the unwinder, budget
+scopes, the code registry and the walk of compiled frames.
 
 ## Example
 

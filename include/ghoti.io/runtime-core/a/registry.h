@@ -51,7 +51,14 @@
  * counts are atomic (`a/code.h`), so another thread may hold and drop a
  * reference of its own; the thread that drops the last runs the release.
  *
- * Everything is released when the context is destroyed, whatever is open. The
+ * A code handle's release callback may run from ::grcore_activation_leave (and
+ * the unwinder), ::grcore_code_unregister, ::grcore_entry_slot_set and
+ * ::grcore_entry_slot_clear, and at the context's destruction. It must not call
+ * back into this header (register, unregister, set or clear) or into the
+ * context: the registry is being edited when it runs.
+ *
+ * Entry slots live until the context is destroyed; there is no call that frees
+ * one. Everything is released when the context is destroyed, whatever is open. The
  * registry needs an engine to be registered in the context (it lives with A's
  * guest state), and refuses with ::GRCORE_ERR_INVALID until then.
  */

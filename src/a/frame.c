@@ -91,7 +91,11 @@ static void compiled_abstract_frame(GRCORE_FrameWalk * walk,
 
 bool grcore_frame_walk_broken(
     const GRCORE_FrameWalk * walk, const char ** out_reason) {
-  if (walk == NULL || !walk->broken) {
+  /* The break is recorded when the lookahead meets it, but the walk is broken
+   * only once it has yielded everything before it: the good compiled frames
+   * and every guest frame. */
+  if (walk == NULL || !walk->broken || walk->has_pending ||
+      walk->next.offset != 0) {
     return false;
   }
   if (out_reason != NULL) {
@@ -102,7 +106,7 @@ bool grcore_frame_walk_broken(
 
 bool grcore_frame_walk_next(
     GRCORE_FrameWalk * walk, GRCORE_AbstractFrame * out_frame) {
-  if (walk == NULL || out_frame == NULL || walk->broken ||
+  if (walk == NULL || out_frame == NULL ||
       !grcore_context_guest_state_readable(walk->context)) {
     return false;
   }

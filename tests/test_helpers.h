@@ -691,8 +691,8 @@ struct HandCode {
   static constexpr size_t kSites = 64;
   static constexpr size_t kFrameBytes = 48;
   std::vector<unsigned char> bytes;
-  GRCORE_CodeLocation live[1];
-  GRCORE_CodeLocation state[3];
+  GRCORE_CodeLocation live[2];
+  GRCORE_CodeLocation state[4];
   std::vector<GRCORE_CodeSite> sites;
   GRCORE_CodeMeta meta;
   GRCORE_Code * code = nullptr; // the handle; the creator's reference is below
@@ -703,20 +703,25 @@ struct HandCode {
   std::shared_ptr<int> counter = std::make_shared<int>(0);
   int & released = *counter;
 
-  HandCode() : bytes(16 * (kSites + 2)) {
+  /* `raw_live` adds a RAW entry to the stack map (the validator allows one; it
+   * is never a root), `dead_slot` a fourth frame-state slot that is DEAD. */
+  explicit HandCode(bool raw_live = false, bool dead_slot = false)
+      : bytes(16 * (kSites + 2)) {
     live[0] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_VALUE, -8, GRCORE_REPR_BITS};
     state[0] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_VALUE, -8, GRCORE_REPR_BITS};
     state[1] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -16, GRCORE_REPR_BITS};
     state[2] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -24, GRCORE_REPR_I32};
+    live[1] = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -16, GRCORE_REPR_BITS};
+    state[3] = {GRCORE_LOC_DEAD, GRCORE_SLOT_VALUE, 0, GRCORE_REPR_BITS};
     for (size_t i = 0; i < kSites; i++) {
       GRCORE_CodeSite site{};
       site.code_offset = static_cast<uint32_t>(16 * (i + 1));
       site.kind = GRCORE_SITE_GC_POINT_CALL;
       site.identity = GRCORE_PollIdentity{100 + i, i};
       site.live = live;
-      site.live_count = 1;
+      site.live_count = raw_live ? 2 : 1;
       site.frame_state = state;
-      site.frame_state_count = 3;
+      site.frame_state_count = dead_slot ? 4 : 3;
       sites.push_back(site);
     }
     meta = {};

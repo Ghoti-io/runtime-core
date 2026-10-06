@@ -117,24 +117,32 @@ static GRCORE_Result registry_of(
 GRCORE_Result grcore_code_register(GRCORE_Context * context,
     GRCORE_EngineId engine, GRCORE_Code * code, uintptr_t start, size_t size,
     const GRCORE_CodeMeta * meta) {
-  GRCORE_CodeRegistry * r;
-  GRCORE_Result res = registry_of(context, true, &r);
-  if (res != GRCORE_OK) {
-    return res;
-  }
-  GRCORE_Stack * stack = grcore_context_stack(context);
-  if (code == NULL || meta == NULL || size == 0 || start + size < start ||
-      engine == 0 || engine > stack->engine_count) {
+  /* Every refusal that needs no memory comes first, so that a refused call
+   * allocates nothing (the registry itself is made last). */
+  if (context == NULL || !grcore_context_is_owner(context)) {
     return GRCORE_ERR_INVALID;
   }
-  res = grcore_codemeta_validate(meta, size, NULL);
+  const GRCORE_Stack * stack = grcore_context_stack(context);
+  if (stack == NULL || code == NULL || meta == NULL || size == 0 ||
+      start + size < start || engine == 0 || engine > stack->engine_count) {
+    return GRCORE_ERR_INVALID;
+  }
+  GRCORE_Result res = grcore_codemeta_validate(meta, size, NULL);
   if (res != GRCORE_OK) {
     return res;
   }
   uintptr_t end = start + size;
-  size_t at = first_ending_above(r, start);
-  if (at < r->count && r->entries[at].start < end) {
-    return GRCORE_ERR_INVALID; /* overlaps the range at `at` */
+  GRCORE_CodeRegistry * r = stack->registry;
+  size_t at = 0;
+  if (r != NULL) {
+    at = first_ending_above(r, start);
+    if (at < r->count && r->entries[at].start < end) {
+      return GRCORE_ERR_INVALID; /* overlaps the range at `at` */
+    }
+  }
+  res = registry_of(context, true, &r);
+  if (res != GRCORE_OK) {
+    return res;
   }
   void * grown;
   res = grcore_guest_array_reserve(
@@ -326,7 +334,7 @@ GRCORE_Code * grcore_entry_slot_code(const GRCORE_EntrySlot * slot) {
     return NULL;
   }
   const SlotRec * s = slot->reserved;
-  return s->code;
+  return s == NULL ? NULL : s->code;
 }
 
 /* ---- Release ------------------------------------------------------------ */
@@ -347,13 +355,21 @@ void grcore_registry_release_retired(GRCORE_Stack * stack) {
     a->free_fn(a->ctx, list);
     list = next;
   }
-  for (size_t i = r->count; i > 0 && r->retired_entries > 0; i--) {
-    if (r->entries[i - 1].retired) {
-      GRCORE_Code * code = r->entries[i - 1].code;
-      remove_entry(r, i - 1);
-      r->retired_entries--;
-      grcore_code_release(code);
+  /* Take the retired ranges out of the array before any release callback
+   * runs: swap the live ones down in order, which leaves the retired ones, with
+   * their references, past the new end. */
+  size_t old_count = r->count, kept = 0;
+  for (size_t i = 0; i < old_count; i++) {
+    if (!r->entries[i].retired) {
+      RegEntry t = r->entries[kept];
+      r->entries[kept++] = r->entries[i];
+      r->entries[i] = t;
     }
+  }
+  r->count = kept;
+  r->retired_entries = 0;
+  for (size_t i = kept; i < old_count; i++) {
+    grcore_code_release(r->entries[i].code);
   }
 }
 
