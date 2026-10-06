@@ -930,15 +930,18 @@ moves every unpinned object at every collection) is what exercises this pass;
 visitor that moves every reference, and was seen to fail with the recomputation
 removed.
 
-The decision behind it is runtime-heap's relocation torture (its `design.md`): a
-test-only build mode that moves every unpinned object at every collection and
-poisons the old cell, which proves that every reference a precise walk reports is
-one a collector may rewrite. This pass is the half of it that lives here. The
-alternatives that were rejected there apply here too: checking reported slots
-against a shadow without moving anything (a stale reference to an object that did
-not move reads good data), relocating only the roots (the defect worth finding is
-a field reported through a copy), and shipping the mode in every build behind a
-flag (the shipped collector must be shown to move nothing).
+The decision behind it is runtime-heap's relocation torture, a test-only build
+mode that moves every unpinned object at every collection; its `design.md`
+("Relocation torture") records the mode and the alternatives rejected for it.
+This pass is the half of it that lives here.
+
+A derived slot is the pass's own while the walk runs, because the delta is
+parked in it, so `grcore_codemeta_validate` refuses a site whose derived slot is
+also a live reference (the visitor would be shown the delta as one) or is named
+by two derived entries (it would be subtracted twice). A chain, one entry's slot
+being another's base, is refused by the checks of the base (it must be live) and
+of the slot (it must not be), so it needs no check of its own. Two entries may
+share a base.
 
 Rejected: **reporting the derived pointer as a root of its own** (a precise walk
 would find an address that is not the start of an object, and a moving collector

@@ -177,6 +177,53 @@ TEST(CodeMeta, ADerivedPointerWhoseBaseIsNotLiveIsCorrupt) {
   EXPECT_NE(std::strstr(refuse(b), "base is not a live"), nullptr);
 }
 
+/* The compiled-frame pass parks a delta in each derived slot while the base is
+ * visited, so a derived slot is exclusive: each refusal names the site it is in. */
+const char * refuse_at(const Built & b, size_t * site) {
+  const char * why = nullptr;
+  EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, b.meta.code_bytes, &why, site, nullptr),
+      GRCORE_ERR_CORRUPT);
+  return why != nullptr ? why : "";
+}
+
+TEST(CodeMeta, ADerivedPointerWhoseSlotIsALiveReferenceIsCorrupt) {
+  Built b = valid();
+  b.parts[1].derived[0].slot = -16; // the other live reference of the site
+  b.finish(64, 100);
+  size_t site = 0;
+  EXPECT_NE(std::strstr(refuse_at(b, &site), "slot is also a live reference"), nullptr);
+  EXPECT_EQ(site, 1u);
+}
+
+TEST(CodeMeta, AChainOfDerivedPointersIsRefusedByTheChecksOfTheBaseAndTheSlot) {
+  // The first entry's slot is the second's base: the base was already a delta.
+  // A base must be live and a slot must not be, so no chain can pass both.
+  Built b = valid();
+  b.parts[2].derived = {{-24, -8, 16}, {-40, -24, 8}};
+  b.finish(64, 100);
+  size_t site = 0;
+  EXPECT_NE(std::strstr(refuse_at(b, &site), "base is not a live"), nullptr);
+  EXPECT_EQ(site, 2u);
+  // Made live so that the base passes, the slot is a live reference.
+  b.parts[2].live.push_back(slot(-24, GRCORE_SLOT_VALUE));
+  b.finish(64, 100);
+  EXPECT_NE(std::strstr(refuse_at(b, &site), "slot is also a live reference"), nullptr);
+  EXPECT_EQ(site, 2u);
+}
+
+TEST(CodeMeta, ADerivedSlotNamedTwiceIsCorruptAndTwoPointersMayShareABase) {
+  Built b = valid();
+  b.parts[0].derived = {{-24, -8, 16}, {-24, -16, 8}}; // subtracted twice
+  b.finish(64, 100);
+  size_t site = 0;
+  EXPECT_NE(std::strstr(refuse_at(b, &site), "another derived pointer"), nullptr);
+  EXPECT_EQ(site, 0u);
+  Built shared = valid();
+  shared.parts[0].derived = {{-24, -8, 16}, {-32, -8, 24}}; // one base, two slots
+  shared.finish(64, 100);
+  EXPECT_EQ(grcore_codemeta_validate(&shared.meta, 100, nullptr), GRCORE_OK);
+}
+
 TEST(CodeMeta, ADerivedPointerRoundTrips) {
   Built b = valid();
   const GRCORE_CodeSite * s = grcore_codemeta_find(&b.meta, 20);
@@ -340,7 +387,11 @@ TEST(CodeMeta, ARandomisedBuildValidateFindProperty) {
         }
       }
       for (size_t k = 0; k < slots; k++) {
-        if (!s.live.empty() && rng() % 5 == 0) {
+        bool is_live_slot = false;
+        for (const auto & l : s.live) {
+          is_live_slot = is_live_slot || l.value == -8 * static_cast<int64_t>(k + 1);
+        }
+        if (!s.live.empty() && !is_live_slot && rng() % 5 == 0) {
           s.derived.push_back({-8 * static_cast<int64_t>(k + 1),
               s.live[rng() % s.live.size()].value,
               static_cast<int64_t>(rng() % 64)});

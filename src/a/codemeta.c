@@ -86,8 +86,60 @@ static void mark_slots(const GRCORE_CodeSite * s, uint64_t * marks, bool on) {
   }
 }
 
+static bool bit(const uint64_t * map, int64_t offset) {
+  size_t k = slot_index(offset);
+  return (map[k / 64] >> (k % 64)) & 1u;
+}
+
+static void set_bit(uint64_t * map, int64_t offset, bool on) {
+  size_t k = slot_index(offset);
+  if (on) {
+    map[k / 64] |= UINT64_C(1) << (k % 64);
+  } else {
+    map[k / 64] &= ~(UINT64_C(1) << (k % 64));
+  }
+}
+
+/* A derived pointer's slot is rewritten by the compiled-frame pass (it parks
+ * the delta there while the base is visited), so nothing else may share it:
+ * not a live reference (the visitor would be shown the delta as one), and not
+ * another entry's slot (it would be subtracted twice). A chain, one entry's
+ * slot being another's base, needs a slot that is both live (as a base) and not
+ * live (as a slot), so the checks of the base and of the slot already refuse it.
+ * Returns why not, or NULL; the site is the caller's to report. `live` and
+ * `slots` are bit maps over the frame (NULL: search instead); `slots` is left
+ * clear. */
+static const char * derived_exclusive(
+    const GRCORE_CodeSite * s, const uint64_t * live, uint64_t * slots) {
+  const char * why = NULL;
+  size_t done = 0;
+  for (; done < s->derived_count && why == NULL; done++) {
+    const GRCORE_DerivedPointer * d = &s->derived[done];
+    if (live != NULL ? bit(live, d->slot) : is_live(s, d->slot)) {
+      why = "derived pointer's slot is also a live reference of its site";
+    } else if (slots != NULL) {
+      if (bit(slots, d->slot)) {
+        why = "derived pointer's slot is used by another derived pointer of its site";
+      }
+      set_bit(slots, d->slot, true);
+    } else {
+      for (size_t j = 0; j < done && why == NULL; j++) {
+        if (s->derived[j].slot == d->slot) {
+          why = "derived pointer's slot is used by another derived pointer of its site";
+        }
+      }
+    }
+  }
+  if (slots != NULL) {
+    for (size_t i = 0; i < done; i++) {
+      set_bit(slots, s->derived[i].slot, false);
+    }
+  }
+  return why;
+}
+
 static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
-    uint64_t * marks, const char ** out_reason, size_t * loc) {
+    uint64_t * marks, size_t words, const char ** out_reason, size_t * loc) {
   *loc = SIZE_MAX;
   if ((unsigned)s->kind >= (unsigned)GRCORE_SITE_KIND_COUNT) {
     CORRUPT("site kind is not one of the kinds");
@@ -142,8 +194,13 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
       CORRUPT("derived pointer's base is not a live reference of its site");
     }
   }
+  const char * shared =
+      derived_exclusive(s, marks, marks != NULL ? marks + words : NULL);
   if (marks != NULL) {
     mark_slots(s, marks, false);
+  }
+  if (shared != NULL) {
+    CORRUPT(shared);
   }
   for (size_t i = 0; i < s->frame_state_count; i++) {
     const GRCORE_CodeLocation * l = &s->frame_state[i];
@@ -221,7 +278,9 @@ GRCORE_Result grcore_codemeta_validate_at(const GRCORE_CodeMeta * meta,
    * back to searching, which gives the same answers more slowly. */
   const GRCORE_Allocator * a = grcore_allocator_default();
   size_t mark_words = (size_t)meta->frame_bytes / 8 / 64 + 1;
-  uint64_t * marks = a->calloc_fn(a->ctx, mark_words, sizeof *marks);
+  /* Two maps in one block: the live references, then the derived slots, of the
+   * site being checked. */
+  uint64_t * marks = a->calloc_fn(a->ctx, 2 * mark_words, sizeof *marks);
   FnCount * functions = NULL;
   size_t mask = 0;
   if (meta->site_count != 0 && meta->site_count < SIZE_MAX / 4 / sizeof *functions) {
@@ -250,7 +309,7 @@ GRCORE_Result grcore_codemeta_validate_at(const GRCORE_CodeMeta * meta,
       result = GRCORE_ERR_CORRUPT;
       break;
     }
-    result = check_site(s, meta->frame_bytes, marks, &why, &bad_loc);
+    result = check_site(s, meta->frame_bytes, marks, mark_words, &why, &bad_loc);
     if (result != GRCORE_OK) {
       break;
     }

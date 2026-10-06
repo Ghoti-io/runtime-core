@@ -476,25 +476,28 @@ GRCORE_RootVisitor mover_for(Mover * m) {
 }
 } // namespace
 
-TEST(CompiledRoots, ADerivedPointerFollowsItsBaseAndKeepsItsDelta) {
+TEST(CompiledRoots, EveryDerivedPointerOfASiteFollowsTheSharedBaseAndKeepsItsOwnHeldDelta) {
   CWorld w(GRCORE_UNLIMITED, false, false, /*derived=*/true);
   ASSERT_EQ(grcore_codemeta_validate(&w.code.meta, w.code.size(), nullptr), GRCORE_OK);
   HandStack st(50);
   set_up_run(w, st, 0, 50, 0);
+  // The held deltas are what the code holds, and differ from the metadata's
+  // 16 and 24 in some frames: the pass keeps the held ones, and each entry its own.
+  auto delta0 = [](size_t k) { return k % 5 == 0 ? 40u : 16u; };
+  auto delta1 = [](size_t k) { return k % 3 == 0 ? 72u : 24u; };
   for (size_t k = 0; k < 50; k++) {
-    // 16 bytes inside the object for most frames, and a different delta for
-    // some, since the pass must keep what the code holds and not what the
-    // metadata says.
-    st.words[k * 8 + 2] = HandStack::ref_of(k) + (k % 5 == 0 ? 40 : 16);
+    st.words[k * 8 + 2] = HandStack::ref_of(k) + delta0(k);
+    st.words[k * 8 + 1] = HandStack::ref_of(k) + delta1(k);
   }
   Mover mover{0x70000, {}};
   GRCORE_RootVisitor v = mover_for(&mover);
   ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
-  ASSERT_EQ(mover.seen.size(), 50u) << "the derived slot is not reported";
+  ASSERT_EQ(mover.seen.size(), 50u) << "the base is shown once, and no derived slot is";
   for (size_t k = 0; k < 50; k++) {
     uint64_t base = HandStack::ref_of(k) + 0x70000;
     EXPECT_EQ(st.words[k * 8 + 5], base) << k;
-    EXPECT_EQ(st.words[k * 8 + 2], base + (k % 5 == 0 ? 40 : 16)) << k;
+    EXPECT_EQ(st.words[k * 8 + 2], base + delta0(k)) << "first derived, frame " << k;
+    EXPECT_EQ(st.words[k * 8 + 1], base + delta1(k)) << "second derived, frame " << k;
     // Nothing else moved.
     EXPECT_EQ(st.words[k * 8 + 4], HandStack::trap_of(k));
     EXPECT_EQ(st.words[k * 8 + 3], 7 + k);
@@ -507,6 +510,7 @@ TEST(CompiledRoots, ADerivedPointerIsRewrittenToTheSameValueWhenNothingMoves) {
   set_up_run(w, st, 0, 4, 0);
   for (size_t k = 0; k < 4; k++) {
     st.words[k * 8 + 2] = HandStack::ref_of(k) + 16;
+    st.words[k * 8 + 1] = HandStack::ref_of(k) + 24;
   }
   Seen seen; // reads, writes nothing
   GRCORE_RootVisitor v = visitor_for(&seen);
@@ -514,6 +518,7 @@ TEST(CompiledRoots, ADerivedPointerIsRewrittenToTheSameValueWhenNothingMoves) {
   for (size_t k = 0; k < 4; k++) {
     EXPECT_EQ(st.words[k * 8 + 5], HandStack::ref_of(k));
     EXPECT_EQ(st.words[k * 8 + 2], HandStack::ref_of(k) + 16);
+    EXPECT_EQ(st.words[k * 8 + 1], HandStack::ref_of(k) + 24);
   }
 }
 
