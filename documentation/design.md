@@ -1147,13 +1147,15 @@ already does, and the story that added the call found no need to change it:
   two intrinsics and a read of a layout word, and would hide the rule that matters, which
   is that a native pins what its frame holds and must not rely on an argument being
   updated; so none was added. The contract is in `runtime-jit`'s `natives.h`.
-- *Depth.* A `JIT`, `NATIVE` or `REENTRY` record enters the native-depth budget, so a
-  compiled outer run costs one more unit than the interpreted outer run of the same
-  program, and a program that nests natives refuses its record one level sooner compiled
-  than interpreted for the same budget (`Natives.ARefusedRecordMakesTheNativeReturnUnwind...`
-  measures it: the same nesting is reached with a budget one larger). That is AD-21's
-  accounting and not a difference between tiers' verdicts: the native sees a refused
-  `grcore_activation_enter` and returns the status that unwinds, in both.
+- *Depth.* A `JIT`, `NATIVE` or `REENTRY` record enters the native-depth budget. An interpreted
+  nesting costs one unit a level (the REENTRY record); a compiled nesting costs two (REENTRY and JIT), and a
+  compiled outer run costs one more than an interpreted one. So the same budget refuses a program that nests
+  compiled natives at about half the depth the interpreted run reaches (budget 4: three runs interpreted, two
+  compiled), and the same *interpreted* nesting needs a budget one larger under a compiled outer run
+  (`Natives.ARefusedRecordMakes...` and `...ARefusedJitRecord...` measure both). That is AD-21's accounting and
+  not a difference between tiers' verdicts in kind: the native sees a refused `grcore_activation_enter` and
+  returns the status that unwinds, in both, and an engine whose wrapper wants equal depths must not count the
+  JIT record (story 9's to decide).
 - *A record that was rebuilt cannot be left with fewer guest frames than it began with.*
   An unwind that finds no scope in a compiled run pops the frames above the run's entry
   frame in the `deopt` hook, but the entry frame itself, which the record counted when it
