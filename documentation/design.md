@@ -1125,6 +1125,47 @@ without a change, by reasoning that the tests check from outside:
   a tail call never lowers it, so the rule that a rebuilt JIT record may be left with
   guest frames above its base and never with fewer is untouched.
 
+**Natives called from compiled code ask nothing new of the core either (AD-28, AD-17,
+CAP-7).** `runtime-jit` calls an engine's native directly and stores the walk-start cell
+first (`runtime-jit`'s `design.md`, "Calls to natives"); what the core has to give, it
+already does, and the story that added the call found no need to change it:
+
+- *The cell, and the record a native opens.* A native that opens an activation record
+  (`GRCORE_ACTIVATION_NATIVE` for a leaf-ish one that only wants its own frame pinned,
+  `GRCORE_ACTIVATION_REENTRY` for one that runs guest code) moves the cell into the record
+  below at `grcore_activation_enter`, so a compiled run under the native stays described
+  by the JIT record it belongs to, and a nested run of its own sets the cell afresh. A
+  native that opens none is walked from the cell directly, which is what a collection in a
+  leaf native needs. The library opens no record on a native's behalf: that would be a
+  core call on every native call, and most natives need neither.
+- *The segment is the native's frame, and no helper makes it.* The fixture's `NativeScope`
+  gives `[stack pointer of the native - 256, base of the innermost compiled frame)`: the
+  low end is read from `rsp` in the native itself, the high end from the walk-start cell,
+  so the range takes in the native's own frame *and the stack arguments the call made*
+  (which the compiled frame's extent does not cover and a native's frame does not either),
+  and `visit_range` cuts the compiled frames out of it. A helper that made this would be
+  two intrinsics and a read of a layout word, and would hide the rule that matters, which
+  is that a native pins what its frame holds and must not rely on an argument being
+  updated; so none was added. The contract is in `runtime-jit`'s `natives.h`.
+- *Depth.* A `JIT`, `NATIVE` or `REENTRY` record enters the native-depth budget, so a
+  compiled outer run costs one more unit than the interpreted outer run of the same
+  program, and a program that nests natives refuses its record one level sooner compiled
+  than interpreted for the same budget (`Natives.ARefusedRecordMakesTheNativeReturnUnwind...`
+  measures it: the same nesting is reached with a budget one larger). That is AD-21's
+  accounting and not a difference between tiers' verdicts: the native sees a refused
+  `grcore_activation_enter` and returns the status that unwinds, in both.
+- *A record that was rebuilt cannot be left with fewer guest frames than it began with.*
+  An unwind that finds no scope in a compiled run pops the frames above the run's entry
+  frame in the `deopt` hook, but the entry frame itself, which the record counted when it
+  began, must stay until `grcore_activation_leave` has run, and the caller of the run
+  pops it afterwards. The rule is `grcore_activation_leave`'s, unchanged; an engine that
+  pops the entry frame in the hook is refused at the leave, so the fixture's hook leaves it
+  and `run_compiled` pops it after the record is left.
+- *The limit word.* A nested compiled run must not call `grcore_context_native_limit_here`
+  again: the limit is the outer run's, set from the stack pointer the outer run began at,
+  and the nested run's deeper frames are measured against it. (The nested re-entry's own
+  `grcore_activation_enter` sets it only if it finds it unset, as before.)
+
 ## B, part 3: context snapshots
 
 A snapshot (`b/snapshot.h`) is the first thing in this library that outlives
