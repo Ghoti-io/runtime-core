@@ -858,10 +858,9 @@ registered, and entry slots live until the context is destroyed.
 **The walk** (`a/compiled.h`) starts at the innermost record that carries
 compiled state. A frame's code is found from its return address, its site from
 the offset in that code; the caller's base and return address are the two words
-at the frame's base. A return address in registered code continues the run; one
-in no registered code is the entry from the interpreter, which ends it, and the
-walk goes on to the next record outward that carries state (a compiled run under
-a nested activation). It checks that each caller base is word-aligned, above its
+at the frame's base. A return address in registered code continues the run; the
+run ends only at the chain-end marker (part 5), and the walk goes on to the next
+record outward that carries state (a compiled run under a nested activation). It checks that each caller base is word-aligned, above its
 callee's and, when the record has a C segment, inside it; that the innermost
 return address is in code at a site; and that runs ascend. **A broken chain is
 never skipped.** `grcore_compiled_walk_next` returns `GRCORE_CWALK_BROKEN` with a
@@ -876,8 +875,9 @@ as the address of the native slot, so a moving collector writes through it; only
 what the site's stack map names is reported, so a raw word that looks like a
 reference, an `I32` or an unmapped word never is, and nothing in a compiled
 frame is scanned conservatively. Compiled frames are placed among the guest
-frames: a record's run comes before the guest frames that were on the stack when
-the record was entered (`base_frames`). A conservative range (a record's C
+frames, and paired with the guest frame each stands for (part 5); one with none
+comes before the guest frames that were on the stack when its record was entered
+(`base_frames`). A conservative range (a record's C
 segment) is reported with every compiled frame's extent cut out of it (from the
 base less the code's `frame_bytes` through the two saved words), so a segment
 that is drawn too wide, or that spans its own record's frames, still scans only
@@ -892,8 +892,7 @@ the `stack.h` accessors refuse it. `grcore_frame_slot` and the new
 in the native frame with their representation, converting nothing (a counting
 conversion in the tests stays at zero); a dead slot reads as raw zero. It has no
 scopes to ask the engine about. Pairing a compiled frame with the guest frame a
-compiled call pushes (CAP-1) is the call story's to decide; this part gives each
-its own place, so that story can decide it with the walk in hand.
+compiled call pushes is part 5's.
 
 Rejected: **a shadow stack of frame records**, pushed by every compiled call
 (a store per call on the hot path of the very feature that exists to make calls
@@ -949,6 +948,146 @@ cannot update it without knowing its base); **recomputing from the metadata's
 `delta`** (the declared offset can differ from the held one, and the held one is
 what the code uses); and **a side array of deltas** (allocation in a pass that
 runs inside a collection, which must not fail).
+
+## A, part 5: calls between compiled frames (AD-28, CAP-1 to CAP-4)
+
+Part 4 made a chain of compiled frames visible. This part is what a compiled
+call needs from the core to be correct: a place the walk starts from that
+compiled code can write, a run that ends definitively, a compiled frame and its
+guest frame that are one frame, a rebuild of the whole chain, a native stack
+measured in bytes, an entry slot that remembers a callee that cannot be
+compiled, and a measurement of what the retired list holds. All of it is `free`,
+appended to the headers, and `BITS`-only and interpreter-only behaviour is
+unchanged. `runtime-jit`'s `design.md` ("Calls between compiled functions") is
+the other half: the convention, the call sequence and the hooks.
+
+**Where the walk starts: a cell in the context.** Before any call that can reach
+a GC point, compiled code stores its frame base and the return address of the
+call in two words of the *context*, at an offset `a/layout.h` states
+(`walk_cell_offset`). The record array grows by copy and so moves, and compiled
+code cannot name a record, so the value cannot go in the record directly; the
+context never moves and compiled code already holds it. Core moves the cell into
+the innermost record at the next activation entry (so a native that records an
+activation leaves the compiled run below it described by the record below) and
+at every walk (`grcore_compiled_walk_begin`), and leaving a JIT record clears it,
+so a later walk cannot read frames that were left. A cell that is set while the
+innermost record is not a JIT one cannot have been set by compiled code, and is
+a broken walk and never silently dropped. Rejected: **a pointer to the record**
+(dangling after the array grows), **a thread-local** (code is shared between
+contexts, a paused context resumes on another thread, and TSan sees a race that
+is not one), and **a global** (one context's run is another's frames).
+
+**A run ends only at a marker.** Story 2 ended a run at any return address in no
+registered code, which is also what a corrupt word looks like, so a corrupt
+return word silently dropped every outer frame's roots. The entry adapter of a
+callable function sets its frame register to `GRCORE_COMPILED_CHAIN_END` before
+it calls the first compiled function, so that function's saved caller base is
+the marker, and the walk ends a run on it and on nothing else: a return address
+in no registered code, met without it, is a broken chain, and enumeration aborts
+with the reason. The marker is odd, so it is never a frame base (a base is
+word-aligned) and is not a value a stack holds by accident. Rejected: **a
+registered entry stub with a site kind of its own** (a metadata format change
+for every reader, and a second registry lookup per run), **zero as the marker**
+(what zeroed or overwritten memory looks like, which is the case this closes),
+and **counting frames** (a count is as corruptible as the word it replaces).
+`HandStack::build` leaves the marker, and `EveryBrokenChainIsAnErrorAndNeverASkipOrAnEnd`
+grew the corrupt-return, missing-marker and look-alike-base cases.
+
+**A compiled frame and its guest frame are one frame.** Every guest call pushes
+the callee's guest frame, compiled or not, so each compiled frame has a guest
+frame of its own, stale until a rebuild (compiled code keeps its values in its
+native frame). Reporting both showed each activation twice and reported the
+guest frame's stale VALUE slots as roots. A frame of a run of `n` frames entered
+with `base_frames` guest frames stands for the guest frame at index
+`base_frames - 1 + (n - 1 - depth)` from the outermost: the run's outermost frame
+is the function the interpreter entered. The compiled walk counts a run on a copy
+of itself, by the same step it walks with, so the count and the walk cannot
+disagree, and each frame reports `run_depth` and `run_length`. The pairing is a
+claim about the stack, so it is checked (the guest frame must be the same engine
+and function as the site's identity) and where it does not hold both are
+reported as before, which can retain too much and never too little. A paired
+frame is shown once, by its identity and its stack map, with the guest frame in a
+new `guest_frame` member (`frame` stays null: the `stack.h` accessors would read
+the stale slots), and the root pass skips the guest frame's slots but still runs
+its engine's `roots` hook, since what that reports is not a slot. A guest frame
+above the innermost compiled frame (a callee pushed and not yet entered) is an
+ordinary frame.
+
+**One rebuild for a whole chain.** `grcore_compiled_rebuild` rebuilds every
+compiled frame of the innermost run (down to the innermost activation record)
+into its existing guest frame, so nothing is inserted and no offset moves. It
+checks everything before it writes anything: that the run walks and ends
+cleanly, that each frame's guest frame is there, of the same engine and function
+and with as many slots as the frame state, that the reservation holds every
+converting location of the chain, and that the engine can convert them; a
+refusal changes nothing. It then converts in AD-27's two phases across the whole
+chain (null in every converting slot of every frame, convert every raw value into
+a cell, write the slots), so no frame is seen half raw, and a `DEAD` location
+leaves the guest frame's own word (a rebuild may put anything there, and a frame
+that keeps a header word the compiled code does not know is better left with it).
+`keep_frames` is how an unwind rebuilds only what survives: a frame whose guest
+frame is at or above that index is not converted, because it is about to be
+popped. On success the record's state is cleared and the record is marked
+*rebuilt*. The reservation, which the one-frame rebuild took at a fixed size, is
+extended by each compiled call (`grcore_deopt_reservation_extend`) by the callee's
+maximum and given back when the call returns (`retract`, which cannot fail); the
+memory is taken at the call, where a refusal can still be answered by exiting at
+the call site, and the rebuild that a guard fifty frames down starts cannot fail
+for want of a cell. A chain's rebuild needs the *sum* of its frames' converting
+locations at once, which is why a per-frame reservation (what story 1 had) is not
+enough.
+
+*A defect in story 2, found here.* `grcore_activation_leave` required the guest
+stack to be as it was when the record was entered, which catches an engine that
+forgot to pop. After a chain rebuild that can never hold: each compiled call
+pushed a guest frame above the record's base, the rebuild fills them in, and the
+interpreter finishes them after the native frames return, so an engine could not
+leave the record at all and so never release retired code. A *rebuilt* JIT record
+may now be left with its guest frames in place, and never with fewer than it began
+with; a record whose rebuild was refused keeps the strict rule.
+
+**The native stack, in bytes.** Native depth was a count of activations, which
+says nothing about the stack compiled code and its helpers have used. A budget in
+bytes is an option (`grcore_options_set_native_stack_bytes`); `run` and `resume`
+set a limit word in the context from their own stack pointer less the budget (a
+resume may be on another thread, so another stack), a re-entry that finds none
+sets it, and `run` clears it when it ends because it names a stack nobody is
+running on. Each callable function compares `rsp`, less its own frame, with the
+word in its prologue (the offset is in `a/layout.h`), and below it deoptimizes the
+chain at the call site; only the guest-depth budget gives a verdict, so verdicts
+agree across tiers. The budget is a total for compiled code and the C code under
+it (the push hook, a collector), so it must leave room for them. Rejected:
+**counting frames** (a function's frame is not a constant, and a native that
+recurses counts for nothing), **a guard page and a fault handler** (a fault is not
+a place to rebuild fifty frames from, and a signal handler on a thread the
+embedder owns is not ours to install), and **a per-function constant** (the
+function that overflows is the one that did not know how much stack its callees
+would use).
+
+**An entry slot can be marked refused.** A call finds three kinds of slot word
+with one compare against one: above it, compiled code to call; zero, empty, so
+the engine is asked to compile; `GRCORE_ENTRY_REFUSED`, which an engine puts in a
+slot whose function cannot be compiled (`grcore_entry_slot_refuse`, which retires
+any code the slot held and cannot fail), so that a callee that cannot be compiled
+is an exit that costs one compare and no hook. A later set (a tier-up) or clear
+replaces the mark; setting an entry that is not above it is refused, so no code
+address can be mistaken for it.
+
+**What the retired list holds, measured.** Retired code is released only when no
+JIT activation is open (AD-28), so one compiled run that stays open while its
+slots are replaced retains every replaced function. `grcore_code_retired_peak`
+records the high-water mark of the list (retired ranges and retired slot code
+together). `Calls.RepeatedReplacementUnderOneLongLivedActivation...` in
+runtime-jit replaces one function 200 times under one open JIT record: the peak is
+400 references (a retired slot reference and a retired range for each, which
+name the same code), 832,640 bytes are held (4,163 per replaced function: its
+page, and bookkeeping), and everything is released when the record is left. The
+growth is linear in the replacements made during the longest-lived activation, a
+function costs one page, and replacements happen once per tier-up or deopt of a
+function (a function that is discarded after eight deopts, as lang-tang's is, is
+replaced at most eight times), so no bound or epoch is added; the figure, and the
+statistic that makes it re-measurable, are the evidence, and a long-lived embedder
+that disagrees has the number to argue with.
 
 ## B, part 3: context snapshots
 
