@@ -105,11 +105,11 @@ TEST(NativeStackBytes, RunSetsTheLimitFromItsOwnStackAndClearsItWhenItEnds) {
   ASSERT_EQ(grcore_run(w.ctx, probe_entry, &p, &outcome), GRCORE_OK);
   EXPECT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
   ASSERT_NE(p.limit_in_entry, 0u);
-  // The limit is run's stack pointer less the budget; the entry's frame is a
-  // little below run's.
+  // The limit is run's stack pointer less the budget; the entry's frame is near
+  // run's (a sanitizer's frames are larger, so which is lower is not fixed).
   uintptr_t expect = p.local_in_entry - (1u << 20);
-  EXPECT_GT(p.limit_in_entry, expect);
-  EXPECT_LT(p.limit_in_entry, expect + 16384);
+  uintptr_t gap = p.limit_in_entry > expect ? p.limit_in_entry - expect : expect - p.limit_in_entry;
+  EXPECT_LT(gap, 16384u);
   EXPECT_EQ(grcore_context_native_limit(w.ctx), 0u)
       << "it names a stack nobody runs on once run returns";
 }
