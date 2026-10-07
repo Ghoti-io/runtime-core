@@ -1091,6 +1091,40 @@ replaced at most eight times), so no bound or epoch is added; the figure, and th
 statistic that makes it re-measurable, are the evidence, and a long-lived embedder
 that disagrees has the number to argue with.
 
+**Tail calls ask nothing new of the core (AD-28, CAP-8).** A compiled tail call
+replaces the caller's native frame and its guest frame (`runtime-jit`'s `design.md`,
+"Tail calls"), and the core's API already covers the guest half: the engine's `tail`
+hook extends the reservation by the callee's maximum, makes room
+(`grcore_stack_reserve`, for a callee whose frame is larger), gives back the
+caller's extension (`grcore_deopt_reservation_retract`), pops the caller's guest
+frame and pushes the callee's. Everything that can fail is before the pop, so the pop
+and push cannot, which is why there is no "replace frame" call: it would be reserve,
+pop and push, and one more thing for every engine to call. What the walk needs holds
+without a change, by reasoning that the tests check from outside:
+
+- *After the jump the callee's frame holds the replaced caller's saved base and
+  return address* in the two words at its base, so `grcore_compiled_walk_next` reads
+  the callee as a callee of the original caller. A run still ends at the marker or at
+  the caller, a chain after a widening or narrowing tail call is walked once per frame
+  with its own identity (`Tail.ACollectionInAFiftyDeepChain...` in runtime-jit: fifty
+  frames, the outermost saved base the marker), and the pairing is still positional
+  because the hook replaced the guest frame as the jump replaced the native one:
+  compiled frames and guest frames correspond one for one.
+- *The walk-start cell holds a dead frame after the jump* and is not cleared. It is
+  read only after a store that precedes every call that can reach a GC point, the
+  native-stack stub stores it itself, and the entry adapter clears it when it leaves,
+  so no walk reads it stale. Clearing it at the jump would be two stores per tail call
+  for a value nothing reads first.
+- *The guest depth does not change*, so the depth budget gives the verdict the
+  interpreter's own tail call gives (a million-deep tail recursion fits a limit of
+  one hundred, and a non-tail one hits it at the same depth in both tiers); *a rebuild*
+  of a chain a tail call went through rebuilds the callers' and the callee's frames,
+  nothing else, from a reservation that holds the callee's cells and not the replaced
+  caller's (`Tail.EveryTailCallReplacesTheReservationExtension...`).
+- *An unwind or a record's `leave`* sees the guest frame count it began with or more:
+  a tail call never lowers it, so the rule that a rebuilt JIT record may be left with
+  guest frames above its base and never with fewer is untouched.
+
 ## B, part 3: context snapshots
 
 A snapshot (`b/snapshot.h`) is the first thing in this library that outlives
