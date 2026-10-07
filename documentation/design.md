@@ -1052,7 +1052,9 @@ bytes is an option (`grcore_options_set_native_stack_bytes`); `run` and `resume`
 set a limit word in the context from their own stack pointer less the budget (a
 resume may be on another thread, so another stack), a re-entry that finds none
 sets it, and `run` clears it when it ends because it names a stack nobody is
-running on. Each callable function compares `rsp`, less its own frame, with the
+running on. The re-entry that set it clears it when it is left, for the same reason:
+the word otherwise outlives the frame it was measured in, and a later compiled call
+made from an engine that never entered through `run` would be measured against it. Each callable function compares `rsp`, less its own frame, with the
 word in its prologue (the offset is in `a/layout.h`), and below it deoptimizes the
 chain at the call site; only the guest-depth budget gives a verdict, so verdicts
 agree across tiers. The budget is a total for compiled code and the C code under
