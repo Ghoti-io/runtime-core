@@ -151,13 +151,22 @@ TEST(NativeStackBytes, AReentryFindsTheRunsLimitAndOnlySetsOneWhereThereIsNone) 
                 false, nullptr, &a), GRCORE_OK);
   uintptr_t set = grcore_context_native_limit(w.ctx);
   EXPECT_NE(set, 0u);
+  // Leaving the activation that set it clears it: a later re-entry, possibly on
+  // another thread, must measure from its own stack, not from this one's.
+  ASSERT_EQ(grcore_activation_leave(stack, a), GRCORE_OK);
+  EXPECT_EQ(grcore_context_native_limit(w.ctx), 0u);
+  ASSERT_EQ(grcore_activation_enter(stack, GRCORE_ACTIVATION_REENTRY, engine, false, nullptr, &a), GRCORE_OK);
+  set = grcore_context_native_limit(w.ctx);
+  EXPECT_NE(set, 0u);
   // A second, nested one leaves it alone: the budget is a total.
   GRCORE_ActivationRef b;
   ASSERT_EQ(grcore_activation_enter(stack, GRCORE_ACTIVATION_REENTRY, engine,
                 false, nullptr, &b), GRCORE_OK);
   EXPECT_EQ(grcore_context_native_limit(w.ctx), set);
   ASSERT_EQ(grcore_activation_leave(stack, b), GRCORE_OK);
+  EXPECT_EQ(grcore_context_native_limit(w.ctx), set) << "the nested one did not set it, so does not clear it";
   ASSERT_EQ(grcore_activation_leave(stack, a), GRCORE_OK);
+  EXPECT_EQ(grcore_context_native_limit(w.ctx), 0u);
   // And a JIT or native record never sets one.
   ASSERT_EQ(grcore_context_native_limit_set(w.ctx, 0), GRCORE_OK);
   GRCORE_ActivationRef c;

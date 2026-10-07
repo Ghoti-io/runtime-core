@@ -89,6 +89,8 @@ typedef struct GRCORE_ActivationRecord {
   uintptr_t hi;
   uintptr_t frame_base;   ///< Innermost compiled frame's base; zero for none.
   uintptr_t return_address; ///< Where that frame is stopped (AD-28).
+  bool set_limit;         ///< A re-entry that set the native-stack limit, and so
+                          ///< clears it when it is left.
   bool rebuilt;           ///< A JIT record whose compiled frames were rebuilt
                           ///< into the guest frames above `base_frames`, which
                           ///< stay for the interpreter to finish.

@@ -105,9 +105,11 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   /* A re-entry finds the native-stack limit set by the run it is inside; one
    * that finds none (the host entered on a path the run did not see) sets it
    * from here. */
+  bool set_limit = false;
   if (kind == GRCORE_ACTIVATION_REENTRY && context->native_limit == 0 &&
       grcore_context_native_stack_bytes(context) != GRCORE_UNLIMITED) {
     grcore_context_native_limit_here(context);
+    set_limit = context->native_limit != 0;
   }
   /* What compiled code recorded belongs to the record that is innermost now,
    * and the one being entered starts with none (AD-28). */
@@ -123,6 +125,7 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   rec->frame_base = 0;
   rec->return_address = 0;
   rec->rebuilt = false;
+  rec->set_limit = set_limit;
   if (kind == GRCORE_ACTIVATION_JIT) {
     stack->jit_live++;
   }
@@ -135,6 +138,11 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
     return false;
   }
   GRCORE_ActivationRecord rec = stack->activations[--stack->activation_count];
+  if (rec.set_limit) {
+    /* The limit names the stack this re-entry measured from, which nobody is
+     * running on once it is left (a later re-entry may be on another thread). */
+    stack->context->native_limit = 0;
+  }
   if (rec.kind == GRCORE_ACTIVATION_JIT) {
     /* Its compiled frames are gone, and so is anything compiled code recorded
      * for them: a later walk must not read frames that were left. */
