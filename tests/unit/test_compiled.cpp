@@ -1308,13 +1308,17 @@ TEST(WalkCell, ACellSetWhileTheInnermostRecordIsNotAJitOneIsABrokenWalkAndAborts
   EXPECT_TRUE(got.frames.empty());
   EXPECT_EQ(got.end, GRCORE_CWALK_BROKEN);
   EXPECT_NE(got.reason.find("no JIT activation"), std::string::npos) << got.reason;
-  // Root enumeration cannot return an error, so it stops the process.
+#ifndef _WIN32
+  // Root enumeration cannot return an error, so it stops the process, which is
+  // seen from a forked child (there is no fork on Windows; the walk's verdict
+  // above is the part of this test that runs there).
   ChildResult r = in_child([&] {
     Seen seen;
     GRCORE_RootVisitor v = visitor_for(&seen);
     grcore_context_enumerate_roots(w.ctx, &v);
   });
   EXPECT_TRUE(r.aborted) << r.err;
+#endif
   cell_of(w.ctx)[0] = 0;
   cell_of(w.ctx)[1] = 0;
   ASSERT_EQ(grcore_activation_leave(w.stack, native), GRCORE_OK);
