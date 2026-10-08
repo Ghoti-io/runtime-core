@@ -128,9 +128,13 @@ struct ChildResult {
 };
 ChildResult in_child(const std::function<void()> & fn) {
 #ifdef _WIN32
-  (void)fn;
-  ADD_FAILURE() << "no fork on this platform";
-  return ChildResult{};
+  // No fork here: the test binary runs itself again and the child runs this body (test_helpers.h).
+  grcore_test::ChildOutcome o = grcore_test::run_in_child(fn);
+  ChildResult r;
+  r.aborted = o.aborted;
+  r.exited_clean = o.ran && !o.aborted && o.status == 0;
+  r.err = o.err;
+  return r;
 #else
   int fds[2];
   EXPECT_EQ(pipe(fds), 0);
@@ -810,9 +814,6 @@ TEST(CompiledRoots, ABrokenChainStopsTheEnumerationAndSaysWhyRatherThanSkippingA
   };
   for (const Break & b : cases) {
     SCOPED_TRACE(b.name);
-#ifdef _WIN32
-    GTEST_SKIP() << "root enumeration aborts, which is seen from a forked child";
-#endif
     CWorld w;
     HandStack st(4);
     GRCORE_CSegment seg = {st.lo() - 4096, st.hi() + 4096};
@@ -837,9 +838,6 @@ TEST(CompiledRoots, ABrokenChainStopsTheEnumerationAndSaysWhyRatherThanSkippingA
 
 TEST(CompiledRoots, AGoodChainDoesNotAbortInTheSameChild) {
   // The control for the case above: the same harness, nothing broken.
-#ifdef _WIN32
-  GTEST_SKIP() << "no fork on this platform";
-#endif
   CWorld w;
   HandStack st(4);
   GRCORE_CSegment seg = {st.lo() - 4096, st.hi() + 4096};
@@ -1308,17 +1306,14 @@ TEST(WalkCell, ACellSetWhileTheInnermostRecordIsNotAJitOneIsABrokenWalkAndAborts
   EXPECT_TRUE(got.frames.empty());
   EXPECT_EQ(got.end, GRCORE_CWALK_BROKEN);
   EXPECT_NE(got.reason.find("no JIT activation"), std::string::npos) << got.reason;
-#ifndef _WIN32
   // Root enumeration cannot return an error, so it stops the process, which is
-  // seen from a forked child (there is no fork on Windows; the walk's verdict
-  // above is the part of this test that runs there).
+  // seen from a child process (a fork, or on Windows the binary run again).
   ChildResult r = in_child([&] {
     Seen seen;
     GRCORE_RootVisitor v = visitor_for(&seen);
     grcore_context_enumerate_roots(w.ctx, &v);
   });
   EXPECT_TRUE(r.aborted) << r.err;
-#endif
   cell_of(w.ctx)[0] = 0;
   cell_of(w.ctx)[1] = 0;
   ASSERT_EQ(grcore_activation_leave(w.stack, native), GRCORE_OK);
