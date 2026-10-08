@@ -37,7 +37,7 @@
 
 #ifdef _WIN32
 /* The VirtualAlloc/VirtualFree/VirtualProtect branch has run: the tests and
- * tools/xwin's probe pass under wine. It has not run on a Windows machine. */
+ * suite/tools/xwin's probe pass under wine. It has not run on a Windows machine. */
 #include <windows.h>
 #else
 #include <sys/mman.h>

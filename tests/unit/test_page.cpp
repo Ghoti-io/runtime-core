@@ -163,7 +163,7 @@ TEST(Page, ACustomProviderWithItsOwnGranuleIsHonoured) {
 /* Windows has no signal to catch, and mingw's GCC has no __try. A vectored
  * handler sees the access violation first; it cannot resume the faulting
  * thread, so the write is made on a thread of its own and the handler ends
- * that thread (the same shape tools/xwin/probe-runtime.c uses). The handler is
+ * that thread (the same shape suite/tools/xwin/probe-runtime.c uses). The handler is
  * installed first in the chain so that nothing else claims the exception. */
 static volatile LONG g_faulted;
 static LONG CALLBACK on_fault(EXCEPTION_POINTERS * e) {
