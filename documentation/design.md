@@ -451,7 +451,12 @@ registration because registration is refused while the context is running, and
 the stack must exist before the first push. Everything is allocated through
 the context's counting allocator, so it is charged to the context: a growth
 the memory budget refuses returns `ERR_LIMIT`, any other refusal `ERR_OOM`,
-and in both the stack and the depth are as they were. A push enters the
+and in both the stack and the depth are as they were. The exception is the
+bookkeeping of compiled code (the code registry, the entry slots, the retire list
+and the deopt reservation): that is the engine's and not the program's, so it is
+allocated through the group's allocator and is not on the context's budget (the
+compiled-code pages themselves are the engine's to map through the group's page
+provider, for the same reason). A push enters the
 guest-depth budget and a pop leaves it, so the depth limit counts frames, as
 ctang's does (AD-16, AD-21). The stack migrates with the context, so a context
 paused with frames can be released on one thread and resumed on another, and
