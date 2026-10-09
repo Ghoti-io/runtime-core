@@ -966,6 +966,24 @@ appended to the headers, and `BITS`-only and interpreter-only behaviour is
 unchanged. `runtime-jit`'s `design.md` ("Calls between compiled functions") is
 the other half: the convention, the call sequence and the hooks.
 
+**Why the part exists (CAP-6).** Calls as deoptimization exits were milestone 1's
+defect (Corey, 2026-10-05): lang-tang's baseline JIT left compiled code at every
+`CALL`, so call-heavy code ran slower with the JIT on than off, and the rule that
+forced it ("no JIT frame calls a JIT frame") was story 15's, not the spine's. The
+spine already had what a compiled call needs (AD-17's precise walk of JIT frames,
+AD-22's lazy deoptimization, the call GC-point kind in the code metadata); this
+part is what was missing in the core. The protocol is `runtime-jit`'s ("Calls
+between compiled functions"), the engine's side is lang-tang's ("The baseline
+JIT"), the references updated in place are `runtime-heap`'s ("Calls") and the pause
+over a compiled chain is `runtime-debug`'s ("Calls"); this section does not repeat
+them. What this library rejected, each where it is decided below: a pointer to the
+record, a thread-local or a global for the walk start; zero as the chain's end
+marker, a registered entry stub, and counting frames; a per-function reservation;
+counting native frames, a guard page and a per-function constant for the native
+stack; and a bound or epoch for retired code (accepted and documented, 2026-10-09,
+below). The call-heavy figures are lang-tang's, recorded once ("Calls, measured");
+the micro-benchmarks of this library, below, are its own.
+
 **Where the walk starts: a cell in the context.** Before any call that can reach
 a GC point, compiled code stores its frame base and the return address of the
 call in two words of the *context*, at an offset `a/layout.h` states
@@ -1095,6 +1113,21 @@ function (a function that is discarded after eight deopts, as lang-tang's is, is
 replaced at most eight times), so no bound or epoch is added; the figure, and the
 statistic that makes it re-measurable, are the evidence, and a long-lived embedder
 that disagrees has the number to argue with.
+
+*Decided (Corey, 2026-10-09): accepted and documented, an open risk owned by this
+library's epoch.* lang-tang measured the same list with discards made under an open
+record (a compiled function calling a native that re-enters guest code,
+spec-runtime-calls story 9): the retired peak is exactly twice the functions
+discarded (2, 10, 80, 400, 2,000 for 1, 5, 40, 200 and 1,000), linear, and all of it
+released when the outermost record is left; lang-tang's "Calls, measured" has the
+run. A function is discarded once, so the list is bounded by twice the functions of
+the program, and what it costs is code held in proportion to the program for as long
+as one record stays open. What would reopen it: a long-lived record that outlives
+many discards (a host that keeps one nested activation open across a long run of a
+large, thrashing program). The remedy then is an epoch (free what no open record can
+reach, not only when none is open), which is this library's design and is not
+started; `_bmad-output/implementation-artifacts/deferred-work.md` names the
+condition.
 
 **Tail calls ask nothing new of the core (AD-28, CAP-8).** A compiled tail call
 replaces the caller's native frame and its guest frame (`runtime-jit`'s `design.md`,
@@ -1408,6 +1441,13 @@ runtime-jit and lang-tang recorded 1.1 to 1.4 on the same machine, and why the
 median of a few cases (keyed lookup, roots) sits well above the best. Read a
 figure against the calibration beside it, and re-measure on a quiet machine
 before treating any of them as a budget.
+
+The call-heavy cases (`fib(15)` and `fib(22)` interpreted and compiled, library
+calls, template calls) are not here: they need an engine, and they are recorded
+once, with their instrument, machine, compiler, flags and date, in lang-tang's
+`design.md` ("Calls, measured"). The cost of the core's part of a compiled call (a
+guest frame pushed and popped, an activation record entered and left, the poll)
+is the `stack-pushpop` and `activation` rows above.
 
 | Case | Best of seven | Unit |
 | --- | --- | --- |
