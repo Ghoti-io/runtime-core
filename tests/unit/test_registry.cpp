@@ -9,6 +9,7 @@
  */
 
 #include "test_helpers.h"
+#include <ghoti.io/runtime-core/a/deopt.h>
 
 #include <algorithm>
 #include <random>
@@ -54,6 +55,23 @@ TEST(Registry, LookupIsExactAtTheStartTheLastByteAndOnePastIt) {
   EXPECT_FALSE(grcore_code_lookup(w.ctx, UINTPTR_MAX, &r));
   EXPECT_FALSE(grcore_code_lookup(nullptr, start, &r));
   EXPECT_EQ(grcore_code_registered_count(w.ctx), 1u);
+}
+
+TEST(Registry, TheBookkeepingOfCompiledCodeIsChargedToTheGroupAndNotToTheContextsBudget) {
+  // Compiled code is the engine's, not the program's: registering a range, making
+  // an entry slot and reserving deopt cells change the group's meter and leave the
+  // context's memory in use, which the guest's budget is measured against, alone.
+  RWorld w;
+  const uint64_t context_before = grcore_context_memory_in_use(w.ctx);
+  const uint64_t group_before = grcore_group_memory_in_use(grcore_context_group(w.ctx));
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  GRCORE_EntrySlot * slot = nullptr;
+  ASSERT_EQ(grcore_entry_slot_create(w.ctx, &slot), GRCORE_OK);
+  GRCORE_DeoptReservation * reservation = nullptr;
+  ASSERT_EQ(grcore_deopt_reserve(w.ctx, 8, &reservation), GRCORE_OK);
+  EXPECT_EQ(grcore_context_memory_in_use(w.ctx), context_before) << "nothing of the compiled code's bookkeeping is on the guest's meter";
+  EXPECT_GT(grcore_group_memory_in_use(grcore_context_group(w.ctx)), group_before) << "it is on the group's";
+  EXPECT_EQ(grcore_deopt_release(w.ctx, reservation), GRCORE_OK);
 }
 
 TEST(Registry, AnEmptyRegistryAndAContextWithNoEngineFindNothing) {

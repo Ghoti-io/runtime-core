@@ -112,7 +112,7 @@ static GRCORE_Result registry_of(
     return GRCORE_ERR_INVALID;
   }
   if (stack->registry == NULL && create) {
-    const GRCORE_Allocator * a = grcore_context_allocator(context);
+    const GRCORE_Allocator * a = engine_allocator(context);
     uint64_t refusals = grcore_context_memory_refusals(context);
     stack->registry = a->calloc_fn(a->ctx, 1, sizeof *stack->registry);
     if (stack->registry == NULL) {
@@ -154,8 +154,8 @@ GRCORE_Result grcore_code_register(GRCORE_Context * context,
     return res;
   }
   void * grown;
-  res = grcore_guest_array_reserve(
-      context, r->entries, &r->capacity, r->count, sizeof r->entries[0], &grown);
+  res = grcore_guest_array_reserve_from(
+      context, engine_allocator(context), r->entries, &r->capacity, r->count, sizeof r->entries[0], &grown);
   if (res != GRCORE_OK) {
     return res;
   }
@@ -257,7 +257,7 @@ GRCORE_Result grcore_entry_slot_create(
   if (out_slot == NULL) {
     return GRCORE_ERR_INVALID;
   }
-  const GRCORE_Allocator * a = grcore_context_allocator(context);
+  const GRCORE_Allocator * a = engine_allocator(context);
   uint64_t refusals = grcore_context_memory_refusals(context);
   SlotRec * s = a->calloc_fn(a->ctx, 1, sizeof *s);
   if (s == NULL) {
@@ -277,7 +277,7 @@ static void retire(GRCORE_Stack * stack, GRCORE_Code * code, RetireNode * node) 
   GRCORE_CodeRegistry * r = stack->registry;
   if (stack->jit_live == 0) {
     grcore_code_release(code);
-    const GRCORE_Allocator * a = grcore_context_allocator(stack->context);
+    const GRCORE_Allocator * a = engine_allocator(stack->context);
     a->free_fn(a->ctx, node);
     return;
   }
@@ -307,7 +307,7 @@ GRCORE_Result grcore_entry_slot_set(GRCORE_Context * context,
   }
   /* The one step that can be refused comes first: the node that will retire
    * this code later. */
-  const GRCORE_Allocator * a = grcore_context_allocator(context);
+  const GRCORE_Allocator * a = engine_allocator(context);
   uint64_t refusals = grcore_context_memory_refusals(context);
   RetireNode * node = a->calloc_fn(a->ctx, 1, sizeof *node);
   if (node == NULL) {
@@ -372,7 +372,7 @@ void grcore_registry_release_retired(GRCORE_Stack * stack) {
   if (r == NULL || stack->jit_live != 0) {
     return;
   }
-  const GRCORE_Allocator * a = grcore_context_allocator(stack->context);
+  const GRCORE_Allocator * a = engine_allocator(stack->context);
   /* Detach first: a release callback runs arbitrary code. */
   RetireNode * list = r->retired;
   r->retired = NULL;
@@ -406,7 +406,7 @@ void grcore_registry_destroy(GRCORE_Stack * stack) {
   if (r == NULL) {
     return;
   }
-  const GRCORE_Allocator * a = grcore_context_allocator(stack->context);
+  const GRCORE_Allocator * a = engine_allocator(stack->context);
   stack->registry = NULL;
   while (r->retired != NULL) {
     RetireNode * next = r->retired->next;

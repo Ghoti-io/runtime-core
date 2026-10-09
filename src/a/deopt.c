@@ -198,7 +198,7 @@ GRCORE_Result grcore_deopt_reserve(GRCORE_Context * context, size_t capacity,
       capacity > SIZE_MAX / sizeof(uint64_t)) {
     return GRCORE_ERR_INVALID;
   }
-  const GRCORE_Allocator * a = grcore_context_allocator(context);
+  const GRCORE_Allocator * a = engine_allocator(context);
   uint64_t refusals = grcore_context_memory_refusals(context);
   GRCORE_DeoptReservation * r = a->calloc_fn(a->ctx, 1, sizeof *r);
   if (r == NULL) {
@@ -249,7 +249,7 @@ GRCORE_Result grcore_deopt_reservation_extend(GRCORE_Context * context,
     if (grown > SIZE_MAX / sizeof(uint64_t)) {
       grown = want;
     }
-    const GRCORE_Allocator * a = grcore_context_allocator(context);
+    const GRCORE_Allocator * a = engine_allocator(context);
     uint64_t refusals = grcore_context_memory_refusals(context);
     uint64_t * cellsp =
         a->realloc_fn(a->ctx, r->cells, grown * sizeof *r->cells);
@@ -288,7 +288,7 @@ GRCORE_Result grcore_deopt_release(
    * about to free it whole: no collector reads it any more, so the reservation
    * is freed here. An engine's key destructor runs at exactly this point, and
    * it is where an engine whose state dies with the context releases. */
-  const GRCORE_Allocator * a = grcore_context_allocator(context);
+  const GRCORE_Allocator * a = engine_allocator(context);
   if (reservation->cells != NULL) {
     a->free_fn(a->ctx, reservation->cells);
   }

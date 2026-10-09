@@ -65,8 +65,9 @@ bool grcore_stack_owned(const GRCORE_Stack * stack) {
   return owner_of(stack);
 }
 
-GRCORE_Result grcore_guest_array_reserve(GRCORE_Context * context, void * array,
-    size_t * capacity, size_t count, size_t element_size, void ** out_array) {
+GRCORE_Result grcore_guest_array_reserve_from(GRCORE_Context * context,
+    const GRCORE_Allocator * a, void * array, size_t * capacity, size_t count,
+    size_t element_size, void ** out_array) {
   if (count < *capacity) {
     *out_array = array;
     return GRCORE_OK;
@@ -75,7 +76,6 @@ GRCORE_Result grcore_guest_array_reserve(GRCORE_Context * context, void * array,
   if (grown_capacity > SIZE_MAX / element_size) {
     return GRCORE_ERR_OOM;
   }
-  const GRCORE_Allocator * a = grcore_context_allocator(context);
   uint64_t refusals = grcore_context_memory_refusals(context);
   void * grown = a->malloc_fn(a->ctx, grown_capacity * element_size);
   if (grown == NULL) {
@@ -88,6 +88,13 @@ GRCORE_Result grcore_guest_array_reserve(GRCORE_Context * context, void * array,
   *out_array = grown;
   *capacity = grown_capacity;
   return GRCORE_OK;
+}
+
+GRCORE_Result grcore_guest_array_reserve(GRCORE_Context * context, void * array,
+    size_t * capacity, size_t count, size_t element_size, void ** out_array) {
+  return grcore_guest_array_reserve_from(context,
+      grcore_context_allocator(context), array, capacity, count, element_size,
+      out_array);
 }
 
 bool grcore_stack_read_frame(const GRCORE_Stack * stack, GRCORE_FrameRef frame,

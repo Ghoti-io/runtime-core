@@ -48,6 +48,20 @@
 extern "C" {
 #endif
 
+/**
+ * @brief The allocator of the compiled-code bookkeeping: the code registry, the
+ *   entry slots, the retire list and the deopt reservation.
+ *
+ * The group's, not the context's: these records describe compiled code, which is
+ * the engine's and not the program's, so they are not charged to the context's
+ * memory budget (a program's verdict at a budget does not depend on whether its
+ * functions were compiled). The group's allocator outlives the context, and a
+ * record is freed through the same allocator that made it.
+ */
+static inline const GRCORE_Allocator * engine_allocator(const GRCORE_Context * context) {
+  return grcore_group_allocator(grcore_context_group(context));
+}
+
 /** @brief Bytes reserved at the start of the buffer, so offset zero is none. */
 #define GRCORE_STACK_BASE 8u
 
@@ -183,6 +197,11 @@ bool grcore_stack_owned(const GRCORE_Stack * stack);
  */
 GRCORE_Result grcore_guest_array_reserve(GRCORE_Context * context, void * array,
     size_t * capacity, size_t count, size_t element_size, void ** out_array);
+
+/** @brief ::grcore_guest_array_reserve from the allocator `a` (the compiled-code bookkeeping uses ::engine_allocator's). */
+GRCORE_Result grcore_guest_array_reserve_from(GRCORE_Context * context,
+    const GRCORE_Allocator * a, void * array, size_t * capacity, size_t count,
+    size_t element_size, void ** out_array);
 
 /**
  * @brief Builds the abstract frame of `ref` for an engine hook. The location
