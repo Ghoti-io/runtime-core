@@ -776,7 +776,7 @@ TEST(DeoptRepr, AReservationReleasedByAKeyDestructorIsFreedWhileTheContextIsBein
   EXPECT_EQ(t.live, 0) << "the reservation's record and cells were freed by the destructor";
 }
 
-TEST(DeoptRepr, AReservationReleasedOutsideDestructionIsStillRefusedWhenTheRootCannotBeRemoved) {
+TEST(DeoptRepr, AReservationReleasedFromAnotherThreadIsRefusedAndFreesNothing) {
   // The control for the test above: only destruction is allowed to free a
   // reservation whose root source it could not remove. From another thread the
   // release is refused and frees nothing (the owner check comes first).
