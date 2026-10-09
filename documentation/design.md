@@ -1122,7 +1122,9 @@ discarded (2, 10, 80, 400, 2,000 for 1, 5, 40, 200 and 1,000), linear, and all o
 released when the outermost record is left; lang-tang's "Calls, measured" has the
 run. A function is discarded once, so the list is bounded by twice the functions of
 the program, and what it costs is code held in proportion to the program for as long
-as one record stays open. What would reopen it: a long-lived record that outlives
+as one record stays open. The peak sits exactly on that bound rather than inside it,
+and no test would catch a regression that kept the list at exactly twice the discards
+(or at any figure under the bound). What would reopen it: a long-lived record that outlives
 many discards (a host that keeps one nested activation open across a long run of a
 large, thrashing program). The remedy then is an epoch (free what no open record can
 reach, not only when none is open), which is this library's design and is not
