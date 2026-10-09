@@ -247,14 +247,17 @@ GRCORE_API void grcore_deopt_reservation_retract(
  * @brief Removes the root source and frees the reservation.
  *
  * The caller must own the context, as for ::grcore_deopt_reserve. **Release
- * every reservation before the context is destroyed**: destruction frees the
- * root-source table but cannot know a reservation, whose memory would be
- * leaked.
+ * every reservation before the context is destroyed, or in a key's `destroy`
+ * hook**: destruction frees the root-source table but cannot know a
+ * reservation, whose memory would be leaked. While the context is being
+ * destroyed (a key's destructor is called then) the root table cannot be edited
+ * and is about to be freed whole, so the reservation is freed without being
+ * removed from it.
  *
  * @param context The context the reservation was taken from.
  * @param reservation The reservation; NULL is accepted and does nothing.
- * @return `GRCORE_OK`; `GRCORE_ERR_INVALID` for a NULL context, a non-owner or
- *   a context that is tearing down, or when the root source cannot be
+ * @return `GRCORE_OK`; `GRCORE_ERR_INVALID` for a NULL context or a
+ *   non-owner, or, outside destruction, when the root source cannot be
  *   removed. A refusal frees nothing, because a collector could still read
  *   what was not removed.
  */

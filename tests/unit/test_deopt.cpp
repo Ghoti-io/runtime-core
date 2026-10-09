@@ -735,3 +735,57 @@ int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+namespace {
+
+// A key whose destructor releases a reservation, as an engine whose state dies
+// with its context does (lang-tang's execution is one).
+struct ReleasingState {
+  GRCORE_DeoptReservation * res = nullptr;
+  GRCORE_Result released = GRCORE_ERR_INTERNAL;
+  bool destroyed = false;
+};
+
+void releasing_destroy(GRCORE_Context * ctx, void * value) {
+  auto * st = static_cast<ReleasingState *>(value);
+  st->released = grcore_deopt_release(ctx, st->res);
+  st->destroyed = true;
+}
+
+const GRCORE_Key kReleasingKey = GRCORE_KEY_INIT("test releasing reservation", GRCORE_CARDINALITY_ONE,
+    GRCORE_PHASE_NONE, releasing_destroy, nullptr, nullptr, nullptr, nullptr);
+
+} // namespace
+
+TEST(DeoptRepr, AReservationReleasedByAKeyDestructorIsFreedWhileTheContextIsBeingDestroyed) {
+  // The context refuses to edit its root table while it is being destroyed, and
+  // frees the table whole afterwards; a reservation released by a destructor is
+  // freed all the same (its record and its extended cells), and nothing leaks.
+  TrackingAllocator t;
+  ReleasingState st;
+  {
+    RunWorld w(GRCORE_UNLIMITED, GRCORE_UNLIMITED, GRCORE_DEFAULT_MEMORY_RESERVE, GRCORE_UNLIMITED,
+        GRCORE_UNLIMITED, t.get());
+    ASSERT_EQ(grcore_deopt_reserve(w.ctx, 4, &st.res), GRCORE_OK);
+    ASSERT_EQ(grcore_deopt_reservation_extend(w.ctx, st.res, 6), GRCORE_OK);
+    ASSERT_EQ(grcore_context_register(w.ctx, &kReleasingKey, &st), GRCORE_OK);
+    EXPECT_GT(t.live, 0);
+  }
+  EXPECT_TRUE(st.destroyed);
+  EXPECT_EQ(st.released, GRCORE_OK);
+  EXPECT_EQ(t.live, 0) << "the reservation's record and cells were freed by the destructor";
+}
+
+TEST(DeoptRepr, AReservationReleasedOutsideDestructionIsStillRefusedWhenTheRootCannotBeRemoved) {
+  // The control for the test above: only destruction is allowed to free a
+  // reservation whose root source it could not remove. From another thread the
+  // release is refused and frees nothing (the owner check comes first).
+  RunWorld w;
+  GRCORE_DeoptReservation * res = nullptr;
+  ASSERT_EQ(grcore_deopt_reserve(w.ctx, 2, &res), GRCORE_OK);
+  GRCORE_Result from_elsewhere = GRCORE_OK;
+  std::thread([&] { from_elsewhere = grcore_deopt_release(w.ctx, res); }).join();
+  EXPECT_EQ(from_elsewhere, GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_context_root_source_count(w.ctx), 1u);
+  EXPECT_EQ(grcore_deopt_release(w.ctx, res), GRCORE_OK);
+}

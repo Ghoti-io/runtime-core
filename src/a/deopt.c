@@ -29,6 +29,7 @@
 #include <ghoti.io/runtime-core/a/deopt.h>
 
 #include "guest_internal.h"
+#include "../b/context_internal.h"
 
 #include <ghoti.io/runtime-core/allocator.h>
 #include <ghoti.io/runtime-core/b/budget.h>
@@ -280,9 +281,13 @@ GRCORE_Result grcore_deopt_release(
   }
   GRCORE_Result r =
       grcore_context_remove_root_source(context, &reservation_source, reservation);
-  if (r != GRCORE_OK) {
+  if (r != GRCORE_OK && !context->tearing_down) {
     return r; /* still registered, so still readable: free nothing */
   }
+  /* A context that is being destroyed refuses to edit its root table, and is
+   * about to free it whole: no collector reads it any more, so the reservation
+   * is freed here. An engine's key destructor runs at exactly this point, and
+   * it is where an engine whose state dies with the context releases. */
   const GRCORE_Allocator * a = grcore_context_allocator(context);
   if (reservation->cells != NULL) {
     a->free_fn(a->ctx, reservation->cells);
