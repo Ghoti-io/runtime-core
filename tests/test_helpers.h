@@ -301,10 +301,12 @@ inline GRCORE_Result alpha_scope(const GRCORE_AbstractFrame * frame,
 }
 inline GRCORE_Result alpha_variable(const GRCORE_AbstractFrame * frame,
     size_t scope, size_t index, GRCORE_Variable * out) {
-  GRCORE_Stack * stack = grcore_context_stack(frame->context);
   uint64_t value;
+  /* Read through grcore_frame_slot, which reads an interpreter frame from the
+   * guest stack and a compiled frame by its site: a scope function that read
+   * `frame->frame` would find nothing in a compiled frame. */
   if (scope == 0 && index < frame->slot_count && index < 8) {
-    if (grcore_stack_slot_get(stack, frame->frame, index, &value) != GRCORE_OK) {
+    if (grcore_frame_slot(frame, index, nullptr, &value) != GRCORE_OK) {
       return GRCORE_ERR_INVALID;
     }
     *out = GRCORE_Variable{kAlphaVarNames[index],
@@ -312,7 +314,7 @@ inline GRCORE_Result alpha_variable(const GRCORE_AbstractFrame * frame,
     return GRCORE_OK;
   }
   if (scope == 1 && index == 0) {
-    if (grcore_stack_slot_get(stack, frame->frame, 0, &value) != GRCORE_OK) {
+    if (grcore_frame_slot(frame, 0, nullptr, &value) != GRCORE_OK) {
       return GRCORE_ERR_INVALID;
     }
     *out = GRCORE_Variable{"captured0", GRCORE_SLOT_VALUE, value};

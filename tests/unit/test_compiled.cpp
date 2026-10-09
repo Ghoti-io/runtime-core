@@ -1450,6 +1450,23 @@ TEST(PairedFrames, TheAbstractWalkShowsEachPairedFrameOnceByTheCompiledFramesIde
     EXPECT_EQ(kind, GRCORE_SLOT_VALUE);
     EXPECT_EQ(value, HandStack::ref_of(i));
   }
+  // A paired compiled frame is one frame with its guest frame, so the engine's
+  // scopes apply to it, read through the compiled frame's own slots; an unpaired
+  // compiled frame (the control, above) has none.
+  for (size_t i = 0; i < 3; i++) {
+    SCOPED_TRACE(i);
+    ASSERT_EQ(grcore_frame_scope_count(&frames[i]), 2u);
+    GRCORE_ScopeInfo scope;
+    ASSERT_EQ(grcore_frame_scope(&frames[i], 0, &scope), GRCORE_OK);
+    EXPECT_STREQ(scope.name, "locals");
+    GRCORE_Variable var;
+    ASSERT_EQ(grcore_frame_variable(&frames[i], 0, 0, &var), GRCORE_OK);
+    EXPECT_STREQ(var.name, "v0");
+    EXPECT_EQ(var.value, HandStack::ref_of(i)) << "the compiled frame's slot, not the stale guest frame's";
+    ASSERT_EQ(grcore_frame_variable(&frames[i], 1, 0, &var), GRCORE_OK);
+    EXPECT_STREQ(var.name, "captured0");
+    EXPECT_EQ(var.value, HandStack::ref_of(i));
+  }
   // The guest frames the compiled frames stand for are the three on the stack,
   // innermost first.
   GRCORE_FrameRef top = grcore_stack_top(w.stack);

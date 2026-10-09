@@ -207,10 +207,17 @@ GRCORE_API GRCORE_Result grcore_frame_inspect(const GRCORE_AbstractFrame * frame
 /**
  * @brief How many scopes the frame has.
  *
+ * A compiled frame that stands for a guest frame (`guest_frame` is set: every
+ * guest call pushes one) is one frame with it, so the engine is asked about its
+ * scopes like any other. The engine's scope functions must therefore read the
+ * frame's slots with ::grcore_frame_slot, which reads an interpreter frame from
+ * the guest stack and a compiled one from the native frame by its site; the
+ * guest frame's own slots are stale until the chain is rebuilt.
+ *
  * @param frame The frame.
  * @return The count; zero for NULL, an engine with no scope interface, a
- *   compiled frame (it has no guest frame to ask the engine about), or an
- *   unreadable context.
+ *   compiled frame with no guest frame (there is nothing to ask the engine
+ *   about), or an unreadable context.
  */
 GRCORE_API size_t grcore_frame_scope_count(const GRCORE_AbstractFrame * frame);
 

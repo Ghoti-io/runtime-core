@@ -272,8 +272,15 @@ GRCORE_Result grcore_frame_inspect(const GRCORE_AbstractFrame * frame,
 }
 
 size_t grcore_frame_scope_count(const GRCORE_AbstractFrame * frame) {
-  if (readable_stack(frame) == NULL || frame->native_base != 0 ||
-      frame->descriptor->scopes.scope_count == NULL) {
+  if (readable_stack(frame) == NULL || frame->descriptor->scopes.scope_count == NULL) {
+    return 0;
+  }
+  /* A compiled frame that stands for a guest frame is one frame with it (every
+   * guest call pushes the callee's), so the engine's scopes apply to it; the
+   * engine reads its slots with ::grcore_frame_slot, which reads a compiled
+   * frame by its site. A compiled frame with no guest frame has nothing to ask
+   * the engine about. */
+  if (frame->native_base != 0 && frame->guest_frame.offset == 0) {
     return 0;
   }
   return frame->descriptor->scopes.scope_count(frame);
