@@ -1,5 +1,5 @@
 # Fixture for the gate self-test; not part of the library.
-TEST_GATES ?= check-symbols check-aliasing check-stamps check-labels \
+TEST_GATES ?= check-symbols check-aliasing check-stamps check-fp-contract check-labels \
 	check-direction check-edges check-gates check-version check-wiring check-hook
 
 test: all $(TEST_GATES)
@@ -17,6 +17,9 @@ check-aliasing: ## text
 
 check-stamps:
 	@python3 tools/check-stamps.py
+
+check-fp-contract:
+	@tools/check-fp-contract.sh
 
 check-labels:
 	@tools/check-labels.sh .

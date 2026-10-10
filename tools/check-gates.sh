@@ -249,6 +249,8 @@ expect_pass 'wiring/control' python3 "$W" "$FIX/wiring/control.mk"
 expect_pass 'wiring/the real Makefile' python3 "$W" "$ROOT/Makefile"
 expect_fail 'wiring/planted-gate-dropped' 'check-gates is not in TEST_GATES' \
   python3 "$W" "$FIX/wiring/planted-gate-dropped.mk"
+expect_fail 'wiring/planted-fp-contract-dropped' 'check-fp-contract is not in TEST_GATES' \
+  python3 "$W" "$FIX/wiring/planted-fp-contract-dropped.mk"
 expect_fail 'wiring/planted-test-ignores-gates' 'does not depend on $(TEST_GATES)' \
   python3 "$W" "$FIX/wiring/planted-test-ignores-gates.mk"
 expect_fail 'wiring/planted-recipe-empty' 'check-labels recipe never runs' \

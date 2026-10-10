@@ -26,6 +26,7 @@ REQUIRED = {
     "check-symbols": ["tools/check-symbols.sh"],
     "check-aliasing": ["-Wstrict-aliasing"],
     "check-stamps": ["tools/check-stamps.py"],
+    "check-fp-contract": ["tools/check-fp-contract.sh"],
     "check-labels": ["tools/check-labels.sh"],
     "check-direction": ["tools/check-direction.sh"],
     "check-edges": ["tools/check-edges.sh --includes", "tools/check-edges.sh --links"],

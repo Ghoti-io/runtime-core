@@ -1,8 +1,8 @@
 # Fixture for the gate self-test; not part of the library.
-TEST_GATES ?= check-symbols check-aliasing check-stamps check-fp-contract check-labels \
+TEST_GATES ?= check-symbols check-aliasing check-stamps check-labels \
 	check-direction check-edges check-gates check-version check-wiring check-hook
 
-test: all
+test: all $(TEST_GATES)
 	@echo test
 
 check-symbols:

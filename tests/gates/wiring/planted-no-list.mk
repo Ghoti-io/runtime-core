@@ -16,6 +16,9 @@ check-aliasing: ## text
 check-stamps:
 	@python3 tools/check-stamps.py
 
+check-fp-contract:
+	@tools/check-fp-contract.sh
+
 check-labels:
 	@tools/check-labels.sh .
 
