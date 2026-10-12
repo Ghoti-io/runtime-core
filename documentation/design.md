@@ -1487,12 +1487,7 @@ once, with their instrument, machine, compiler, flags and date, in lang-tang's
 guest frame pushed and popped, an activation record entered and left, the poll)
 is the `stack-pushpop` and `activation` rows above.
 
-The cost of a rebuild that converts raw values (`grcore_compiled_rebuild` with
-floats live) has no case of its own here: it needs an engine descriptor with a
-conversion and compiled code to be at a site, and it is seen where it happens, in
-`lang-tang`'s `design.md` ("Floats, measured"): the `values_boxed` counter and the
-cost of a compiled function's exit at a float return, which is one rebuild of one
-raw value. No `rebuild-1` or `rebuild-8` case was added.
+The cost of a rebuild that converts raw values (`grcore_compiled_rebuild` with floats live) has no case of its own here: it needs an engine descriptor with a conversion and compiled code at a site. What exists is lang-tang's figure for the whole of a compiled function's exit at a float return, measured in `lang-tang`'s `design.md` ("Floats, measured"): entering compiled code, the exit, the rebuild of the live raw values (two there, counted by `values_boxed`) and the interpreter finishing the instruction cost about 370 ns more than the interpreter's own call. The rebuild's share of that was not measured separately. No `rebuild-1` or `rebuild-8` case was added.
 
 | Case | Best of seven | Unit |
 | --- | --- | --- |
