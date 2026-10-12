@@ -793,6 +793,42 @@ heap during the rebuild (a rebuild could then fail or collect, with the frame
 half raw); and bumping the format version (nothing outside the tree to protect,
 and the version tests would then measure nothing).
 
+**The decision, and the three alternatives that were refused (AD-27).** The decision: a float (or a raw 32-bit integer) lives
+in compiled code as the raw value it is, the frame state says so with a
+representation, and it is turned into the engine's own value only when a frame is
+rebuilt, by a conversion that cannot fail and cannot collect. Compiled code never
+allocates. The format, the representation tag, the checked binding, the reservation
+and the two-phase rebuild are this library's part and are above; the IR types, the
+`F64` temporaries and the helper ABI are `runtime-jit`'s ("Floats and division
+across the three backends"), and the engine's kinds, the pool, the merge rule and
+the exits that remain are `lang-tang`'s ("Floats, measured", "The exits that
+remain, and why"). The alternatives the older paragraphs above do not already
+record:
+
+- *In-word doubles (NaN-boxing, or a double with a low-bit tag).* The core does not
+  choose an engine's value representation, and nothing it could choose here fits
+  more than one engine: every Tang pointer is 48 bits and the heap's codec
+  describes a low-bit tag and mask, not a NaN pattern, so a double in the value
+  word would change the representation of every value in the library for the sake
+  of one type; and the lang-wasm engine has no value words at all (its locals are
+  typed). A representation per frame-state location lets each engine keep its own
+  form outside compiled code, which is the reason the tag exists.
+- *Allocation inside compiled code.* An allocating helper for each float operation,
+  or a `convert` that allocates under a no-collection flag, cannot be what the
+  rebuild uses: an allocation can still fail, and a rebuild that has written one
+  slot cannot be allowed to. Calling an allocating helper from the middle of a
+  straight-line float body would also make it a GC point, and its stack map would
+  have to name a raw value that is live across it, which the format refuses to
+  express (a raw value never appears in a stack map; the validator rejects it). The
+  reservation and the engine's pool make the allocation happen where it can be
+  answered, before compiled code runs.
+- *Boxing at every poll.* A poll with nothing pending pays a load, a test and a
+  branch and nothing else (AD-4, AD-19). Converting the live raw values at each
+  poll would be an allocation for each iteration of every float loop, which is the
+  cost the representation exists to remove; conversion happens at a rebuild (a
+  pause, an unwind, a slow-path poll that continues, a debugger stop or a guard
+  exit) and not before.
+
 ## A, part 4: the precise walk of compiled frames (AD-17, AD-28, CAP-2)
 
 Compiled code calling compiled code leaves frames on the native stack that no
@@ -1450,6 +1486,13 @@ once, with their instrument, machine, compiler, flags and date, in lang-tang's
 `design.md` ("Calls, measured"). The cost of the core's part of a compiled call (a
 guest frame pushed and popped, an activation record entered and left, the poll)
 is the `stack-pushpop` and `activation` rows above.
+
+The cost of a rebuild that converts raw values (`grcore_compiled_rebuild` with
+floats live) has no case of its own here: it needs an engine descriptor with a
+conversion and compiled code to be at a site, and it is seen where it happens, in
+`lang-tang`'s `design.md` ("Floats, measured"): the `values_boxed` counter and the
+cost of a compiled function's exit at a float return, which is one rebuild of one
+raw value. No `rebuild-1` or `rebuild-8` case was added.
 
 | Case | Best of seven | Unit |
 | --- | --- | --- |
