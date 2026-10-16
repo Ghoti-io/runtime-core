@@ -277,7 +277,8 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
   c->fuel_vote_scoped = false;
   /* A pause cannot return to the host from inside a nested activation
    * (AD-5), so there it is refused exactly as the runtime poll refuses it. */
-  allow_pause = allow_pause && c->nested == 0;
+  allow_pause = allow_pause && (c->nested == 0 ||
+      c->nested == c->resumable_boundaries);
 
   size_t registrations = c->registration_count;
   for (size_t i = 0; i < CORE + registrations; i++) {

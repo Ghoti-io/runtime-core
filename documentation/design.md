@@ -1,5 +1,10 @@
 # Design
 
+**Current boundary status:** Story 12 adds an engine-neutral mixed-engine
+boundary activation protocol. The API keeps foreign exception identity opaque
+and preserves boundary/instance state across resumable pauses. It does not own
+or dereference cross-heap handles; Story 13 remains the handle-table owner.
+
 **Status:** In progress. Describes what exists: the scaffold; all of B (groups,
 contexts, options, keys, memory accounting, requests and ports, the poll, `run`
 and `resume`, the budgets with their fuel scopes, and root sources); and all of
@@ -541,8 +546,8 @@ and no scope opened inside it is still open, so the two LIFO disciplines
 cannot cross. A record stays open across a pause, which is what lets a
 context paused inside nested scopes and activations migrate and resume.
 
-**The nesting count, and why it lives in B (AD-5).** A nested activation (a
-REENTRY always, an INTERPRETER when the caller says so) cannot pause to the
+**The nesting count, and why it lives in B (AD-5).** An ordinary nested
+activation (a REENTRY always, an INTERPRETER when the caller says so) cannot pause to the
 host, because there is a C frame of the host's, or of an opaque function's,
 above `run`. B owns the poll, so B owns the count: `grcore_context_nested_enter`
 and `leave`, called by A's records. While it is above zero the poll treats
@@ -1509,6 +1514,18 @@ The cost of a rebuild that converts raw values (`grcore_compiled_rebuild` with f
 | profile-sample-1 | 169 ns | one sample at depth one |
 | profile-sample-32 | 1.66 us | one sample at depth thirty-two |
 | codemeta-validate | 1.82 ms | one validation of both tables above |
+
+## Mixed-engine boundary continuations
+
+Story 12 adds a boundary record on the guest stack containing caller and callee
+engine IDs, an opaque instance token, resumability state, and optional foreign
+exception origin/identity. References use integer tokens; runtime-core neither
+stores nor dereferences a language heap pointer. A resumable boundary activation
+keeps its record across a pause and resumes through the engine's continuation
+entry. Ordinary nested activations keep the existing limit-unwind behavior.
+Owners are responsible for token validation, roots, and relocation. The
+runtime-core unit fixture verifies pause/resume, identity preservation, and
+ordinary nested limit unwind independently of either engine.
 
 ## Continuous integration
 

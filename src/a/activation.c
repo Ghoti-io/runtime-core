@@ -30,6 +30,7 @@
  */
 
 #include <ghoti.io/runtime-core/macros.h>
+#include <ghoti.io/runtime-core/a/boundary.h>
 
 #include "guest_internal.h"
 
@@ -126,6 +127,12 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   rec->return_address = 0;
   rec->rebuilt = false;
   rec->set_limit = set_limit;
+  rec->boundary = false;
+  rec->boundary_resumable = false;
+  rec->boundary_caller = 0;
+  rec->boundary_instance = 0;
+  rec->foreign_exception_engine = 0;
+  rec->foreign_exception_identity = 0;
   if (kind == GRCORE_ACTIVATION_JIT) {
     stack->jit_live++;
   }
@@ -155,6 +162,8 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
   if (rec.nested) {
     grcore_context_nested_leave(stack->context);
   }
+  if(rec.boundary_resumable&&stack->context->resumable_boundaries)
+    stack->context->resumable_boundaries--;
   if (rec.kind == GRCORE_ACTIVATION_JIT && --stack->jit_live == 0) {
     /* No compiled frame can be on the native stack now, so nothing can return
      * into retired code (AD-28). */
@@ -255,6 +264,91 @@ GRCORE_Result grcore_activation_set_compiled(GRCORE_Stack * stack,
       rec->frame_base = frame_base;
       rec->return_address = return_address;
       return GRCORE_OK;
+    }
+  }
+  return GRCORE_ERR_INVALID;
+}
+
+GRCORE_Result grcore_boundary_enter(GRCORE_Stack *stack,
+    GRCORE_EngineId caller,GRCORE_EngineId callee,uintptr_t instance_token,
+    bool resumable,GRCORE_BoundaryRef*out_ref){
+  if(!grcore_stack_owned(stack)||!out_ref||!instance_token||!caller||!callee||
+      caller>stack->engine_count||callee>stack->engine_count||
+      (resumable&&stack->context->resumable_boundaries==UINT64_MAX))
+    return GRCORE_ERR_INVALID;
+  bool upgraded_native=false;
+  if(resumable&&stack->activation_count){
+    GRCORE_ActivationRecord*top=&stack->activations[stack->activation_count-1];
+    if(top->kind==GRCORE_ACTIVATION_NATIVE&&top->nested&&
+        !top->boundary_resumable){
+      top->boundary_resumable=true;
+      stack->context->resumable_boundaries++;
+      upgraded_native=true;
+    }
+  }
+  GRCORE_ActivationRef activation={0};
+  GRCORE_Result result=grcore_activation_enter(stack,GRCORE_ACTIVATION_REENTRY,
+      callee,true,NULL,&activation);
+  if(result!=GRCORE_OK){if(upgraded_native){
+    stack->activations[stack->activation_count-1].boundary_resumable=false;
+    stack->context->resumable_boundaries--;}
+    return result;}
+  GRCORE_ActivationRecord*record=&stack->activations[stack->activation_count-1];
+  record->boundary=true;record->boundary_resumable=resumable;
+  record->boundary_caller=caller;record->boundary_instance=instance_token;
+  if(resumable)stack->context->resumable_boundaries++;
+  out_ref->id=activation.id;return GRCORE_OK;
+}
+
+static GRCORE_ActivationRecord *boundary_record(GRCORE_Stack*stack,
+    GRCORE_BoundaryRef ref){
+  if(!stack||!ref.id)return NULL;
+  for(size_t i=stack->activation_count;i>0;i--){
+    GRCORE_ActivationRecord*record=&stack->activations[i-1];
+    if(record->id==ref.id)return record->boundary?record:NULL;
+  }
+  return NULL;
+}
+
+GRCORE_Result grcore_boundary_leave(GRCORE_Stack*stack,GRCORE_BoundaryRef ref){
+  GRCORE_ActivationRecord*record=boundary_record(stack,ref);
+  if(!record)return GRCORE_ERR_INVALID;
+  GRCORE_ActivationRef activation={ref.id};
+  return grcore_activation_leave(stack,activation);
+}
+
+GRCORE_Result grcore_boundary_active_instance(const GRCORE_Stack*stack,
+    GRCORE_EngineId engine,uintptr_t*out_instance_token){
+  if(!stack||!out_instance_token||engine==0||engine>stack->engine_count)
+    return GRCORE_ERR_INVALID;
+  for(size_t i=stack->activation_count;i>0;i--){
+    const GRCORE_ActivationRecord*record=&stack->activations[i-1];
+    if(record->boundary&&record->engine==engine){
+      *out_instance_token=record->boundary_instance;return GRCORE_OK;
+    }
+  }
+  return GRCORE_ERR_INVALID;
+}
+
+GRCORE_Result grcore_boundary_set_foreign_exception(GRCORE_Stack*stack,
+    GRCORE_BoundaryRef ref,GRCORE_EngineId engine,uint64_t identity){
+  if(!grcore_stack_owned(stack)||engine==0||engine>stack->engine_count||!identity)
+    return GRCORE_ERR_INVALID;
+  GRCORE_ActivationRecord*record=boundary_record(stack,ref);
+  if(!record)return GRCORE_ERR_INVALID;
+  record->foreign_exception_engine=engine;
+  record->foreign_exception_identity=identity;return GRCORE_OK;
+}
+
+GRCORE_Result grcore_boundary_get_foreign_exception(const GRCORE_Stack*stack,
+    GRCORE_BoundaryRef ref,GRCORE_EngineId*out_engine,uint64_t*out_identity){
+  if(!stack||!out_engine||!out_identity||!ref.id)return GRCORE_ERR_INVALID;
+  for(size_t i=stack->activation_count;i>0;i--){
+    const GRCORE_ActivationRecord*record=&stack->activations[i-1];
+    if(record->id==ref.id){
+      if(!record->boundary||!record->foreign_exception_identity)return GRCORE_ERR_INVALID;
+      *out_engine=record->foreign_exception_engine;
+      *out_identity=record->foreign_exception_identity;return GRCORE_OK;
     }
   }
   return GRCORE_ERR_INVALID;

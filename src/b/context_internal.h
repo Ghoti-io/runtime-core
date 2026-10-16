@@ -140,6 +140,7 @@ struct GRCORE_Context {
 
   /* Nested activations (AD-5): a pause inside one becomes a limit unwind. */
   uint64_t nested;
+  uint64_t resumable_boundaries;
 
   /* Root sources (AD-18). Owner only. */
   GRCORE_RootEntry * roots;

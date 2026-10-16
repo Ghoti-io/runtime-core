@@ -50,6 +50,7 @@
 #include <ghoti.io/runtime-core/libver.h>
 
 #include <ghoti.io/runtime-core/a/activation.h>
+#include <ghoti.io/runtime-core/a/boundary.h>
 #include <ghoti.io/runtime-core/a/budget_scope.h>
 #include <ghoti.io/runtime-core/a/code.h>
 #include <ghoti.io/runtime-core/a/codemeta.h>

@@ -108,6 +108,12 @@ typedef struct GRCORE_ActivationRecord {
   bool rebuilt;           ///< A JIT record whose compiled frames were rebuilt
                           ///< into the guest frames above `base_frames`, which
                           ///< stay for the interpreter to finish.
+  bool boundary;
+  bool boundary_resumable;
+  GRCORE_EngineId boundary_caller;
+  uintptr_t boundary_instance;
+  GRCORE_EngineId foreign_exception_engine;
+  uint64_t foreign_exception_identity;
 } GRCORE_ActivationRecord;
 
 /** @brief One budget scope A opened, as the stack keeps it. */

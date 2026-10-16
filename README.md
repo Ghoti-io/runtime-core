@@ -83,7 +83,7 @@ direction is one way: an `a/` header may include `b/` and top-level headers,
 and nothing else may include `a/`. Only the umbrella, `runtime-core.h`,
 includes both.
 
-Today the API is the basics: `GRCORE_Result` (the suite's vocabulary plus
+The API includes `GRCORE_Result` (the suite's vocabulary plus
 `GRCORE_ERR_GUEST`, for guest code that ended in an uncaught exception or a
 trap), `grcore_result_string`, `grcore_version_string`,
 `grcore_version_number`, and `GRCORE_Allocator` (cutil's allocator under a
@@ -106,7 +106,8 @@ local name), and, in `b/` and `a/`:
 | `a/engine.h` | `GRCORE_EngineDescriptor`: an engine's slot kinds, locator, inspector, scope interface, conservative decoder and `roots`, `unwind`, `convert` and `reverse` hooks, registered per context; a leading `size`, written by `GRCORE_ENGINE_DESCRIPTOR_INIT(name, slot_kind, locate, inspect, scopes, decoder, roots, unwind, convert, reverse)`; `free` |
 | `a/stack.h` | `GRCORE_Stack`: the context's guest stack of frames named by offset, growing by copy, with the depth budget counting frames; `grcore_stack_poll` records a poll identity; `free` |
 | `a/frame.h` | `GRCORE_AbstractFrame` and the frame walk: the one way any consumer reads a frame, its slots and its scopes, in readable states only; `free` |
-| `a/activation.h` | activation records: every crossing between host, interpreter, JIT code and C, entered and left in LIFO order, with the native depth budget and the nesting that forbids a pause; `free` |
+| `a/activation.h` | activation records: every crossing between host, interpreter, JIT code and C, entered and left in LIFO order, with the native depth budget and the nesting that forbids a pause outside a resumable boundary; `free` |
+| `a/boundary.h` | mixed-engine boundary records with caller/callee engine IDs, opaque instance token, resumable pause state, and foreign exception origin/identity; runtime-core never dereferences owner tokens; `free` |
 | `a/unwind.h` | the unwinder: pops frames innermost first with their engine's hook, leaves deeper activations, closes deeper scopes; `free` |
 | `a/budget_scope.h` | budget scopes: a call boundary with its own fuel budget, unwound to when it runs out; `free` |
 | `a/layout.h` | the JIT layout descriptor: the offset of the request word a compiled poll loads, of the walk-start cell compiled code stores before a call that can reach a GC point, and of the native-stack limit word it compares `rsp` with; `free` |
