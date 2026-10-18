@@ -63,7 +63,7 @@ Built valid() {
     Built::Site s;
     s.offset = 10 + i * 10;
     s.kind = i == 2 ? GRCORE_SITE_GUARD : GRCORE_SITE_GC_POINT_CALL;
-    s.identity = {7, i * 4};
+    s.identity = {7, i * 4, 0};
     s.live = {slot(-8, GRCORE_SLOT_VALUE), slot(-16, GRCORE_SLOT_VALUE)};
     s.derived = {{-24, -8, 16}};
     s.state = {slot(-8, GRCORE_SLOT_VALUE),
@@ -106,7 +106,7 @@ TEST(CodeMeta, AValidTableValidatesAndFindsEverySiteAndNoOffsetBetween) {
 TEST(CodeMeta, ANullReasonIsAccepted) {
   Built b = valid();
   EXPECT_EQ(grcore_codemeta_validate(&b.meta, 100, nullptr), GRCORE_OK);
-  b.meta.version = 2;
+  b.meta.version = 1;
   EXPECT_EQ(grcore_codemeta_validate(&b.meta, 100, nullptr),
       GRCORE_ERR_CORRUPT);
   EXPECT_EQ(grcore_codemeta_validate(nullptr, 100, nullptr),
@@ -289,7 +289,7 @@ TEST(CodeMeta, WideSitesAndManyFunctionsAreValidatedAndTheirFlawsStillFound) {
     Built::Site s;
     s.offset = 10 + i * 10;
     s.kind = GRCORE_SITE_GC_POINT_CALL;
-    s.identity = {7, i};
+    s.identity = {7, i, 0};
     for (int64_t k = 0; k < 300; k++) {
       s.live.push_back(slot(-8 * (k + 1), GRCORE_SLOT_VALUE));
       s.derived.push_back({-8 * (300 + k + 1), -8 * (300 - k), 16});
@@ -315,7 +315,7 @@ TEST(CodeMeta, WideSitesAndManyFunctionsAreValidatedAndTheirFlawsStillFound) {
     Built::Site s;
     s.offset = 4 + i * 4;
     s.kind = GRCORE_SITE_GUARD;
-    s.identity = {1000 + i, 0};
+    s.identity = {1000 + i, 0, 0};
     s.state = {{GRCORE_LOC_CONSTANT, GRCORE_SLOT_RAW, 1, GRCORE_REPR_BITS}};
     many.parts.push_back(s);
   }
@@ -378,7 +378,7 @@ TEST(CodeMeta, ARandomisedBuildValidateFindProperty) {
       Built::Site s;
       s.offset = off;
       s.kind = static_cast<GRCORE_CodeSiteKind>(rng() % GRCORE_SITE_KIND_COUNT);
-      s.identity = {rng() % 3, rng() % 100};
+      s.identity = {rng() % 3, rng() % 100, 0};
       size_t slots = frame_bytes / 8;
       for (size_t k = 0; k < slots; k++) {
         if (rng() % 3 == 0) {
@@ -435,7 +435,7 @@ TEST(CodeMeta, ARandomisedBuildValidateFindProperty) {
 TEST(CodeMeta, TheUmbrellaIncludesTheHeaderFromCxx) {
   GRCORE_CodeMeta m{};
   EXPECT_EQ(m.site_count, 0u);
-  EXPECT_EQ(GRCORE_CODEMETA_FORMAT_VERSION, 1u);
+  EXPECT_EQ(GRCORE_CODEMETA_FORMAT_VERSION, 2u);
 }
 
 // ---- Representations (AD-27) ------------------------------------------------
@@ -486,11 +486,11 @@ TEST(CodeMetaRepr, EveryRefusalInThePerSiteLoopNamesItsSite) {
   }
 }
 
-TEST(CodeMetaRepr, ZeroIsBitsAndTheVersionIsStillOne) {
+TEST(CodeMetaRepr, ZeroIsBitsAndTheVersionIsTwo) {
   EXPECT_EQ(static_cast<int>(GRCORE_REPR_BITS), 0);
   GRCORE_CodeLocation l{};
   EXPECT_EQ(l.representation, GRCORE_REPR_BITS);
-  EXPECT_EQ(GRCORE_CODEMETA_FORMAT_VERSION, 1u);
+  EXPECT_EQ(GRCORE_CODEMETA_FORMAT_VERSION, 2u);
   // A location a producer built with the first three members only.
   GRCORE_CodeLocation old = {GRCORE_LOC_FRAME_SLOT, GRCORE_SLOT_RAW, -8, {}};
   EXPECT_EQ(old.representation, GRCORE_REPR_BITS);
@@ -563,7 +563,7 @@ TEST(CodeMetaRepr, ValidateAtReportsNothingOnSuccessAndForAWholeTableOffence) {
       GRCORE_OK);
   EXPECT_EQ(site, SIZE_MAX);
   EXPECT_EQ(loc, SIZE_MAX);
-  b.meta.version = 2;
+  b.meta.version = 1;
   EXPECT_EQ(grcore_codemeta_validate_at(&b.meta, 100, nullptr, &site, &loc),
       GRCORE_ERR_CORRUPT);
   EXPECT_EQ(site, SIZE_MAX);

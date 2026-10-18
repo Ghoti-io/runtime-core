@@ -18,6 +18,7 @@
 #include "../../src/a/guest_internal.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <csignal>
 #include <set>
 #ifndef _WIN32
@@ -758,15 +759,15 @@ TEST(CompiledRoots, AGuestFrameThatCannotBeReadDoesNotHideTheCompiledFrames) {
   std::vector<uintptr_t> bases = st.build(w.code, 0, 3, 0, kOutside);
   ASSERT_EQ(grcore_activation_set_compiled(w.stack, rec, bases[0], w.code.at(0)),
       GRCORE_OK);
-  // Frame 2's tag is at byte 36 of its header: flip it.
-  w.stack->buffer[f2.offset + 36] ^= 0xFF;
+  // Damage Frame 2's tag without tying the test to the header layout.
+  w.stack->buffer[f2.offset + offsetof(GRCORE_FrameHeader, tag)] ^= 0xFF;
   ASSERT_FALSE(grcore_stack_frame_valid(w.stack, f2));
   Seen seen;
   GRCORE_RootVisitor v = visitor_for(&seen);
   ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);
   EXPECT_EQ(seen.values, (std::vector<uint64_t>{HandStack::ref_of(0),
                              HandStack::ref_of(1), HandStack::ref_of(2)}));
-  w.stack->buffer[f2.offset + 36] ^= 0xFF;
+  w.stack->buffer[f2.offset + offsetof(GRCORE_FrameHeader, tag)] ^= 0xFF;
   (void)f1;
   grcore_unwind_all(w.stack, nullptr);
 }
@@ -916,7 +917,7 @@ struct Interleaved {
       EXPECT_EQ(grcore_stack_push(s, w.alpha, 2, &f), GRCORE_OK);
       grcore_stack_slot_set(s, f, 0, fn * 10);
       grcore_stack_slot_set(s, f, 1, fn * 10 + 1);
-      grcore_stack_set_identity(s, f, GRCORE_PollIdentity{fn, off});
+      grcore_stack_set_identity(s, f, GRCORE_PollIdentity{fn, off, 0});
     };
     push(1, 5);
     GRCORE_ActivationRef a = enter(s, GRCORE_ACTIVATION_JIT);
@@ -1192,7 +1193,7 @@ TEST(CompiledFrame, AContextWithNoCompiledStateWalksExactlyAsBefore) {
     GRCORE_FrameRef f;
     for (uint64_t i = 1; i <= 3; i++) {
       EXPECT_EQ(grcore_stack_push(s, w.alpha, 1, &f), GRCORE_OK);
-      grcore_stack_set_identity(s, f, GRCORE_PollIdentity{i, i});
+      grcore_stack_set_identity(s, f, GRCORE_PollIdentity{i, i, 0});
     }
     enter(s, GRCORE_ACTIVATION_JIT); // a JIT record with no state
   };
@@ -1337,7 +1338,7 @@ struct PairedScene {
     EXPECT_EQ(grcore_stack_push(s, w.alpha, 2, &f), GRCORE_OK);
     grcore_stack_slot_set(s, f, 0, first);
     grcore_stack_slot_set(s, f, 1, first + 1); // alpha's VALUE slot
-    grcore_stack_set_identity(s, f, GRCORE_PollIdentity{fn, 0});
+    grcore_stack_set_identity(s, f, GRCORE_PollIdentity{fn, 0, 0});
   }
   void setup(CWorld & w, GRCORE_Stack * s, uint64_t extra_fn = 0,
       uint64_t innermost_fn = 100) {
@@ -1414,7 +1415,7 @@ TEST(PairedFrames, ARecordEnteredWithNoGuestFrameHasNothingToPairWith) {
   GRCORE_FrameRef f;
   ASSERT_EQ(grcore_stack_push(w.stack, w.alpha, 2, &f), GRCORE_OK);
   grcore_stack_slot_set(w.stack, f, 1, 77);
-  grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{102, 0});
+  grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{102, 0, 0});
   Seen seen;
   GRCORE_RootVisitor v = visitor_for(&seen);
   ASSERT_EQ(grcore_context_enumerate_roots(w.ctx, &v), GRCORE_OK);

@@ -127,7 +127,7 @@ TEST(ARoots, TheEnginesRootsHookIsCalledPerFrameAndReportsWhatItAdds) {
   // delta: slot 0 VALUE, slot 1 RAW; its hook reports slot 1 of function 99.
   for (uint64_t i = 1; i <= 3; i++) {
     GRCORE_FrameRef f = push_numbered(w.stack, w.delta, 2, i);
-    grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{i == 2 ? 99 : i, 0});
+    grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{i == 2 ? 99 : i, 0, 0});
   }
   Seen seen;
   GRCORE_RootVisitor v = visitor_for(&seen);

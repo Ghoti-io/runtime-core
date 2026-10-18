@@ -66,6 +66,60 @@ TEST(Run, ResumeCallsTheSameEntryWithTheSameState) {
   EXPECT_EQ(g.pos, 11u);
 }
 
+TEST(Run, RunEpochAdvancesAcrossRunAndResumeIntervals) {
+  RunWorld w(5);
+  CountingGuest g;
+  GRCORE_Outcome outcome;
+  EXPECT_EQ(grcore_context_run_epoch(w.ctx), 0u);
+  ASSERT_EQ(grcore_run(w.ctx, counting_entry, &g, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  EXPECT_EQ(grcore_context_run_epoch(w.ctx), 1u);
+  ASSERT_EQ(grcore_context_set_fuel(w.ctx, 12), GRCORE_OK);
+  ASSERT_EQ(grcore_resume(w.ctx, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  EXPECT_EQ(grcore_context_run_epoch(w.ctx), 2u);
+  ASSERT_EQ(grcore_context_set_fuel(w.ctx, GRCORE_UNLIMITED), GRCORE_OK);
+  ASSERT_EQ(grcore_resume(w.ctx, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
+  EXPECT_EQ(grcore_context_run_epoch(w.ctx), 3u);
+}
+
+TEST(Run, EpochOverflowRefusesRunAndResumeWithoutChangingState) {
+  {
+    RunWorld w;
+    GRCORE_Outcome outcome = GRCORE_OUTCOME_PAUSED;
+    g_entered = 0;
+    w.ctx->run_epoch = UINT64_MAX;
+    EXPECT_EQ(grcore_run(w.ctx, counts_entry, nullptr, &outcome),
+        GRCORE_ERR_LIMIT);
+    EXPECT_EQ(w.ctx->config, GRCORE_CONFIG_PARKED_OUTSIDE);
+    EXPECT_EQ(w.ctx->entry, nullptr);
+    EXPECT_EQ(w.ctx->entry_state, nullptr);
+    EXPECT_EQ(w.ctx->run_epoch, UINT64_MAX);
+    EXPECT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+    EXPECT_EQ(g_entered, 0);
+  }
+  {
+    RunWorld w(5);
+    CountingGuest guest;
+    GRCORE_Outcome outcome = GRCORE_OUTCOME_FINISHED;
+    ASSERT_EQ(grcore_run(w.ctx, counting_entry, &guest, &outcome), GRCORE_OK);
+    ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+    const uint64_t position = guest.pos;
+    const GRCORE_EntryFn entry = w.ctx->entry;
+    void *const state = w.ctx->entry_state;
+    w.ctx->run_epoch = UINT64_MAX;
+    outcome = GRCORE_OUTCOME_FINISHED;
+    EXPECT_EQ(grcore_resume(w.ctx, &outcome), GRCORE_ERR_LIMIT);
+    EXPECT_EQ(w.ctx->config, GRCORE_CONFIG_PAUSED);
+    EXPECT_EQ(w.ctx->entry, entry);
+    EXPECT_EQ(w.ctx->entry_state, state);
+    EXPECT_EQ(w.ctx->run_epoch, UINT64_MAX);
+    EXPECT_EQ(guest.pos, position);
+    EXPECT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
+  }
+}
+
 TEST(Run, RefusesWhatItCannotRunAndChangesNothing) {
   RunWorld w;
   GRCORE_Outcome outcome = GRCORE_OUTCOME_PAUSED;

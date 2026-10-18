@@ -8,6 +8,7 @@
 
 #include "test_helpers.h"
 
+#include <array>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -31,11 +32,11 @@ GRCORE_Step three_frames_entry(GRCORE_Context * c, void * state) {
     grcore_stack_slot_set(s, t->outer, 0, 10);
     grcore_stack_slot_set(s, t->outer, 1, 11);
     grcore_stack_slot_set(s, t->outer, 2, 12);
-    grcore_stack_set_identity(s, t->outer, GRCORE_PollIdentity{1, 5});
+    grcore_stack_set_identity(s, t->outer, GRCORE_PollIdentity{1, 5, 0});
     grcore_stack_push(s, 2, 2, &t->middle);
     grcore_stack_slot_set(s, t->middle, 0, 0xABCD0);
     grcore_stack_slot_set(s, t->middle, 1, 0x20);
-    grcore_stack_set_identity(s, t->middle, GRCORE_PollIdentity{2, 9});
+    grcore_stack_set_identity(s, t->middle, GRCORE_PollIdentity{2, 9, 0});
     grcore_stack_push(s, 1, 1, &t->inner);
     grcore_stack_slot_set(s, t->inner, 0, 99);
   }
@@ -62,6 +63,30 @@ std::vector<GRCORE_AbstractFrame> walk_all(const GRCORE_Context * c) {
     out.push_back(f);
   }
   return out;
+}
+
+size_t function_name_calls = 0;
+const char * fixture_function_name(const GRCORE_Context *, uint64_t) {
+  ++function_name_calls;
+  return "fixture-function";
+}
+
+size_t memory_read_calls = 0;
+const std::array<uint8_t, 4> fixture_memory{{0x10, 0x20, 0x30, 0x40}};
+size_t fixture_memory_count(const GRCORE_AbstractFrame *) { return 1; }
+GRCORE_Result fixture_memory_info(const GRCORE_AbstractFrame *, size_t index,
+    GRCORE_MemoryInfo * out) {
+  if (index != 0 || out == nullptr) return GRCORE_ERR_INVALID;
+  *out = GRCORE_MemoryInfo{"fixture-memory",
+      static_cast<uint64_t>(fixture_memory.size())};
+  return GRCORE_OK;
+}
+GRCORE_Result fixture_memory_read(const GRCORE_AbstractFrame *, size_t index,
+    uint64_t offset, void * buffer, size_t size) {
+  if (index != 0) return GRCORE_ERR_INVALID;
+  ++memory_read_calls;
+  if (size != 0) std::memcpy(buffer, fixture_memory.data() + offset, size);
+  return GRCORE_OK;
 }
 
 } // namespace
@@ -273,6 +298,64 @@ TEST(FrameWalk, AFrameKeptPastTheResumeCannotBeReadThrough) {
   walk.next = w.frames.inner;
   GRCORE_AbstractFrame f;
   EXPECT_FALSE(grcore_frame_walk_next(&walk, &f));
+}
+
+TEST(FrameWalk, FunctionNameCallbackRequiresReadableContext) {
+  GRCORE_EngineDescriptor named = kAlpha;
+  named.function_name = fixture_function_name;
+  function_name_calls = 0;
+  Paused w;
+  std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx);
+  ASSERT_FALSE(frames.empty());
+  GRCORE_AbstractFrame frame = frames[0];
+  frame.descriptor = &named;
+  EXPECT_STREQ(grcore_frame_function_name(&frame), "fixture-function");
+  EXPECT_EQ(function_name_calls, 1u);
+
+  ASSERT_EQ(grcore_context_set_fuel(w.ctx, GRCORE_UNLIMITED), GRCORE_OK);
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_resume(w.ctx, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
+  EXPECT_EQ(grcore_frame_function_name(&frame), nullptr);
+  EXPECT_EQ(function_name_calls, 1u);
+
+  StackWorld running;
+  GRCORE_AbstractFrame during{};
+  during.descriptor = &named;
+  const char * name_during_run = "not-called";
+  Fn entry{[&](GRCORE_Context * context) {
+    during.context = context;
+    name_during_run = grcore_frame_function_name(&during);
+    return GRCORE_STEP_FINISHED;
+  }};
+  ASSERT_EQ(grcore_run(running.ctx, fn_entry, &entry, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
+  EXPECT_EQ(name_during_run, nullptr);
+  EXPECT_EQ(function_name_calls, 1u);
+}
+
+TEST(FrameMemory, ReadChecksRangeBeforeCallingEngine) {
+  GRCORE_EngineDescriptor descriptor = kAlpha;
+  descriptor.memory = GRCORE_MemoryInterface{fixture_memory_count,
+      fixture_memory_info, fixture_memory_read};
+  Paused w;
+  std::vector<GRCORE_AbstractFrame> frames = walk_all(w.ctx);
+  ASSERT_FALSE(frames.empty());
+  GRCORE_AbstractFrame frame = frames[0];
+  frame.descriptor = &descriptor;
+  memory_read_calls = 0;
+  std::array<uint8_t, 2> bytes{};
+  ASSERT_EQ(grcore_frame_memory_read(&frame, 0, 1, bytes.data(), bytes.size()),
+      GRCORE_OK);
+  EXPECT_EQ(bytes, (std::array<uint8_t, 2>{{0x20, 0x30}}));
+  EXPECT_EQ(memory_read_calls, 1u);
+
+  EXPECT_EQ(grcore_frame_memory_read(&frame, 0, 3, bytes.data(), 2),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_frame_memory_read(&frame, 0, UINT64_MAX, bytes.data(), 1),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_frame_memory_read(&frame, 0, 4, nullptr, 0), GRCORE_OK);
+  EXPECT_EQ(memory_read_calls, 2u);
 }
 
 TEST(FrameScopes, AnEngineWithScopesReportsEachScopesKindNameAndVariables) {

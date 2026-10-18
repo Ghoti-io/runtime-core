@@ -140,6 +140,62 @@ TEST(Registry, OverlapIsRefusedInEveryShapeAndChangesNothing) {
   EXPECT_EQ(r.start, start);
 }
 
+TEST(Registry, ExactSharedRegistrationSurvivesEitherOwnersRelease) {
+  RWorld w;
+  HandCode different;
+  const uintptr_t start = w.code.start();
+  const size_t base = grcore_code_refcount(w.code.code);
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  EXPECT_EQ(grcore_code_registered_count(w.ctx), 1u);
+  EXPECT_EQ(grcore_code_refcount(w.code.code), base + 1u);
+
+  GRCORE_CodeMeta copied_meta = w.code.meta;
+  EXPECT_EQ(grcore_code_register(w.ctx, w.alpha, w.code.code, start,
+      w.code.size(), &copied_meta), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_code_register(w.ctx, w.beta, w.code.code, start,
+      w.code.size(), &w.code.meta), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_code_register(w.ctx, w.alpha, different.code, start,
+      w.code.size(), &w.code.meta), GRCORE_ERR_INVALID);
+
+  ASSERT_EQ(grcore_code_unregister(w.ctx, start), GRCORE_OK);
+  GRCORE_CodeRange range;
+  ASSERT_TRUE(grcore_code_lookup(w.ctx, start, &range));
+  EXPECT_FALSE(range.retired);
+  EXPECT_EQ(range.code, w.code.code);
+  EXPECT_EQ(grcore_code_registered_count(w.ctx), 1u);
+  EXPECT_EQ(grcore_code_refcount(w.code.code), base + 1u);
+  ASSERT_EQ(grcore_code_unregister(w.ctx, start), GRCORE_OK);
+  EXPECT_FALSE(grcore_code_lookup(w.ctx, start, &range));
+  EXPECT_EQ(grcore_code_registered_count(w.ctx), 0u);
+  EXPECT_EQ(grcore_code_refcount(w.code.code), base);
+  EXPECT_EQ(grcore_code_unregister(w.ctx, start), GRCORE_ERR_INVALID);
+}
+
+TEST(Registry, SharedRegistrationRetiresOnlyAfterLastReleaseUnderJit) {
+  RWorld w;
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  const uintptr_t start = w.code.start();
+  w.code.give_up();
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_code_unregister(w.ctx, start), GRCORE_OK);
+  EXPECT_EQ(grcore_code_registered_count(w.ctx), 1u);
+  EXPECT_EQ(grcore_code_retired_count(w.ctx), 0u);
+  ASSERT_EQ(grcore_code_unregister(w.ctx, start), GRCORE_OK);
+  EXPECT_EQ(grcore_code_registered_count(w.ctx), 0u);
+  EXPECT_EQ(grcore_code_retired_count(w.ctx), 1u);
+  GRCORE_CodeRange range;
+  ASSERT_TRUE(grcore_code_lookup(w.ctx, start, &range));
+  EXPECT_TRUE(range.retired);
+  EXPECT_EQ(w.code.released, 0);
+  EXPECT_EQ(grcore_code_register(w.ctx, w.alpha, w.code.code, start,
+      w.code.size(), &w.code.meta), GRCORE_ERR_INVALID);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  EXPECT_EQ(w.code.released, 1);
+  EXPECT_FALSE(grcore_code_lookup(w.ctx, start, &range));
+}
+
 TEST(Registry, ArgumentsAreCheckedAndEachRefusalLeavesNothingBehind) {
   RWorld w;
   HandCode & c = w.code;
@@ -164,7 +220,7 @@ TEST(Registry, ArgumentsAreCheckedAndEachRefusalLeavesNothingBehind) {
   EXPECT_EQ(grcore_code_register(w.ctx, w.alpha, c.code, c.start(), c.size(), &wrong),
       GRCORE_ERR_CORRUPT);
   GRCORE_CodeMeta bad_version = c.meta;
-  bad_version.version = 2;
+  bad_version.version = 1;
   EXPECT_EQ(grcore_code_register(w.ctx, w.alpha, c.code, c.start(), c.size(), &bad_version),
       GRCORE_ERR_CORRUPT);
   EXPECT_EQ(grcore_code_registered_count(w.ctx), 0u);
@@ -458,8 +514,10 @@ TEST(Retire, ASlotClearedUnderALiveJitRecordIsReleasedWhenTheLastOneLeavesAndNot
   GRCORE_ActivationRef inner = enter(w.stack, GRCORE_ACTIVATION_JIT);
   ASSERT_EQ(grcore_entry_slot_clear(w.ctx, s), GRCORE_OK);
   EXPECT_EQ(s->entry, 0u) << "no later call goes through a cleared slot";
-  EXPECT_EQ(w.code.released, 0);
-  EXPECT_EQ(grcore_code_retired_count(w.ctx), 1u);
+  ASSERT_EQ(w.code.released, 0)
+      << "the active JIT record still references this code";
+  ASSERT_EQ(grcore_code_retired_count(w.ctx), 1u)
+      << "cleared code must stay retired until the last JIT record leaves";
   // A record that is not a JIT one is not a compiled frame: leaving it frees nothing.
   ASSERT_EQ(grcore_activation_leave(w.stack, inner), GRCORE_OK);
   EXPECT_EQ(w.code.released, 0) << "one JIT record is still open";

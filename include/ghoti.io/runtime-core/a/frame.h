@@ -154,6 +154,21 @@ GRCORE_API bool grcore_frame_walk_next(
 GRCORE_API bool grcore_frame_walk_broken(
     const GRCORE_FrameWalk * walk, const char ** out_reason);
 
+/** @brief The engine's stable display name for this function, if it has one.
+ * The returned string must outlive the context's use of it. */
+GRCORE_API const char * grcore_frame_function_name(
+    const GRCORE_AbstractFrame * frame);
+
+/** @brief The number of engine-provided read-only memory ranges on a frame. */
+GRCORE_API size_t grcore_frame_memory_count(const GRCORE_AbstractFrame * frame);
+/** @brief Describes one memory range on a readable frame. */
+GRCORE_API GRCORE_Result grcore_frame_memory(const GRCORE_AbstractFrame * frame,
+    size_t index, GRCORE_MemoryInfo * out_info);
+/** @brief Copies a checked byte range from one memory on a readable frame. */
+GRCORE_API GRCORE_Result grcore_frame_memory_read(
+    const GRCORE_AbstractFrame * frame, size_t index, uint64_t offset,
+    void * buffer, size_t size);
+
 /**
  * @brief Reads a slot: its kind, as the engine declares it, and its bits.
  *

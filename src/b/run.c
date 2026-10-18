@@ -38,6 +38,7 @@
 
 /* The start of a run or a resume: what the last one reported is stale. */
 static void begin_run(GRCORE_Context * c) {
+  c->run_epoch++;
   c->verdict_key_count = 0;
   c->pause_location.file = NULL;
   c->pause_location.line = 0;
@@ -101,6 +102,7 @@ GRCORE_Result grcore_run(GRCORE_Context * context, GRCORE_EntryFn entry,
       context->config != GRCORE_CONFIG_PARKED_OUTSIDE) {
     return GRCORE_ERR_INVALID;
   }
+  if (context->run_epoch == UINT64_MAX) return GRCORE_ERR_LIMIT;
   context->entry = entry;
   context->entry_state = state;
   begin_run(context);
@@ -119,6 +121,7 @@ GRCORE_Result grcore_resume(
       context->config != GRCORE_CONFIG_PAUSED || context->entry == NULL) {
     return GRCORE_ERR_INVALID;
   }
+  if (context->run_epoch == UINT64_MAX) return GRCORE_ERR_LIMIT;
   /* The host has now seen the time and the interrupt. Anything still true,
    * such as exhausted fuel, is a level and is decided again at the next
    * poll. */

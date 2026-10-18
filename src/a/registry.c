@@ -50,6 +50,7 @@ typedef struct RegEntry {
   GRCORE_Code * code;      ///< The registry's reference.
   const GRCORE_CodeMeta * meta;
   GRCORE_EngineId engine;
+  size_t registrations;          ///< Owners of this exact live range.
   bool retired;
 } RegEntry;
 
@@ -146,7 +147,15 @@ GRCORE_Result grcore_code_register(GRCORE_Context * context,
   if (r != NULL) {
     at = first_ending_above(r, start);
     if (at < r->count && r->entries[at].start < end) {
-      return GRCORE_ERR_INVALID; /* overlaps the range at `at` */
+      RegEntry * existing = &r->entries[at];
+      if (!existing->retired && existing->start == start &&
+          existing->end == end && existing->engine == engine &&
+          existing->code == code && existing->meta == meta) {
+        if (existing->registrations == SIZE_MAX) return GRCORE_ERR_LIMIT;
+        existing->registrations++;
+        return GRCORE_OK;
+      }
+      return GRCORE_ERR_INVALID; /* a different mapping overlaps */
     }
   }
   res = registry_of(context, true, &r);
@@ -168,6 +177,7 @@ GRCORE_Result grcore_code_register(GRCORE_Context * context,
   e->code = grcore_code_retain(code);
   e->meta = meta;
   e->engine = engine;
+  e->registrations = 1;
   e->retired = false;
   r->count++;
   return GRCORE_OK;
@@ -185,6 +195,10 @@ GRCORE_Result grcore_code_unregister(GRCORE_Context * context, uintptr_t start) 
   size_t at = first_ending_above(r, start);
   if (at >= r->count || r->entries[at].start != start || r->entries[at].retired) {
     return GRCORE_ERR_INVALID;
+  }
+  if (r->entries[at].registrations > 1) {
+    r->entries[at].registrations--;
+    return GRCORE_OK;
   }
   GRCORE_Stack * stack = grcore_context_stack(context);
   if (stack->jit_live == 0) {

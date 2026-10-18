@@ -13,6 +13,20 @@
 #include <cstring>
 #include <thread>
 
+namespace {
+GRCORE_InstructionValidity recognizes_test_instruction(const GRCORE_Context *,
+    GRCORE_EngineId engine,uint64_t function,uint64_t offset) {
+  if(engine!=1)return GRCORE_INSTRUCTION_UNKNOWN;
+  if(function!=UINT64_C(0x100000002))return GRCORE_INSTRUCTION_UNKNOWN;
+  return offset==UINT64_C(0x100000123)?GRCORE_INSTRUCTION_VALID:
+      GRCORE_INSTRUCTION_INVALID;
+}
+const GRCORE_EngineDescriptor instruction_engine={
+  sizeof(GRCORE_EngineDescriptor),"instruction-test",nullptr,nullptr,nullptr,
+  {nullptr,nullptr,nullptr},{0,0,0},nullptr,nullptr,nullptr,nullptr,nullptr,
+  {nullptr,nullptr,nullptr},recognizes_test_instruction,nullptr,nullptr};
+}
+
 TEST(Engine, RegisterAssignsIdsFromOneAndCreatesTheStack) {
   RunWorld w;
   EXPECT_EQ(grcore_context_stack(w.ctx), nullptr);
@@ -29,6 +43,26 @@ TEST(Engine, RegisterAssignsIdsFromOneAndCreatesTheStack) {
   EXPECT_EQ(grcore_engine_count(w.ctx), 2u);
   EXPECT_EQ(grcore_engine_descriptor(w.ctx, a), &kAlpha);
   EXPECT_EQ(grcore_engine_descriptor(w.ctx, b), &kBeta);
+}
+
+TEST(Engine, InstructionIdentityValidationUsesOptionalEngineCallbacks) {
+  RunWorld w;
+  EXPECT_EQ(grcore_engine_check_instruction(w.ctx,
+      UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_UNKNOWN);
+  GRCORE_EngineId id=0;
+  ASSERT_EQ(grcore_engine_register(w.ctx,&instruction_engine,&id),GRCORE_OK);
+  EXPECT_EQ(grcore_engine_check_instruction(w.ctx,
+      UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_VALID);
+  EXPECT_EQ(grcore_engine_check_instruction(w.ctx,
+      UINT64_C(0x100000002),UINT64_C(0x100000124)),GRCORE_INSTRUCTION_INVALID);
+  GRCORE_EngineId other=0;
+  ASSERT_EQ(grcore_engine_register(w.ctx,&kAlpha,&other),GRCORE_OK);
+  EXPECT_EQ(grcore_engine_check_instruction_for(w.ctx,id,
+      UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_VALID);
+  EXPECT_EQ(grcore_engine_check_instruction_for(w.ctx,other,
+      UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_UNKNOWN);
+  EXPECT_EQ(grcore_engine_check_instruction(nullptr,0,0),
+      GRCORE_INSTRUCTION_UNKNOWN);
 }
 
 TEST(Engine, TheStackIsPerContextStateRegisteredUnderACardinalityOneKey) {

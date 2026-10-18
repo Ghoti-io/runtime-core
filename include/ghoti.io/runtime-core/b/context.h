@@ -165,6 +165,20 @@ GRCORE_API bool grcore_context_guest_state_readable(
     const GRCORE_Context * context);
 
 /**
+ * @brief The serial number of the current run/resume lifecycle.
+ *
+ * The value starts at zero and increments before every accepted
+ * ::grcore_run or ::grcore_resume. It lets an owner distinguish a new
+ * execution interval even when the guest stack returns to the same frame and
+ * instruction identity. The value is meaningful only to the owner while it
+ * owns the context; zero is returned for NULL or a non-owner.
+ *
+ * @param context The context.
+ * @return The current run epoch, or zero when unavailable.
+ */
+GRCORE_API uint64_t grcore_context_run_epoch(const GRCORE_Context * context);
+
+/**
  * @brief Registers `value` under `key`.
  *
  * The context holds the pointer and calls `key->destroy` on it at teardown. A

@@ -35,6 +35,12 @@
  * lives in memory that does not move until the context is destroyed, so
  * compiled code may embed its address.
  *
+ * **Shared registration.** Re-registering the exact same live range, code
+ * handle, engine and metadata takes another registration ownership without
+ * adding another range. Each successful registration needs one unregister.
+ * A different overlapping mapping is refused. The range is retired only when
+ * its last registration is released.
+ *
  * **Code lifetime.** The registry and every entry slot that names code hold a
  * counted reference (`a/code.h`). Clearing a slot, replacing its code or
  * unregistering a range does not release the reference at once: a compiled
@@ -110,7 +116,8 @@ typedef struct GRCORE_CodeRange {
  * @param meta The code's table; `meta->code_bytes` must equal `size`.
  * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, a non-owner,
  *   an unknown engine, an empty or wrapping range, a context with no engine,
- *   or a range that overlaps one already registered (retired or not);
+ *   or a range that overlaps a different mapping already registered (retired
+ *   or not);
  *   ::GRCORE_ERR_CORRUPT when the table does not validate;
  *   ::GRCORE_ERR_LIMIT or ::GRCORE_ERR_OOM when the memory is refused. A
  *   refusal changes nothing.
@@ -120,11 +127,11 @@ GRCORE_API GRCORE_Result grcore_code_register(GRCORE_Context * context,
     const GRCORE_CodeMeta * meta);
 
 /**
- * @brief Unregisters the range that starts at `start`.
+ * @brief Releases one registration for the range that starts at `start`.
  *
- * The registry's reference is retired: released at once if the context has no
- * open JIT record, otherwise when the last one is left. Until then the range
- * is still found, as retired.
+ * After the last registration is released, the registry's reference is
+ * retired: released at once if the context has no open JIT record, otherwise
+ * when the last one is left. Until then the range is still found, as retired.
  *
  * @param context The context. The caller must own it.
  * @param start The `start` the range was registered with.

@@ -66,7 +66,7 @@ static inline const GRCORE_Allocator * engine_allocator(const GRCORE_Context * c
 #define GRCORE_STACK_BASE 8u
 
 /** @brief The size of a frame header. */
-#define GRCORE_FRAME_HEADER 40u
+#define GRCORE_FRAME_HEADER 48u
 
 /** @brief The first buffer's size, in bytes. */
 #define GRCORE_STACK_INITIAL_BYTES 512u
@@ -85,7 +85,9 @@ typedef struct GRCORE_FrameHeader {
   uint32_t size;        ///< The frame's size, header included.
   uint32_t engine;      ///< The engine id; names the descriptor (AD-18).
   uint32_t slot_count;  ///< 64-bit slots after the header.
+  uint32_t guest_function; ///< The engine's function id used by compiled pairing.
   uint32_t tag;         ///< Derived from the frame's own offset.
+  uint32_t reserved;    ///< Keep the header 16-byte aligned.
 } GRCORE_FrameHeader;
 
 /** @brief The registry, entry slots and retired list of one context
@@ -110,6 +112,7 @@ typedef struct GRCORE_ActivationRecord {
                           ///< stay for the interpreter to finish.
   bool boundary;
   bool boundary_resumable;
+  bool boundary_upgraded_native;
   GRCORE_EngineId boundary_caller;
   uintptr_t boundary_instance;
   GRCORE_EngineId foreign_exception_engine;

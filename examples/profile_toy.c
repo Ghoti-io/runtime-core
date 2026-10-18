@@ -97,7 +97,7 @@ static GRCORE_Step toy_entry(GRCORE_Context * context, void * state) {
   if (grcore_stack_push(stack, toy->engine, 1, &caller) != GRCORE_OK) {
     return GRCORE_STEP_UNWOUND;
   }
-  grcore_stack_set_identity(stack, caller, (GRCORE_PollIdentity){1, 1});
+  grcore_stack_set_identity(stack, caller, (GRCORE_PollIdentity){1, 1, 0});
   if (!toy->use_timer) {
     for (uint64_t function = 3; function <= 4; function++) {
       if (grcore_stack_push(stack, toy->engine, 1, &callee) != GRCORE_OK) {

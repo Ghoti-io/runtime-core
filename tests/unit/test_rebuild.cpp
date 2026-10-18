@@ -76,7 +76,7 @@ struct Chain {
       for (size_t i = 0; i < slots; i++) {
         grcore_stack_slot_set(w.stack, f, i, sentinel(j, i));
       }
-      grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{fn, 0});
+      grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{fn, 0, 0});
       guest.push_back(f);
     };
     size_t j = 0;
@@ -271,7 +271,7 @@ TEST(ChainRebuild, EveryMismatchBetweenTheChainAndTheGuestStackIsRefusedAndWrite
   const Case cases[] = {
       {"a guest frame of another function",
           [](RW & w, Chain & c) {
-            grcore_stack_set_identity(w.stack, c.guest[2], GRCORE_PollIdentity{12345, 0});
+            grcore_stack_set_identity(w.stack, c.guest[2], GRCORE_PollIdentity{12345, 0, 0});
           },
           GRCORE_ERR_INVALID},
       {"the chain ends in a corrupt return word",
@@ -305,6 +305,35 @@ TEST(ChainRebuild, AGuestFrameWithTheWrongSlotCountIsRefused) {
   Chain c(w, 4, /*slot_count=*/2); // the frame state describes three
   EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_ERR_INVALID);
   EXPECT_TRUE(c.untouched(w.stack));
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(ChainRebuild, AGuestFrameWithTheWrongGuestFunctionIsRefused) {
+  RW w;
+  Chain c(w, 4);
+  w.code.sites[0].guest_function = 999;
+  EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr),
+      GRCORE_ERR_INVALID);
+  EXPECT_TRUE(c.untouched(w.stack));
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(ChainRebuild, ModuleQualifiedPollIdentityPairsByGuestFunction) {
+  RW w;
+  Chain c(w, 4);
+  const uint64_t qualified = (UINT64_C(0x12345678) << 32) | 100u;
+  ASSERT_EQ(grcore_stack_set_identity(w.stack, c.guest.back(),
+      GRCORE_PollIdentity{qualified, 7, 0}), GRCORE_OK);
+  ASSERT_EQ(grcore_stack_set_guest_function(w.stack, c.guest.back(), 100),
+      GRCORE_OK);
+
+  EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr),
+      GRCORE_OK);
+  GRCORE_PollIdentity restored = {};
+  ASSERT_EQ(grcore_stack_identity(w.stack, c.guest.back(), &restored),
+      GRCORE_OK);
+  EXPECT_EQ(restored.function, qualified);
+  EXPECT_EQ(restored.offset, 7u);
   grcore_unwind_all(w.stack, nullptr);
 }
 
@@ -363,7 +392,7 @@ TEST(ChainRebuild, OnlyTheInnermostRunIsRebuiltAndTheOneUnderANativeIsKept) {
     GRCORE_FrameRef f;
     EXPECT_EQ(grcore_stack_push(w.stack, w.engine, 3, &f), GRCORE_OK);
     grcore_stack_slot_set(w.stack, f, 0, 5);
-    grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{fn, 0});
+    grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{fn, 0, 0});
     return f;
   };
   push(104);

@@ -129,6 +129,7 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   rec->set_limit = set_limit;
   rec->boundary = false;
   rec->boundary_resumable = false;
+  rec->boundary_upgraded_native = false;
   rec->boundary_caller = 0;
   rec->boundary_instance = 0;
   rec->foreign_exception_engine = 0;
@@ -164,6 +165,18 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
   }
   if(rec.boundary_resumable&&stack->context->resumable_boundaries)
     stack->context->resumable_boundaries--;
+  if(rec.boundary_upgraded_native){
+    for(size_t i=stack->activation_count;i>0;i--){
+      GRCORE_ActivationRecord*native=&stack->activations[i-1];
+      if(native->kind==GRCORE_ACTIVATION_NATIVE&&native->nested&&
+          native->boundary_resumable){
+        native->boundary_resumable=false;
+        if(stack->context->resumable_boundaries)
+          stack->context->resumable_boundaries--;
+        break;
+      }
+    }
+  }
   if (rec.kind == GRCORE_ACTIVATION_JIT && --stack->jit_live == 0) {
     /* No compiled frame can be on the native stack now, so nothing can return
      * into retired code (AD-28). */
@@ -295,6 +308,7 @@ GRCORE_Result grcore_boundary_enter(GRCORE_Stack *stack,
     return result;}
   GRCORE_ActivationRecord*record=&stack->activations[stack->activation_count-1];
   record->boundary=true;record->boundary_resumable=resumable;
+  record->boundary_upgraded_native=upgraded_native;
   record->boundary_caller=caller;record->boundary_instance=instance_token;
   if(resumable)stack->context->resumable_boundaries++;
   out_ref->id=activation.id;return GRCORE_OK;
@@ -311,6 +325,7 @@ static GRCORE_ActivationRecord *boundary_record(GRCORE_Stack*stack,
 }
 
 GRCORE_Result grcore_boundary_leave(GRCORE_Stack*stack,GRCORE_BoundaryRef ref){
+  if(!grcore_stack_owned(stack))return GRCORE_ERR_INVALID;
   GRCORE_ActivationRecord*record=boundary_record(stack,ref);
   if(!record)return GRCORE_ERR_INVALID;
   GRCORE_ActivationRef activation={ref.id};

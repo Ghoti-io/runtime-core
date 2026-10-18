@@ -47,7 +47,7 @@
 #include <string.h>
 
 _Static_assert(sizeof(GRCORE_FrameHeader) == GRCORE_FRAME_HEADER,
-    "the frame header is 40 bytes");
+    "the frame header is 48 bytes");
 
 /* The tag a frame at `offset` carries. It is not a defence against a hostile
  * caller; it makes a reference that was never a frame (an offset into the
@@ -183,7 +183,7 @@ GRCORE_Result grcore_stack_push(GRCORE_Stack * stack, GRCORE_EngineId engine,
   }
   size_t offset = stack->used;
   GRCORE_FrameHeader h = {(uint64_t)stack->top, 0, 0, (uint32_t)size,
-      (uint32_t)engine, (uint32_t)slot_count, tag_for(offset)};
+      (uint32_t)engine, (uint32_t)slot_count, 0, tag_for(offset), 0};
   memcpy(stack->buffer + offset, &h, sizeof h);
   memset(stack->buffer + offset + sizeof h, 0, 8u * slot_count);
   stack->used = offset + size;
@@ -327,13 +327,30 @@ GRCORE_Result grcore_stack_engine(const GRCORE_Stack * stack,
 GRCORE_Result grcore_stack_set_identity(
     GRCORE_Stack * stack, GRCORE_FrameRef frame, GRCORE_PollIdentity identity) {
   GRCORE_FrameHeader h;
-  if (!owner_of(stack) || !grcore_stack_read_frame(stack, frame, &h)) {
+  if (!owner_of(stack) || !grcore_stack_read_frame(stack, frame, &h) ||
+      (identity.engine != 0 && identity.engine != h.engine)) {
     return GRCORE_ERR_INVALID;
   }
   memcpy(stack->buffer + frame.offset + offsetof(GRCORE_FrameHeader, function),
       &identity.function, sizeof identity.function);
   memcpy(stack->buffer + frame.offset + offsetof(GRCORE_FrameHeader, offset),
       &identity.offset, sizeof identity.offset);
+  uint32_t guest_function = (uint32_t)identity.function;
+  memcpy(stack->buffer + frame.offset +
+      offsetof(GRCORE_FrameHeader, guest_function), &guest_function,
+      sizeof guest_function);
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_stack_set_guest_function(GRCORE_Stack * stack,
+    GRCORE_FrameRef frame, uint32_t guest_function) {
+  GRCORE_FrameHeader h;
+  if (!owner_of(stack) || !grcore_stack_read_frame(stack, frame, &h)) {
+    return GRCORE_ERR_INVALID;
+  }
+  memcpy(stack->buffer + frame.offset +
+      offsetof(GRCORE_FrameHeader, guest_function), &guest_function,
+      sizeof guest_function);
   return GRCORE_OK;
 }
 
@@ -345,6 +362,7 @@ GRCORE_Result grcore_stack_identity(const GRCORE_Stack * stack,
   }
   out_identity->function = h.function;
   out_identity->offset = h.offset;
+  out_identity->engine = h.engine;
   return GRCORE_OK;
 }
 
@@ -373,7 +391,10 @@ GRCORE_Verdict grcore_stack_poll(
   GRCORE_FrameHeader h;
   if (grcore_stack_read_frame(stack, top, &h)) {
     const GRCORE_EngineDescriptor * d = stack->engines[h.engine - 1];
-    if (d->locate != NULL) {
+    if (GRCORE_ENGINE_DESCRIPTOR_HAS(d, locate_scoped) &&
+        d->locate_scoped != NULL) {
+      location = d->locate_scoped(context, h.engine, function, offset);
+    } else if (d->locate != NULL) {
       location = d->locate(context, function, offset);
     }
   }
@@ -406,7 +427,7 @@ GRCORE_Result grcore_context_poll_identity(
  * written as they are, and the frame header's poll identity with them.
  */
 
-#define GRCORE_GUEST_BLOB_MAGIC UINT64_C(0x3130304B54534752) /* "RGSTK001" */
+#define GRCORE_GUEST_BLOB_MAGIC UINT64_C(0x3230304B54534752) /* "RGSTK002": 48-byte frame headers */
 
 GRCORE_Result grcore_guest_snapshot(
     GRCORE_Context * context, void * value, GRCORE_SnapshotWriter * writer) {

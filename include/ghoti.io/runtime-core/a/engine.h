@@ -163,6 +163,28 @@ typedef struct GRCORE_ScopeInterface {
       size_t index, GRCORE_Variable * out_variable);
 } GRCORE_ScopeInterface;
 
+/** @brief One read-only memory range exposed by a paused engine frame. */
+typedef struct GRCORE_MemoryInfo {
+  const char * name;       ///< Stable through the current readable stop.
+  uint64_t size_bytes;     ///< Current length, not declared maximum.
+} GRCORE_MemoryInfo;
+
+/** @brief The optional, read-only memory inspection interface. */
+typedef struct GRCORE_MemoryInterface {
+  size_t (*count)(const GRCORE_AbstractFrame * frame);
+  GRCORE_Result (*info)(const GRCORE_AbstractFrame * frame, size_t index,
+      GRCORE_MemoryInfo * out_info);
+  GRCORE_Result (*read)(const GRCORE_AbstractFrame * frame, size_t index,
+      uint64_t offset, void * buffer, size_t size);
+} GRCORE_MemoryInterface;
+
+/** Whether an engine can verify one poll identity. */
+typedef enum GRCORE_InstructionValidity {
+  GRCORE_INSTRUCTION_UNKNOWN = 0, ///< No registered validator recognizes it.
+  GRCORE_INSTRUCTION_VALID,       ///< An engine recognizes this boundary.
+  GRCORE_INSTRUCTION_INVALID      ///< An owning engine rejects this boundary.
+} GRCORE_InstructionValidity;
+
 /**
  * @brief An engine descriptor. Define it `static` (or `const`) with
  *   ::GRCORE_ENGINE_DESCRIPTOR_INIT and register it by address; the object must
@@ -172,10 +194,13 @@ typedef struct GRCORE_ScopeInterface {
  * ::GRCORE_Key's (b/key.h has the argument and the rejected alternatives). The
  * first member, `size`, is the `sizeof(GRCORE_EngineDescriptor)` of the header
  * the descriptor was compiled against, and ::GRCORE_ENGINE_DESCRIPTOR_INIT
- * writes it. A member after `decoder` (`roots`, `unwind`, `convert`, `reverse`) is read only where
+ * writes it. Members after `decoder` are read only where
  * `size` covers it (::GRCORE_ENGINE_DESCRIPTOR_HAS), an absent one being NULL,
  * which for the first two means the engine has nothing to say and for the
- * last two means it converts nothing (so it binds only `BITS` code). ::grcore_engine_register
+ * last two means it converts nothing (so it binds only `BITS` code). The
+ * optional trailing callbacks name functions, expose read-only memory and
+ * verify exact instruction identities.
+ * ::grcore_engine_register
  * refuses with ::GRCORE_ERR_INVALID a descriptor that
  * ::grcore_engine_descriptor_valid does not accept: a `size` below
  * ::GRCORE_ENGINE_DESCRIPTOR_MIN_SIZE (which includes zero) or off the
@@ -258,6 +283,29 @@ typedef struct GRCORE_EngineDescriptor {
    *  absent as for `convert`. */
   bool (*reverse)(GRCORE_Context * context,
       GRCORE_Representation representation, uint64_t value, uint64_t * out_raw);
+  /** Names a function identity for a debugger. The returned string must
+   * outlive the context's use of it. NULL means the engine has no name. */
+  const char *(*function_name)(const GRCORE_Context * context,
+      uint64_t function);
+  /** Read-only memory views available while the context is readable. */
+  GRCORE_MemoryInterface memory;
+  /** Returns whether a full-width poll identity names an instruction this
+   *  engine can execute. The context-local engine id is supplied so a
+   *  descriptor registered more than once through distinct objects can reject
+   *  identities owned by another registration. Pure and allocation-free; it
+   *  must not poll or mutate context state. NULL means the engine cannot verify
+   *  instruction identities. */
+  GRCORE_InstructionValidity (*instruction_valid)(const GRCORE_Context * context,
+      GRCORE_EngineId engine, uint64_t function, uint64_t offset);
+  /** Engine-scoped location callback. New descriptors should use this when
+   *  identities are only unique within one registration. It takes precedence
+   *  over `locate`; absent in older descriptors. */
+  GRCORE_Location (*locate_scoped)(const GRCORE_Context * context,
+      GRCORE_EngineId engine, uint64_t function, uint64_t offset);
+  /** Engine-scoped function-name callback; takes precedence over
+   *  `function_name`. */
+  const char *(*function_name_scoped)(const GRCORE_Context * context,
+      GRCORE_EngineId engine, uint64_t function);
 } GRCORE_EngineDescriptor;
 
 /**
@@ -269,9 +317,9 @@ typedef struct GRCORE_EngineDescriptor {
       sizeof(((GRCORE_EngineDescriptor *)0)->decoder))
 
 /**
- * @brief The initialiser of an engine descriptor:
- *   `GRCORE_ENGINE_DESCRIPTOR_INIT(name, slot_kind, locate, inspect, scopes,
- *   decoder, roots, unwind, convert, reverse)`.
+ * @brief The initialiser of an engine descriptor without a function-name
+ *   callback. Use a full aggregate initializer when supplying trailing
+ *   callbacks.
  *
  * Expands to a braced initialiser that begins with
  * `sizeof(GRCORE_EngineDescriptor)`, a constant expression in C17 and C++20.
@@ -284,7 +332,7 @@ typedef struct GRCORE_EngineDescriptor {
  * @endcode
  */
 #define GRCORE_ENGINE_DESCRIPTOR_INIT(...) \
-  { sizeof(GRCORE_EngineDescriptor), __VA_ARGS__ }
+  { sizeof(GRCORE_EngineDescriptor), __VA_ARGS__, NULL, {NULL,NULL,NULL}, NULL, NULL, NULL }
 
 /**
  * @brief Whether a descriptor's `size` covers a member, so that reading it is
@@ -374,6 +422,17 @@ GRCORE_API size_t grcore_engine_count(const GRCORE_Context * context);
 GRCORE_API GRCORE_Result grcore_engine_inspect(const GRCORE_Context * context,
     GRCORE_EngineId id, GRCORE_SlotKind kind, uint64_t value, char * buffer,
     size_t size, size_t * out_length);
+
+/** @brief Whether any registered engine recognizes this function/offset pair.
+ * Compatibility helper with no engine isolation; new callers should use
+ * ::grcore_engine_check_instruction_for. */
+GRCORE_API GRCORE_InstructionValidity grcore_engine_check_instruction(
+    const GRCORE_Context * context,
+    uint64_t function, uint64_t offset);
+/** Check an identity only with the engine namespace that owns it. */
+GRCORE_API GRCORE_InstructionValidity grcore_engine_check_instruction_for(
+    const GRCORE_Context * context, GRCORE_EngineId engine,
+    uint64_t function, uint64_t offset);
 
 #ifdef __cplusplus
 }

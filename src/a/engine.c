@@ -189,3 +189,34 @@ GRCORE_Result grcore_engine_inspect(const GRCORE_Context * context,
   *out_length = (size_t)n;
   return GRCORE_OK;
 }
+
+GRCORE_InstructionValidity grcore_engine_check_instruction(
+    const GRCORE_Context * context,
+    uint64_t function, uint64_t offset) {
+  if (context == NULL) return GRCORE_INSTRUCTION_UNKNOWN;
+  const GRCORE_Stack * stack = grcore_context_stack(context);
+  if (stack == NULL) return GRCORE_INSTRUCTION_UNKNOWN;
+  bool recognized = false;
+  for (size_t i = 0; i < stack->engine_count; i++) {
+    const GRCORE_EngineDescriptor * d = stack->engines[i];
+    if (!GRCORE_ENGINE_DESCRIPTOR_HAS(d, instruction_valid) ||
+        d->instruction_valid == NULL) continue;
+    GRCORE_InstructionValidity result=d->instruction_valid(context,
+        (GRCORE_EngineId)(i+1u),function,offset);
+    if(result==GRCORE_INSTRUCTION_VALID)return result;
+    if(result==GRCORE_INSTRUCTION_INVALID)recognized=true;
+  }
+  return recognized?GRCORE_INSTRUCTION_INVALID:GRCORE_INSTRUCTION_UNKNOWN;
+}
+
+GRCORE_InstructionValidity grcore_engine_check_instruction_for(
+    const GRCORE_Context *context,GRCORE_EngineId engine,uint64_t function,
+    uint64_t offset) {
+  if(context==NULL||engine==0)return GRCORE_INSTRUCTION_UNKNOWN;
+  const GRCORE_Stack *stack=grcore_context_stack(context);
+  if(stack==NULL||engine>stack->engine_count)return GRCORE_INSTRUCTION_UNKNOWN;
+  const GRCORE_EngineDescriptor *descriptor=stack->engines[engine-1u];
+  if(!GRCORE_ENGINE_DESCRIPTOR_HAS(descriptor,instruction_valid)||
+      descriptor->instruction_valid==NULL)return GRCORE_INSTRUCTION_UNKNOWN;
+  return descriptor->instruction_valid(context,engine,function,offset);
+}

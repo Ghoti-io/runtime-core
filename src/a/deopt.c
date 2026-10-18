@@ -33,6 +33,8 @@
 
 #include <ghoti.io/runtime-core/allocator.h>
 #include <ghoti.io/runtime-core/b/budget.h>
+#include <inttypes.h>
+#include <stdio.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -514,9 +516,9 @@ GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
     if (!chain_next(&c, stack, record, n, &cf, &h, &guest)) {
       return GRCORE_ERR_CORRUPT;
     }
-    size_t index;
+    size_t index = SIZE_MAX;
     if (!grcore_compiled_guest_index(&cf, &index) || index >= stack->frame_count ||
-        h.engine != cf.engine || h.function != cf.identity.function ||
+        h.engine != cf.engine || h.guest_function != cf.site->guest_function ||
         h.slot_count != cf.site->frame_state_count) {
       return GRCORE_ERR_INVALID;
     }

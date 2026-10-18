@@ -76,7 +76,7 @@ GRCORE_Step guest_entry(GRCORE_Context * c, void * state) {
       GRCORE_FrameRef f;
       EXPECT_EQ(grcore_stack_push(s, alpha, 2, &f), GRCORE_OK);
       if (d + 1 < g->depth || g->callee) {
-        grcore_stack_set_identity(s, f, GRCORE_PollIdentity{1, 5});
+        grcore_stack_set_identity(s, f, GRCORE_PollIdentity{1, 5, 0});
       }
     }
     if (g->callee) {

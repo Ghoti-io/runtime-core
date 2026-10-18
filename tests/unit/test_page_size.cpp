@@ -112,17 +112,18 @@ TEST(PageSize, TheInitialiserWritesTheSizeOfTheStructItWasCompiledAgainst) {
 }
 
 TEST(PageSize, AnOlderShorterProviderIsUsableAndItsAbsentProtectIsNeverRead) {
+  const size_t page_size = grcore_page_provider_default()->page_size;
   const GRCORE_PageProvider * old = old_provider_on_heap();
   bool mapped = false;
   // The group takes the provider, the counting provider over it maps and
   // charges, and `protect` is absent in both: unsupported, not a fault.
   EXPECT_EQ(drive(old, &mapped), GRCORE_ERR_INVALID);
   EXPECT_TRUE(mapped);
-  void * m = default_map(nullptr, old->page_size);
+  void * m = default_map(nullptr, page_size);
   ASSERT_NE(m, nullptr);
-  EXPECT_EQ(grcore_page_protect(old, m, old->page_size, GRCORE_PAGE_READ_EXECUTE),
+  EXPECT_EQ(grcore_page_protect(old, m, page_size, GRCORE_PAGE_READ_EXECUTE),
       GRCORE_ERR_INVALID);
-  default_unmap(nullptr, m, old->page_size);
+  default_unmap(nullptr, m, page_size);
   std::free(const_cast<GRCORE_PageProvider *>(old));
 }
 

@@ -22,7 +22,7 @@ GRCORE_FrameRef push_value(GRCORE_Stack * s, GRCORE_EngineId e, uint64_t v,
   GRCORE_FrameRef f = {0};
   EXPECT_EQ(grcore_stack_push(s, e, slots, &f), GRCORE_OK);
   EXPECT_EQ(grcore_stack_slot_set(s, f, 0, v), GRCORE_OK);
-  grcore_stack_set_identity(s, f, GRCORE_PollIdentity{function, 0});
+  grcore_stack_set_identity(s, f, GRCORE_PollIdentity{function, 0, 0});
   return f;
 }
 

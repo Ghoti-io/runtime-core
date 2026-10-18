@@ -93,12 +93,20 @@ typedef struct GRCORE_FrameRef {
  * @brief A poll site: a function and a position in it, the same on every tier
  *   (AD-18).
  *
- * What the numbers mean is the engine's: usually a function index and a
- * bytecode offset.
+ * The engine namespace identifies the owning interpreter/JIT. Within that
+ * engine, the numbers mean what the engine defines, usually a function index
+ * and bytecode offset. The namespace is context-local and is assigned when
+ * the engine registers.
  */
 typedef struct GRCORE_PollIdentity {
   uint64_t function; ///< Which function.
   uint64_t offset;   ///< Where in it.
+#ifdef __cplusplus
+  /* Preserve source compatibility for existing two-field C++ aggregate sites. */
+  uint32_t engine = 0; ///< Context-local engine namespace; zero is not a frame identity.
+#else
+  uint32_t engine;    ///< Context-local engine namespace; zero is not a frame identity.
+#endif
 } GRCORE_PollIdentity;
 
 /**
@@ -309,6 +317,22 @@ GRCORE_API GRCORE_Result grcore_stack_engine(const GRCORE_Stack * stack,
  */
 GRCORE_API GRCORE_Result grcore_stack_set_identity(
     GRCORE_Stack * stack, GRCORE_FrameRef frame, GRCORE_PollIdentity identity);
+
+/**
+ * @brief Sets the engine-local function id used to pair this guest frame with
+ *   a compiled frame. The poll identity remains separately namespaced.
+ *
+ * `grcore_stack_set_identity` initializes this id to the low 32 bits of the
+ * poll function for source compatibility. Engines whose guest function ids
+ * differ from that value may override it with this setter.
+ *
+ * @param stack The stack. The caller must own its context.
+ * @param frame The frame.
+ * @param guest_function Engine-local guest function id.
+ * @return ::GRCORE_OK or ::GRCORE_ERR_INVALID (nothing changes).
+ */
+GRCORE_API GRCORE_Result grcore_stack_set_guest_function(
+    GRCORE_Stack * stack, GRCORE_FrameRef frame, uint32_t guest_function);
 
 /**
  * @brief The identity last recorded in `frame`; zeroes until one is.

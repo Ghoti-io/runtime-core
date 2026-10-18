@@ -148,7 +148,7 @@ static GRCORE_Step toy_entry(GRCORE_Context * context, void * state) {
       }
       grcore_stack_slot_set(stack, frame, 0, function * 10);
       if (function < 3) {
-        GRCORE_PollIdentity call_site = {function, function};
+        GRCORE_PollIdentity call_site = {function, function, 0};
         grcore_stack_set_identity(stack, frame, call_site);
       }
     }

@@ -69,7 +69,7 @@ extern "C" {
 #endif
 
 /** The version of this format. A table of any other version is corrupt. */
-#define GRCORE_CODEMETA_FORMAT_VERSION UINT32_C(1)
+#define GRCORE_CODEMETA_FORMAT_VERSION UINT32_C(2)
 
 /**
  * @brief What a site is. A site is exactly one kind.
@@ -132,8 +132,11 @@ typedef struct GRCORE_DerivedPointer {
  * `code_offset` is the offset from the start of the code of the return
  * address for a call or a poll's slow call, and of the failing branch's exit
  * stub for a guard. It is unique and increasing within a table. `identity` is
- * the poll identity of AD-18 (what a deoptimization returns to). `live` is
- * the stack map: every live reference, each a ::GRCORE_LOC_FRAME_SLOT.
+ * the poll identity of AD-18 (what a deoptimization returns to); its function
+ * value is engine-defined and may be namespaced. `guest_function` is the
+ * engine's 32-bit guest-frame function ID used to pair a compiled frame with
+ * its interpreter frame. `live` is the stack map: every live reference, each
+ * a ::GRCORE_LOC_FRAME_SLOT.
  * `frame_state` is one location per slot of the interpreter frame, in the
  * interpreter's slot order.
  */
@@ -147,6 +150,7 @@ typedef struct GRCORE_CodeSite {
   size_t derived_count;                     ///< Entries of `derived`.
   const GRCORE_CodeLocation * frame_state;  ///< The deopt frame state.
   size_t frame_state_count;                 ///< Interpreter slot count.
+  uint32_t guest_function;                  ///< Guest-frame function ID used to pair/rebuild this frame.
 } GRCORE_CodeSite;
 
 /**

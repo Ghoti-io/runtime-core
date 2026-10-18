@@ -233,6 +233,18 @@ TEST(EngineSize, ADescriptorFromANewerHeaderIsAcceptedAndItsUnknownTailIgnored) 
   std::free(block);
 }
 
+TEST(EngineSize, OldDescriptorHasNoInstructionValidator) {
+  const GRCORE_EngineDescriptor *old=old_descriptor_on_heap();
+  {
+    RunWorld w;
+    GRCORE_EngineId id=0;
+    ASSERT_EQ(grcore_engine_register(w.ctx,old,&id),GRCORE_OK);
+    EXPECT_EQ(grcore_engine_check_instruction(w.ctx,1,2),
+        GRCORE_INSTRUCTION_UNKNOWN);
+  }
+  std::free(const_cast<GRCORE_EngineDescriptor *>(old));
+}
+
 // The generation between: everything through `unwind`, and no conversion.
 struct MidDescriptor {
   OldDescriptor old;

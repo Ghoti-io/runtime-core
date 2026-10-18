@@ -189,7 +189,8 @@ static void guest_enumerate(
       size_t index;
       bool can_pair = grcore_compiled_guest_index(&cf, &index);
       if (have_guest && can_pair && index == remaining - 1 &&
-          h.engine == cf.engine && h.function == cf.identity.function) {
+          h.engine == cf.engine &&
+          h.guest_function == cf.site->guest_function) {
         visit_compiled(&cf, visitor);
         have = next_compiled(&walk, &cf);
         paired = true;

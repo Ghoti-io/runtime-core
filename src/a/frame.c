@@ -81,7 +81,12 @@ static void compiled_abstract_frame(GRCORE_FrameWalk * walk,
   out->engine = cf->engine;
   out->descriptor = d;
   out->identity = cf->identity;
-  if (d->locate != NULL) {
+  out->identity.engine = cf->engine;
+  if (GRCORE_ENGINE_DESCRIPTOR_HAS(d, locate_scoped) &&
+      d->locate_scoped != NULL) {
+    out->location = d->locate_scoped(walk->context, cf->engine,
+        cf->identity.function, cf->identity.offset);
+  } else if (d->locate != NULL) {
     out->location = d->locate(walk->context, cf->identity.function,
         cf->identity.offset);
   }
@@ -106,6 +111,58 @@ bool grcore_frame_walk_broken(
   return true;
 }
 
+const char * grcore_frame_function_name(const GRCORE_AbstractFrame * frame) {
+  if (frame == NULL || frame->descriptor == NULL ||
+      !grcore_context_guest_state_readable(frame->context) ||
+      !GRCORE_ENGINE_DESCRIPTOR_HAS(frame->descriptor, function_name)) return NULL;
+  if (GRCORE_ENGINE_DESCRIPTOR_HAS(frame->descriptor, function_name_scoped) &&
+      frame->descriptor->function_name_scoped != NULL) {
+    return frame->descriptor->function_name_scoped(frame->context,
+        frame->engine, frame->identity.function);
+  }
+  if (frame->descriptor->function_name == NULL) return NULL;
+  return frame->descriptor->function_name(frame->context, frame->identity.function);
+}
+
+static const GRCORE_MemoryInterface * frame_memory_interface(
+    const GRCORE_AbstractFrame * frame) {
+  if (frame == NULL || frame->descriptor == NULL ||
+      !grcore_context_guest_state_readable(frame->context) ||
+      !GRCORE_ENGINE_DESCRIPTOR_HAS(frame->descriptor, memory)) {
+    return NULL;
+  }
+  const GRCORE_MemoryInterface * memory = &frame->descriptor->memory;
+  return memory->count != NULL && memory->info != NULL &&
+      memory->read != NULL ? memory : NULL;
+}
+size_t grcore_frame_memory_count(const GRCORE_AbstractFrame * frame) {
+  const GRCORE_MemoryInterface * memory = frame_memory_interface(frame);
+  return memory != NULL ? memory->count(frame) : 0;
+}
+GRCORE_Result grcore_frame_memory(const GRCORE_AbstractFrame * frame,
+    size_t index, GRCORE_MemoryInfo * out_info) {
+  const GRCORE_MemoryInterface * memory = frame_memory_interface(frame);
+  if (memory == NULL || out_info == NULL || index >= memory->count(frame)) {
+    return GRCORE_ERR_INVALID;
+  }
+  return memory->info(frame, index, out_info);
+}
+GRCORE_Result grcore_frame_memory_read(const GRCORE_AbstractFrame * frame,
+    size_t index, uint64_t offset, void * buffer, size_t size) {
+  const GRCORE_MemoryInterface * memory = frame_memory_interface(frame);
+  if (memory == NULL || (size > 0 && buffer == NULL) ||
+      index >= memory->count(frame)) {
+    return GRCORE_ERR_INVALID;
+  }
+  GRCORE_MemoryInfo info;
+  GRCORE_Result described = memory->info(frame, index, &info);
+  if (described != GRCORE_OK) return described;
+  if (offset > info.size_bytes || size > info.size_bytes - offset) {
+    return GRCORE_ERR_INVALID;
+  }
+  return memory->read(frame, index, offset, buffer, size);
+}
+
 bool grcore_frame_walk_next(
     GRCORE_FrameWalk * walk, GRCORE_AbstractFrame * out_frame) {
   if (walk == NULL || out_frame == NULL ||
@@ -124,7 +181,7 @@ bool grcore_frame_walk_next(
     bool can_pair = have_guest && grcore_compiled_guest_index(&walk->pending, &index);
     bool paired = can_pair && index == walk->remaining - 1 &&
         h.engine == walk->pending.engine &&
-        h.function == walk->pending.identity.function;
+        h.guest_function == walk->pending.site->guest_function;
     bool emit;
     if (paired) {
       emit = true;
@@ -155,9 +212,14 @@ bool grcore_frame_walk_next(
   f.descriptor = d;
   f.identity.function = h.function;
   f.identity.offset = h.offset;
+  f.identity.engine = h.engine;
   f.location.file = NULL;
   f.location.line = 0;
-  if (d->locate != NULL) {
+  if (GRCORE_ENGINE_DESCRIPTOR_HAS(d, locate_scoped) &&
+      d->locate_scoped != NULL) {
+    f.location = d->locate_scoped(walk->context, h.engine, h.function,
+        h.offset);
+  } else if (d->locate != NULL) {
     f.location = d->locate(walk->context, h.function, h.offset);
   }
   f.slot_count = h.slot_count;
@@ -186,6 +248,7 @@ bool grcore_stack_hook_frame(const GRCORE_Stack * stack, GRCORE_FrameRef ref,
   out->descriptor = stack->engines[h.engine - 1];
   out->identity.function = h.function;
   out->identity.offset = h.offset;
+  out->identity.engine = h.engine;
   out->location.file = NULL;
   out->location.line = 0;
   out->slot_count = h.slot_count;

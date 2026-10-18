@@ -281,6 +281,10 @@ bool grcore_context_guest_state_readable(const GRCORE_Context * context) {
           context->config == GRCORE_CONFIG_PAUSED);
 }
 
+uint64_t grcore_context_run_epoch(const GRCORE_Context * context) {
+  return context != NULL && owned_by_caller(context) ? context->run_epoch : 0;
+}
+
 bool grcore_key_valid(const GRCORE_Key * key) {
   /* The first member is read to learn how much of the rest exists, so a key
    * is judged by that alone: a size below the first-generation layout would

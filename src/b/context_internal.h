@@ -164,6 +164,7 @@ struct GRCORE_Context {
   /* run */
   GRCORE_EntryFn entry;
   void * entry_state;
+  uint64_t run_epoch; ///< Increments on every accepted run or resume.
 };
 
 /**

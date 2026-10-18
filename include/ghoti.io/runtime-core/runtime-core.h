@@ -53,6 +53,7 @@
 #include <ghoti.io/runtime-core/a/boundary.h>
 #include <ghoti.io/runtime-core/a/budget_scope.h>
 #include <ghoti.io/runtime-core/a/code.h>
+#include <ghoti.io/runtime-core/a/code_pages.h>
 #include <ghoti.io/runtime-core/a/codemeta.h>
 #include <ghoti.io/runtime-core/a/compiled.h>
 #include <ghoti.io/runtime-core/a/deopt.h>

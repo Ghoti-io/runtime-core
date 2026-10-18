@@ -3,7 +3,13 @@
 **Current boundary status:** Story 12 adds an engine-neutral mixed-engine
 boundary activation protocol. The API keeps foreign exception identity opaque
 and preserves boundary/instance state across resumable pauses. It does not own
-or dereference cross-heap handles; Story 13 remains the handle-table owner.
+or dereference cross-heap handles; Tang's Story 13 owns the handle table.
+
+A resumable boundary temporarily promotes its enclosing nested native
+activation so polls may pause while a continuation is live. That promotion is
+owned by the boundary activation and is removed in the common activation-drop
+path, on both normal return and unwind. A native callback that continues after
+the boundary is gone therefore remains pause-denied until it returns.
 
 **Status:** In progress. Describes what exists: the scaffold; all of B (groups,
 contexts, options, keys, memory accounting, requests and ports, the poll, `run`
@@ -499,6 +505,12 @@ frame it polls as `grcore_poll` does, with the location `{NULL, 0}` and no
 identity. An engine records the call-site identity on a caller's frame with
 `grcore_stack_set_identity` before it pushes the callee, so a walk can say where
 each outer frame is.
+The guest frame also keeps the engine-local function number used to pair it
+with compiled metadata. That number is distinct from the 64-bit poll identity:
+an engine may namespace poll identities while keeping guest function numbers
+32-bit. `grcore_stack_set_identity` defaults the pairing number to the low 32
+bits for existing engines; engines with a different numbering scheme set it
+explicitly with `grcore_stack_set_guest_function`.
 
 Alternatives considered and rejected:
 
@@ -861,10 +873,13 @@ saved registers, its alignment padding) is read.
 **The registry** (`a/registry.h`) is per context: a sorted array of
 `[start, end)` ranges, each with the engine whose frames the code runs, the
 code's counted reference and its table, searched by bisection (O(log n) from a
-return address to the code). Ranges do not overlap, and registering one that
-does is refused with nothing changed. The table is validated against the range's
-size at registration. It lives with A's guest state, so a context needs an
-engine before it can hold code. Only the owner thread writes it; a collector
+return address to the code). Distinct ranges do not overlap, and an overlapping
+registration is refused with nothing changed. Registering the exact same live
+range, code handle, engine and metadata takes another registration ownership.
+Each successful registration needs one unregister; the range stays live until
+its last owner releases it. The table is validated against the range's size at
+registration. It lives with A's guest state, so a context needs an engine
+before it can hold code. Only the owner thread writes it; a collector
 reads it at a poll on that thread.
 
 **Entry slots.** A slot is one word, `entry`, that compiled code loads to call
@@ -875,8 +890,11 @@ word first, so no later call goes through it.
 
 **Code lifetime and the retired list.** The registry and each slot hold a
 counted reference. Clearing a slot, replacing its code or unregistering a range
-does not release that reference while a compiled frame may return into the code;
-it moves to the *retired list*, which is released when the context has no open
+does not release that reference while a compiled frame may return into the code.
+An unregister with other registration owners leaves their range live. After
+the final unregister, the registry reference moves to the *retired list* if a
+compiled frame may still return into it. The list is released when the context
+has no open
 `GRCORE_ACTIVATION_JIT` record (a counter kept by `grcore_activation_enter` and
 the one place a record is dropped, so an unwind releases it too). With none
 open the reference is released at once. A retired range is still found by

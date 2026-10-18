@@ -726,7 +726,8 @@ struct HandCode {
       GRCORE_CodeSite site{};
       site.code_offset = static_cast<uint32_t>(16 * (i + 1));
       site.kind = GRCORE_SITE_GC_POINT_CALL;
-      site.identity = GRCORE_PollIdentity{100 + i, i};
+      site.identity = GRCORE_PollIdentity{100 + i, i, 0};
+      site.guest_function = static_cast<uint32_t>(100 + i);
       site.live = live;
       site.live_count = raw_live ? 2 : 1;
       site.derived = with_derived ? derived : nullptr;

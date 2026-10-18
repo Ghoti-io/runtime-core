@@ -42,11 +42,11 @@ TEST(Stack, PushZeroesTheSlotsAndLinksTheCallerAndPopRestores) {
     EXPECT_EQ(v, 0u);
   }
   GRCORE_FrameRef f2 = push_ok(w.stack, w.beta, 2);
-  EXPECT_EQ(f2.offset, 8u + 40u + 3u * 8u);
+  EXPECT_EQ(f2.offset, 8u + 48u + 3u * 8u);
   EXPECT_EQ(grcore_stack_top(w.stack).offset, f2.offset);
   EXPECT_EQ(grcore_stack_caller(w.stack, f2).offset, f1.offset);
   EXPECT_EQ(grcore_stack_frame_count(w.stack), 2u);
-  EXPECT_EQ(grcore_stack_bytes_used(w.stack), 40u + 24u + 40u + 16u);
+  EXPECT_EQ(grcore_stack_bytes_used(w.stack), 48u + 24u + 48u + 16u);
   EXPECT_EQ(grcore_context_depth(w.ctx, GRCORE_DEPTH_GUEST), 2u);
   GRCORE_EngineId e = 0;
   ASSERT_EQ(grcore_stack_engine(w.stack, f1, &e), GRCORE_OK);
@@ -168,7 +168,7 @@ TEST(Stack, AnOddlySizedFrameLargerThanADoublingGrowsToFitIt) {
   StackWorld w;
   push_ok(w.stack, w.alpha, 1);
   GRCORE_FrameRef big = push_ok(w.stack, w.alpha, 1000);
-  EXPECT_GE(grcore_stack_bytes_capacity(w.stack), 40u + 8000u);
+  EXPECT_GE(grcore_stack_bytes_capacity(w.stack), 48u + 8000u);
   ASSERT_EQ(grcore_stack_slot_set(w.stack, big, 999, 77), GRCORE_OK);
   uint64_t v = 0;
   ASSERT_EQ(grcore_stack_slot_get(w.stack, big, 999, &v), GRCORE_OK);
@@ -304,7 +304,7 @@ TEST(Stack, EveryAllocationFailureOfPushIsOomAndLeaksNothing) {
         StackWorld w(GRCORE_UNLIMITED, GRCORE_UNLIMITED,
             GRCORE_DEFAULT_MEMORY_RESERVE, GRCORE_UNLIMITED, t.get());
         if (grow) {
-          push_ok(w.stack, w.alpha, 40); // 360 bytes of the 512
+          push_ok(w.stack, w.alpha, 40); // 368 bytes of the 512
         }
         size_t frames = grcore_stack_frame_count(w.stack);
         size_t capacity = grcore_stack_bytes_capacity(w.stack);
@@ -364,14 +364,15 @@ TEST(Stack, AForgedFrameReferenceIsRefusedEverywhere) {
   // Nothing, a number that was never an offset, the middle of a frame, the
   // middle of a slot, one past the end and far beyond.
   const size_t forged[] = {0, 1, 7, 9, f.offset + 8, f.offset + 40,
-      f.offset + 44, g.offset + 8, g.offset + 40, g.offset + 72,
+      f.offset + 44, f.offset + 48, g.offset + 8, g.offset + 40,
+      g.offset + 48, g.offset + 80,
       grcore_stack_bytes_used(w.stack) + 8, 1u << 20, SIZE_MAX};
   for (size_t offset : forged) {
     GRCORE_FrameRef bad = {offset};
     uint64_t v = 7;
     size_t count = 7;
     GRCORE_EngineId e = 7;
-    GRCORE_PollIdentity id = {7, 7};
+    GRCORE_PollIdentity id = {7, 7, 0};
     EXPECT_FALSE(grcore_stack_frame_valid(w.stack, bad)) << offset;
     EXPECT_EQ(grcore_stack_slot_get(w.stack, bad, 0, &v), GRCORE_ERR_INVALID) << offset;
     EXPECT_EQ(grcore_stack_slot_set(w.stack, bad, 0, 1), GRCORE_ERR_INVALID) << offset;
@@ -397,7 +398,8 @@ TEST(Stack, AHeaderCopiedIntoTheSlotsIsNotAFrame) {
   // A real header, byte for byte, at an aligned place inside the slots: the
   // tag it carries is for another offset, so a reference there is refused.
   uint64_t * slots = grcore_stack_slots(w.stack, f);
-  std::memcpy(slots, slots - 5, GRCORE_FRAME_HEADER);
+  std::memmove(slots, slots - GRCORE_FRAME_HEADER / sizeof(*slots),
+      GRCORE_FRAME_HEADER);
   GRCORE_FrameRef inside = {f.offset + GRCORE_FRAME_HEADER};
   EXPECT_FALSE(grcore_stack_frame_valid(w.stack, inside));
 }
@@ -428,21 +430,30 @@ TEST(Stack, SlotsPointsAtTheFramesSlotsAndWritesThroughItAreReadBack) {
   std::thread([&] { EXPECT_EQ(grcore_stack_slots(w.stack, f), nullptr); }).join();
 }
 
+TEST(Stack, LegacyTwoFieldCppIdentityDefaultsToNoEngine) {
+  const GRCORE_PollIdentity identity{3, 4};
+  EXPECT_EQ(identity.function, 3u);
+  EXPECT_EQ(identity.offset, 4u);
+  EXPECT_EQ(identity.engine, 0u);
+}
+
 TEST(Stack, IdentityIsZeroUntilSetAndSurvivesGrowth) {
   StackWorld w;
   GRCORE_FrameRef f = push_ok(w.stack, w.alpha, 1);
-  GRCORE_PollIdentity id = {1, 1};
+  GRCORE_PollIdentity id = {1, 1, 0};
   ASSERT_EQ(grcore_stack_identity(w.stack, f, &id), GRCORE_OK);
   EXPECT_EQ(id.function, 0u);
   EXPECT_EQ(id.offset, 0u);
-  ASSERT_EQ(grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{12, 34}),
+  EXPECT_EQ(id.engine, w.alpha);
+  ASSERT_EQ(grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{12, 34, 0}),
       GRCORE_OK);
-  ASSERT_EQ(grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{12, 35}),
+  ASSERT_EQ(grcore_stack_set_identity(w.stack, f, GRCORE_PollIdentity{12, 35, 0}),
       GRCORE_OK);
   ASSERT_EQ(grcore_stack_reserve(w.stack, 100000), GRCORE_OK);
   ASSERT_EQ(grcore_stack_identity(w.stack, f, &id), GRCORE_OK);
   EXPECT_EQ(id.function, 12u);
   EXPECT_EQ(id.offset, 35u);
+  EXPECT_EQ(id.engine, w.alpha);
   // The identity is a frame's own: its slots and links were not touched.
   uint64_t v = 5;
   ASSERT_EQ(grcore_stack_slot_get(w.stack, f, 0, &v), GRCORE_OK);
@@ -476,12 +487,14 @@ TEST(StackPoll, FuelExhaustionRecordsTheIdentityAndLocatesThePause) {
   ASSERT_EQ(grcore_context_poll_identity(w.ctx, &id), GRCORE_OK);
   EXPECT_EQ(id.function, 7u);
   EXPECT_EQ(id.offset, 2u);
+  EXPECT_EQ(id.engine,alpha);
   // The identity is in the frame itself, for the owner in any state.
   GRCORE_PollIdentity in_frame;
   ASSERT_EQ(grcore_stack_identity(
                 w.stack, grcore_stack_top(w.stack), &in_frame),
       GRCORE_OK);
   EXPECT_EQ(in_frame.offset, 2u);
+  EXPECT_EQ(in_frame.engine,alpha);
 }
 
 TEST(StackPoll, TheDescriptorIsNotAskedWhereAPollIsUnlessSomethingIsPending) {
@@ -505,12 +518,13 @@ TEST(StackPoll, TheDescriptorIsNotAskedWhereAPollIsUnlessSomethingIsPending) {
           GRCORE_VERDICT_CONTINUE);
     }
     // The identity is recorded even on the fast path.
-    GRCORE_PollIdentity id = {0, 0};
+    GRCORE_PollIdentity id = {0, 0, 0};
     EXPECT_EQ(grcore_stack_identity(
                   grcore_context_stack(c), grcore_stack_top(grcore_context_stack(c)), &id),
         GRCORE_OK);
     EXPECT_EQ(id.function, 1u);
     EXPECT_EQ(id.offset, 999u);
+    EXPECT_EQ(id.engine, e);
     return GRCORE_STEP_FINISHED;
   }};
   GRCORE_Outcome outcome;
@@ -569,7 +583,7 @@ TEST(StackPoll, PollIdentityIsReadableOnlyInReadableStates) {
   FrameGuest g;
   g.engine = w.alpha;
   g.n = 5;
-  GRCORE_PollIdentity id = {9, 9};
+  GRCORE_PollIdentity id = {9, 9, 0};
   EXPECT_EQ(grcore_context_poll_identity(w.ctx, &id), GRCORE_ERR_INVALID); // parked
   EXPECT_EQ(grcore_context_poll_identity(nullptr, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_context_poll_identity(w.ctx, nullptr), GRCORE_ERR_INVALID);
@@ -736,11 +750,11 @@ void fill_stack(StackWorld & w) {
   grcore_stack_slot_set(w.stack, f1, 1, kSecretA);
   grcore_stack_slot_set(w.stack, f1, 2, kRaw2);
   grcore_stack_slot_set(w.stack, f1, 3, kSecretB);
-  grcore_stack_set_identity(w.stack, f1, GRCORE_PollIdentity{7, 9});
+  grcore_stack_set_identity(w.stack, f1, GRCORE_PollIdentity{7, 9, 0});
   GRCORE_FrameRef f2 = push_ok(w.stack, w.beta, 2);
   grcore_stack_slot_set(w.stack, f2, 0, kSecretA);
   grcore_stack_slot_set(w.stack, f2, 1, kSecretB);
-  grcore_stack_set_identity(w.stack, f2, GRCORE_PollIdentity{3, 4});
+  grcore_stack_set_identity(w.stack, f2, GRCORE_PollIdentity{3, 4, 0});
 }
 
 bool contains_word(const void * data, size_t size, uint64_t word) {
@@ -954,8 +968,8 @@ TEST(StackSnapshot, ABlobThatIsNotAStackIsCorruptNotATrap) {
   static const GRCORE_Key fake = GRCORE_KEY_INIT("runtime-core.guest", GRCORE_CARDINALITY_ONE,
       GRCORE_PHASE_NONE, nullptr, nullptr, Fake::snapshot, Fake::restore,
       Fake::settle);
-  const uint64_t magic = 0x3130304B54534752ull;
-  // magic, 2 engines named alpha and beta, 1 frame, top 8, used 48, then 40
+  const uint64_t magic = 0x3230304B54534752ull;
+  // magic, 2 engines named alpha and beta, 1 frame, top 8, used 48, then 48
   // bytes that are not a frame (all zero: no tag).
   std::vector<std::vector<uint64_t>> blobs = {
       {},                                  // empty: past the end
@@ -972,6 +986,46 @@ TEST(StackSnapshot, ABlobThatIsNotAStackIsCorruptNotATrap) {
     EXPECT_TRUE(r == GRCORE_ERR_CORRUPT || r == GRCORE_ERR_INVALID) << r;
     EXPECT_EQ(grcore_stack_frame_count(dst.stack), 0u);
   }
+}
+
+TEST(StackSnapshot, PreviousFrameHeaderVersionIsRejectedBeforeRestore) {
+  // An empty stack has the same body in both formats. Changing only the
+  // version marker makes this a well-formed RGSTK001 blob, so refusal must
+  // come from the version check rather than frame-body validation.
+  StackWorld original;
+  Snap current;
+  ASSERT_EQ(grcore_context_snapshot(original.ctx, nullptr, &current.s), GRCORE_OK);
+  const void * data = nullptr;
+  size_t size = 0;
+  ASSERT_EQ(grcore_snapshot_blob(current.s, "runtime-core.guest", &data, &size), GRCORE_OK);
+  ASSERT_GE(size, sizeof(uint64_t));
+  std::vector<unsigned char> old_blob(static_cast<const unsigned char *>(data),
+      static_cast<const unsigned char *>(data) + size);
+  const uint64_t old_magic = UINT64_C(0x3130304B54534752); // RGSTK001: 40-byte headers
+  std::memcpy(old_blob.data(), &old_magic, sizeof old_magic);
+
+  struct Fake {
+    static GRCORE_Result snapshot(GRCORE_Context *, void * value,
+        GRCORE_SnapshotWriter * writer) {
+      const auto & bytes = *static_cast<std::vector<unsigned char> *>(value);
+      return grcore_snapshot_writer_write(writer, bytes.data(), bytes.size());
+    }
+    static GRCORE_Result restore(GRCORE_Context *, void *, GRCORE_SnapshotReader *,
+        void *, GRCORE_RestoreMode) { return GRCORE_OK; }
+    static GRCORE_Result settle(GRCORE_Context *, void *, void *,
+        GRCORE_SettleMode) { return GRCORE_OK; }
+  };
+  static const GRCORE_Key fake = GRCORE_KEY_INIT("runtime-core.guest",
+      GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, nullptr, nullptr,
+      Fake::snapshot, Fake::restore, Fake::settle);
+  RunWorld source;
+  ASSERT_EQ(grcore_context_register(source.ctx, &fake, &old_blob), GRCORE_OK);
+  Snap old_snapshot;
+  ASSERT_EQ(grcore_context_snapshot(source.ctx, nullptr, &old_snapshot.s), GRCORE_OK);
+  StackWorld destination;
+  EXPECT_EQ(grcore_context_restore(destination.ctx, old_snapshot.s, nullptr),
+      GRCORE_ERR_CORRUPT);
+  EXPECT_EQ(grcore_stack_frame_count(destination.stack), 0u);
 }
 
 TEST(StackSnapshot, EveryAllocationFailureDuringRestoreLeavesTheStackFreshAndLeaksNothing) {
