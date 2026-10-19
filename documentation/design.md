@@ -1107,6 +1107,15 @@ chain (null in every converting slot of every frame, convert every raw value int
 a cell, write the slots), so no frame is seen half raw, and a `DEAD` location
 leaves the guest frame's own word (a rebuild may put anything there, and a frame
 that keeps a header word the compiled code does not know is better left with it).
+Each rebuilt frame also takes its compiled frame's identity: a caller's call site,
+the innermost frame's exit site. Until then a guest frame has the identity it was
+pushed with, its function's entry, and the interpreter that resumes a rebuilt frame
+can read it before it polls (a caller waiting under its callee, a frame resumed at a
+named exit, which is not a poll). This used to be each engine's deopt hook's job;
+lang-tang did it and lang-wasm, the second engine, did not, so its callers reported
+their function's entry after a deopt. Leaving it to the hook was rejected for that
+reason: the rule is the same for every engine and the rebuild already has the frames
+paired. An identity of another engine is a refusal like the other mismatches.
 `keep_frames` is how an unwind rebuilds only what survives: a frame whose guest
 frame is at or above that index is not converted, because it is about to be
 popped. On success the record's state is cleared and the record is marked

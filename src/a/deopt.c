@@ -519,7 +519,8 @@ GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
     size_t index = SIZE_MAX;
     if (!grcore_compiled_guest_index(&cf, &index) || index >= stack->frame_count ||
         h.engine != cf.engine || h.guest_function != cf.site->guest_function ||
-        h.slot_count != cf.site->frame_state_count) {
+        h.slot_count != cf.site->frame_state_count ||
+        (cf.identity.engine != 0 && cf.identity.engine != h.engine)) {
       return GRCORE_ERR_INVALID;
     }
     if (index < keep_frames) {
@@ -543,7 +544,11 @@ GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
   }
 
   /* Everything that can be refused has been. From here on nothing fails.
-   * Phase 1: the words that are not converted, null in the slots that are. */
+   * Phase 1: each frame's identity, then the words that are not converted,
+   * null in the slots that are. A guest frame still has the identity it was
+   * pushed with, its function's entry; the rebuilt frame is at its compiled
+   * frame's site (a caller's call, the innermost frame's exit), and the
+   * interpreter that resumes it may not poll before it is read. */
   chain_begin(&c, context, stack, extra);
   for (size_t k = 0; k < n; k++) {
     (void)chain_next(&c, stack, record, n, &cf, &h, &guest);
@@ -552,6 +557,7 @@ GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
     if (index >= keep_frames) {
       continue;
     }
+    (void)grcore_stack_set_identity(stack, guest, cf.identity);
     uint64_t * slots = guest_slots(stack, guest);
     for (size_t i = 0; i < cf.site->frame_state_count; i++) {
       const GRCORE_CodeLocation * l = &cf.site->frame_state[i];

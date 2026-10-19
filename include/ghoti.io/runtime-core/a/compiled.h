@@ -207,6 +207,10 @@ GRCORE_API const char * grcore_compiled_walk_reason(const GRCORE_CompiledWalk * 
  * they are. A `DEAD` location writes nothing: the guest frame keeps its own
  * word.
  *
+ * Each rebuilt guest frame takes its compiled frame's identity (a caller's
+ * call site, the innermost frame's exit site), which ::grcore_stack_identity
+ * then reports; the engine does not set it.
+ *
  * It converts in AD-27's two phases across the whole chain: every converting
  * slot is first filled with null, then every raw value is converted into a
  * cell of `reservation`, then the slots are written, so no frame is ever seen
@@ -217,7 +221,7 @@ GRCORE_API const char * grcore_compiled_walk_reason(const GRCORE_CompiledWalk * 
  *
  * Everything is checked before anything is written: that the chain walks, that
  * each frame's guest frame is there, of its engine and function, with as many
- * slots as the frame state; that the reservation is long enough; that the
+ * slots as the frame state and an identity of no other engine; that the reservation is long enough; that the
  * engine can convert what the chain holds. A refusal changes nothing.
  *
  * On success the record's compiled state, and the walk-start cell, are

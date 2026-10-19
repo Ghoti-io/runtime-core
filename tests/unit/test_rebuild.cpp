@@ -327,14 +327,56 @@ TEST(ChainRebuild, ModuleQualifiedPollIdentityPairsByGuestFunction) {
   ASSERT_EQ(grcore_stack_set_guest_function(w.stack, c.guest.back(), 100),
       GRCORE_OK);
 
+  // The frame pairs with its compiled frame by guest function, not by the
+  // whole identity, so the rebuild is not refused; it then takes the compiled
+  // frame's identity (site 0's here; an engine's sites carry the qualified one).
   EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr),
       GRCORE_OK);
   GRCORE_PollIdentity restored = {};
   ASSERT_EQ(grcore_stack_identity(w.stack, c.guest.back(), &restored),
       GRCORE_OK);
-  EXPECT_EQ(restored.function, qualified);
-  EXPECT_EQ(restored.offset, 7u);
+  EXPECT_EQ(restored.function, 100u);
+  EXPECT_EQ(restored.offset, 0u);
   grcore_unwind_all(w.stack, nullptr);
+}
+
+TEST(ChainRebuild, EveryRebuiltFrameTakesItsCompiledFramesIdentity) {
+  // A guest frame keeps the identity it was pushed with until something sets
+  // it; the interpreter that resumes a rebuilt frame reads it before it polls
+  // (a caller waiting under its callee, the innermost frame at a named exit).
+  // So the rebuild sets it, for every engine: a caller's is its call site, the
+  // innermost frame's its exit site. Frames an unwind is about to pop are not
+  // rebuilt and keep theirs.
+  RW w;
+  Chain c(w, 6);
+  for (size_t j = 0; j < 6; j++) {
+    ASSERT_EQ(grcore_stack_set_identity(w.stack, c.guest[j],
+        GRCORE_PollIdentity{100 + (5 - j), 999, 0}), GRCORE_OK);
+  }
+  size_t rebuilt = 0;
+  ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, 4, &rebuilt), GRCORE_OK);
+  EXPECT_EQ(rebuilt, 4u);
+  for (size_t j = 0; j < 6; j++) {
+    SCOPED_TRACE(j);
+    const size_t d = 5 - j; // depth from the innermost, and the site
+    GRCORE_PollIdentity id = {};
+    ASSERT_EQ(grcore_stack_identity(w.stack, c.guest[j], &id), GRCORE_OK);
+    EXPECT_EQ(id.function, 100 + d);
+    EXPECT_EQ(id.offset, j < 4 ? d : 999u);
+  }
+  grcore_unwind_all(w.stack, nullptr);
+
+  RW all;
+  Chain whole(all, 3);
+  for (size_t j = 0; j < 3; j++) {
+    ASSERT_EQ(grcore_stack_set_identity(all.stack, whole.guest[j],
+        GRCORE_PollIdentity{100 + (2 - j), 999, 0}), GRCORE_OK);
+  }
+  ASSERT_EQ(grcore_compiled_rebuild(all.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
+  GRCORE_PollIdentity innermost = {};
+  ASSERT_EQ(grcore_stack_identity(all.stack, whole.guest.back(), &innermost), GRCORE_OK);
+  EXPECT_EQ(innermost.offset, 0u) << "the innermost frame takes its exit site too";
+  grcore_unwind_all(all.stack, nullptr);
 }
 
 TEST(ChainRebuild, ARecordEnteredWithNoGuestFrameHasNothingToRebuildInto) {
