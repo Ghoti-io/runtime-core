@@ -33,12 +33,19 @@
 #include <stdint.h>
 #include <string.h>
 
-GRCORE_THREAD_SELF_MODEL _Thread_local uintptr_t grcore_thread_self = 0;
+_Thread_local uintptr_t grcore_thread_self = 0;
 
 uintptr_t grcore_thread_id(void) {
   static uintptr_t next_id = 0;
   if (grcore_thread_self == 0) {
-    grcore_thread_self = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
+    /* Zero means "no id" to the owner check and "no owner" to a context, so
+     * it is never given out, even when the counter wraps (a 32-bit build
+     * after 2^32 threads). */
+    uintptr_t id;
+    do {
+      id = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
+    } while (id == 0);
+    grcore_thread_self = id;
   }
   return grcore_thread_self;
 }

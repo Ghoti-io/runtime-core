@@ -313,6 +313,46 @@ $(cat "$sym/build.log")"
   fi
 fi
 
+# check-tls reads a built shared object's relocations and dynamic flags, so
+# its fixtures are built here: a thread-local through TLS descriptors (the
+# control on x86-64, i386 and aarch64), the same with initial-exec (the defect
+# it exists for), with the traditional __tls_get_addr dialect (descriptors
+# lost), and with no thread-local at all (the empty population).
+if [ "$(uname -s)" = Linux ]; then
+  printf 'check-tls\n'
+  T="$HERE/check-tls.sh"
+  tls="$work/tls"
+  mkdir -p "$tls"
+  printf '_Thread_local unsigned long probe_tls;\nunsigned long probe_read(void) { return probe_tls; }\n' > "$tls/gd.c"
+  printf '__attribute__((tls_model("initial-exec"))) _Thread_local unsigned long probe_tls;\nunsigned long probe_read(void) { return probe_tls; }\n' > "$tls/ie.c"
+  printf 'unsigned long probe_read(void) { return 1; }\n' > "$tls/none.c"
+  machine="$($CC -dumpmachine 2>/dev/null)"
+  desc=''
+  trad=''
+  case "$machine" in
+    x86_64-* | i?86-*) desc='-mtls-dialect=gnu2'; trad='-mtls-dialect=gnu' ;;
+  esac
+  built=1
+  {
+    $CC -O2 -shared -fPIC $desc -o "$tls/good.so" "$tls/gd.c" &&
+    $CC -O2 -shared -fPIC $desc -o "$tls/ie.so" "$tls/ie.c" &&
+    $CC -O2 -shared -fPIC -o "$tls/none.so" "$tls/none.c" &&
+    { [ -z "$trad" ] || $CC -O2 -shared -fPIC $trad -o "$tls/trad.so" "$tls/gd.c"; }
+  } >"$tls/build.log" 2>&1 || built=0
+  if [ "$built" -eq 0 ]; then
+    fail "could not build the TLS fixtures:
+$(cat "$tls/build.log")"
+  else
+    expect_pass 'tls/control (descriptors)' "$T" "$tls/good.so"
+    expect_fail 'tls/planted-initial-exec' 'initial-exec' "$T" "$tls/ie.so"
+    if [ -n "$trad" ]; then
+      expect_fail 'tls/planted-no-descriptors' 'without TLS descriptors' "$T" "$tls/trad.so"
+    fi
+    expect_fail 'tls/no-thread-local' 'measuring nothing' "$T" "$tls/none.so"
+    expect_fail 'tls/no-library' 'measuring nothing' "$T" "$tls/absent.so"
+  fi
+fi
+
 
 if [ "$failures" -ne 0 ]; then
   printf 'check-gates: %d of %d checks failed\n' "$failures" "$checks" >&2

@@ -191,6 +191,20 @@ ifeq ($(UNAME_S), Linux)
 	LIB_CFLAGS += -fPIC
 endif
 
+# TLS descriptors for the library's one thread-local, the thread id the owner
+# check reads on every guarded call. The default dialect on x86-64 and i386
+# calls __tls_get_addr for each read; descriptors cost a call of a short
+# resolver when the loader placed the library in static TLS, and stay correct
+# (the dynamic resolver) when a dlopen could not. aarch64 GCC uses descriptors
+# already. initial-exec, which is cheaper still, is refused: a library a host
+# may dlopen cannot claim static TLS. tools/check-tls.sh (make check-tls)
+# fails a built library that has initial-exec relocations or, on these three
+# targets, no descriptors.
+TLS_MACHINE := $(shell $(CC) -dumpmachine 2>/dev/null)
+ifneq ($(and $(filter x86_64-% i386-% i486-% i586-% i686-%,$(TLS_MACHINE)),$(findstring linux,$(TLS_MACHINE))),)
+	LIB_CFLAGS += -mtls-dialect=gnu2
+endif
+
 INCLUDE := -I include/ -I $(GEN_DIR)/
 
 DEPLESS_GOALS := docs docs-pdf clean fuzz-clean cloc help
@@ -221,7 +235,8 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage clears this: --coverage links the gcov runtime, whose mangle_path
 # check-symbols is right to reject in a shipping library.
 TEST_GATES ?= check-symbols check-aliasing check-stamps check-fp-contract check-labels \
-	check-direction check-edges check-gates check-version check-wiring check-hook examples
+	check-direction check-edges check-gates check-version check-wiring check-hook check-tls \
+	check-dlopen examples
 
 VALGRIND_FLAGS := --leak-check=full --show-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1 --suppressions=tests/valgrind.supp
 
@@ -497,6 +512,42 @@ ifeq ($(OS_NAME), Linux)
 	@tools/check-symbols.sh $(APP_DIR)/$(TARGET) $(LIBVER_SYMBOL) .
 else
 	@printf 'check-symbols: skipped (Linux only)\n'
+endif
+
+# The library's thread-local must keep a model a dlopen can rely on, and on
+# x86-64, i386 and aarch64 be reached through TLS descriptors (the
+# -mtls-dialect=gnu2 above): readelf on the built object, Linux only.
+check-tls: $(APP_DIR)/$(TARGET) ## Fail if the shared library has initial-exec TLS or (x86, aarch64) no TLS descriptors
+ifeq ($(OS_NAME), Linux)
+	@tools/check-tls.sh $(APP_DIR)/$(TARGET)
+else
+	@printf 'check-tls: skipped (Linux only)\n'
+endif
+
+# A process not linked against the library dlopens it, and dlopens a small
+# module that is linked against it (as a host loads an engine plugin), and
+# each enters and leaves an activation record on two threads. Run a second
+# time with glibc's optional static TLS set to zero, so the thread id is
+# reached through the dynamic descriptor resolver rather than static TLS.
+DLOPEN_DIR := $(APP_DIR)/dlopen
+DLOPEN_PROBE := $(DLOPEN_DIR)/probe$(EXE_EXTENSION)
+DLOPEN_MODULE := $(DLOPEN_DIR)/module.so
+$(DLOPEN_PROBE): tests/dlopen/probe.c $(FLAGS_STAMP) | $(LIBVER_GEN)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< -ldl
+$(DLOPEN_MODULE): tests/dlopen/module.c $(APP_DIR)/$(TARGET) $(FLAGS_STAMP) | $(LIBVER_GEN)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -fPIC $(INCLUDE) -shared -o $@ $< $(APP_DIR)/$(TARGET) \
+		-Wl,-rpath,$(abspath $(APP_DIR))
+
+check-dlopen: $(APP_DIR)/$(TARGET) ## Enter and leave a record in a library loaded by dlopen, directly and through a module
+ifeq ($(OS_NAME), Linux)
+check-dlopen: $(DLOPEN_PROBE) $(DLOPEN_MODULE)
+	@LD_LIBRARY_PATH="$(TEST_LD_PATH)" $(DLOPEN_PROBE) $(APP_DIR)/$(TARGET) $(DLOPEN_MODULE)
+	@LD_LIBRARY_PATH="$(TEST_LD_PATH)" GLIBC_TUNABLES=glibc.rtld.optional_static_tls=0 \
+		$(DLOPEN_PROBE) $(APP_DIR)/$(TARGET) $(DLOPEN_MODULE)
+else
+	@printf 'check-dlopen: skipped (Linux only)\n'
 endif
 
 .PHONY: check-gtest-full

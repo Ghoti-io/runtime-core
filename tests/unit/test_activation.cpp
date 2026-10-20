@@ -10,6 +10,7 @@
 #include "test_helpers.h"
 
 #include "../../src/a/guest_internal.h"
+#include "../../src/b/context_internal.h"
 
 #include <thread>
 #include <vector>
@@ -395,11 +396,6 @@ TEST(Activation, ADestroyedContextWithRecordsStillOpenFreesEverything) {
   EXPECT_EQ(t.live, 0);
 }
 
-int main(int argc, char ** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}
-
 TEST(Activation, AThreadThatHasNeverAskedForAnIdOwnsNoReleasedContext) {
   // A released context's owner is zero, and the owner check reads the calling
   // thread's id without giving it one, so a thread whose first call into the
@@ -469,4 +465,87 @@ TEST(Activation, ARecordEnteredWhereAnotherWasLeftStartsWithNothingOfIt) {
   EXPECT_EQ(native(w), 1u);
   ASSERT_EQ(grcore_activation_leave(w.stack, fresh), GRCORE_OK);
   EXPECT_EQ(native(w), 0u);
+}
+
+TEST(Activation, AThreadWhoseOnlyCallIsAnOwnerQueryIsNotTheOwner) {
+  // The owner check reads the id without giving one: a thread that asks only
+  // "do I own this?" of a released context (owner zero) must hear no, from
+  // the public query and from the stack's own check alike.
+  StackWorld w;
+  ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
+  bool context_owner = true, stack_owner = true;
+  std::thread([&] { context_owner = grcore_context_is_owner(w.ctx); }).join();
+  std::thread([&] { stack_owner = grcore_stack_owned(w.stack); }).join();
+  EXPECT_FALSE(context_owner);
+  EXPECT_FALSE(stack_owner);
+  ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
+}
+
+TEST(Activation, AFreshThreadThatAcquiresAReleasedContextOwnsItAndMayEnter) {
+  // The other side of the zero test: a thread whose first call is the acquire
+  // gets an id there and passes the inline check from then on.
+  StackWorld w;
+  ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
+  GRCORE_Result acquired = GRCORE_ERR_INVALID, enter = GRCORE_ERR_INVALID,
+                leave = GRCORE_ERR_INVALID, released = GRCORE_ERR_INVALID;
+  bool context_owner = false, stack_owner = false;
+  std::thread([&] {
+    acquired = grcore_context_acquire(w.ctx);
+    context_owner = grcore_context_is_owner(w.ctx);
+    stack_owner = grcore_stack_owned(w.stack);
+    GRCORE_ActivationRef ref = {0};
+    enter = grcore_activation_enter(
+        w.stack, GRCORE_ACTIVATION_JIT, w.alpha, false, nullptr, &ref);
+    leave = grcore_activation_leave(w.stack, ref);
+    released = grcore_context_release(w.ctx);
+  }).join();
+  EXPECT_EQ(acquired, GRCORE_OK);
+  EXPECT_TRUE(context_owner);
+  EXPECT_TRUE(stack_owner);
+  EXPECT_EQ(enter, GRCORE_OK);
+  EXPECT_EQ(leave, GRCORE_OK);
+  EXPECT_EQ(released, GRCORE_OK);
+  EXPECT_FALSE(grcore_context_is_owner(w.ctx));
+  ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
+  EXPECT_EQ(native(w), 0u);
+}
+
+TEST(Activation, ARecordEnteredWhereAResumableBoundaryWasLeftLeavesTheBoundaryCountAlone) {
+  // The slot's last occupant was a resumable boundary that had upgraded the
+  // native record under it. A fresh record there must carry neither flag: on
+  // leaving it would otherwise take one from the count of live resumable
+  // boundaries, and take the live upgrade of the native record below it.
+  StackWorld w;
+  GRCORE_ActivationRef host = enter_ok(w.stack, GRCORE_ACTIVATION_HOST);
+  GRCORE_ActivationRef inner = enter_ok(w.stack, GRCORE_ACTIVATION_NATIVE,
+      w.alpha, true);
+  GRCORE_BoundaryRef old_boundary = {0};
+  ASSERT_EQ(grcore_boundary_enter(w.stack, w.alpha, w.beta, 0x11, true,
+                &old_boundary),
+      GRCORE_OK);
+  ASSERT_EQ(grcore_boundary_leave(w.stack, old_boundary), GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, inner), GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, host), GRCORE_OK);
+  ASSERT_EQ(w.ctx->resumable_boundaries, 0u);
+
+  // Slot 2 last held that boundary. Now a live upgrade under a fresh record.
+  GRCORE_ActivationRef native_rec = enter_ok(
+      w.stack, GRCORE_ACTIVATION_NATIVE, w.alpha, true);
+  GRCORE_BoundaryRef live = {0};
+  ASSERT_EQ(grcore_boundary_enter(w.stack, w.alpha, w.beta, 0x22, true, &live),
+      GRCORE_OK);
+  const uint64_t count = w.ctx->resumable_boundaries;
+  ASSERT_EQ(count, 2u); // the boundary and the native record it upgraded
+  GRCORE_ActivationRef fresh = enter_ok(w.stack, GRCORE_ACTIVATION_JIT, w.alpha);
+  ASSERT_EQ(grcore_activation_leave(w.stack, fresh), GRCORE_OK);
+  EXPECT_EQ(w.ctx->resumable_boundaries, count);
+  EXPECT_TRUE(w.stack->activations[0].boundary_resumable);
+  ASSERT_EQ(grcore_boundary_leave(w.stack, live), GRCORE_OK);
+  EXPECT_EQ(w.ctx->resumable_boundaries, 0u);
+  ASSERT_EQ(grcore_activation_leave(w.stack, native_rec), GRCORE_OK);
+}
+
+int main(int argc, char ** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

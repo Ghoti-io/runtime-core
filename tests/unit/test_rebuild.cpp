@@ -404,6 +404,23 @@ TEST(ChainRebuild, ARebuiltJitRecordMayBeLeftWithItsGuestFramesStillOnTheStack) 
   grcore_unwind_all(w.stack, nullptr);
 }
 
+TEST(ChainRebuild, ARecordEnteredWhereARebuiltOneWasLeftKeepsTheStrictRule) {
+  // The rebuilt record's slot is reused by the next entry: the new record has
+  // not been rebuilt, so frames pushed inside it must be popped before it is
+  // left, exactly as for any record.
+  RW w;
+  Chain c(w, 5);
+  ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, c.rec), GRCORE_OK);
+  GRCORE_ActivationRef fresh = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  GRCORE_FrameRef f;
+  ASSERT_EQ(grcore_stack_push(w.stack, w.engine, 1, &f), GRCORE_OK);
+  EXPECT_EQ(grcore_activation_leave(w.stack, fresh), GRCORE_ERR_INVALID);
+  ASSERT_EQ(grcore_stack_pop(w.stack), GRCORE_OK);
+  EXPECT_EQ(grcore_activation_leave(w.stack, fresh), GRCORE_OK);
+  grcore_unwind_all(w.stack, nullptr);
+}
+
 TEST(ChainRebuild, ARebuiltRecordStillRefusesToBeLeftWithFewerFramesThanItBeganWith) {
   RW w;
   Chain c(w, 3);

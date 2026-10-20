@@ -1,6 +1,6 @@
 # Fixture for the gate self-test; not part of the library.
 TEST_GATES ?= check-symbols check-aliasing check-stamps check-fp-contract check-labels \
-	check-direction check-edges check-gates check-version check-wiring check-hook
+	check-direction check-edges check-gates check-version check-wiring check-hook check-tls
 
 test: all
 	@echo test
@@ -42,3 +42,6 @@ check-wiring:
 
 check-hook:
 	@tools/check-hook.sh .githooks/commit-msg
+
+check-tls:
+	@tools/check-tls.sh $(APP_DIR)/$(TARGET)

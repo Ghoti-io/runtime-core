@@ -420,6 +420,22 @@ void grcore_registry_release_retired(GRCORE_Stack * stack) {
   }
 }
 
+bool grcore_registry_counts_agree(const GRCORE_Stack * stack) {
+  const GRCORE_CodeRegistry * r = stack->registry;
+  if (r == NULL) {
+    return true;
+  }
+  size_t flagged = 0;
+  for (size_t i = 0; i < r->count; i++) {
+    flagged += r->entries[i].retired ? 1 : 0;
+  }
+  size_t nodes = 0;
+  for (const RetireNode * n = r->retired; n != NULL; n = n->next) {
+    nodes++;
+  }
+  return flagged == r->retired_entries && nodes == r->retired_nodes;
+}
+
 void grcore_registry_destroy(GRCORE_Stack * stack) {
   GRCORE_CodeRegistry * r = stack->registry;
   if (r == NULL) {

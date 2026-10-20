@@ -25,16 +25,17 @@
  *
  * Every library ships one from its first commit, so that "performant" is a
  * claim with a way to check it. Besides the calibration case it holds the
- * eighteen cases of the runtime, seventeen operations and one validation:
+ * nineteen cases of the runtime, eighteen operations and one validation:
  * creating and destroying a context, a counting
  * malloc/free pair, a keyed slot lookup, the poll's fast path, its slow path
  * through four handlers, a post to a port, a push and pop of a guest frame,
  * the engine-aware poll's fast path, a walk of sixteen frames at a pause, an
  * activation record entered and left (a native one, and a JIT one over a
- * registry of compiled code), a fuel scope opened, charged and closed,
+ * registry of compiled code, with and without a range retired every 64),
+ * a fuel scope opened, charged and closed,
  * the enumeration of the roots of sixteen frames, a snapshot taken and
  * restored, a profiler sample at depth one and at depth thirty-two, and (the
- * eighteenth) the validation of two code-metadata tables.
+ * nineteenth) the validation of two code-metadata tables.
  *
  * The calibration case is a fixed amount of integer work that touches no
  * library code, run the same way every real case will be, so a figure from a
@@ -534,6 +535,61 @@ static uint64_t activation_jit_run(uint64_t iterations) {
   return sink;
 }
 
+/* The same, with a range retired every 64 pairs: unregistered inside the JIT
+ * record, so the leave releases it and compacts the registry, and registered
+ * again after it. The case the early return in the release does not take, so
+ * its cost is measured beside the common one. */
+#define BENCH_RETIRE_EVERY 64
+static uint64_t activation_jit_retire_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK ||
+      grcore_context_create(group, NULL, &context) != GRCORE_OK ||
+      grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK) {
+    setup_failed("setup");
+  }
+  static const GRCORE_CodeMeta meta = {GRCORE_CODEMETA_FORMAT_VERSION, 0,
+      sizeof bench_jit_bytes[0], 0, NULL};
+  GRCORE_Code * codes[BENCH_JIT_RANGES];
+  for (size_t k = 0; k < BENCH_JIT_RANGES; k++) {
+    /* The bench keeps its own reference, so a range can be registered again
+     * after the registry has released its one. */
+    if (grcore_code_create(NULL, NULL, bench_code_release, &codes[k]) != GRCORE_OK ||
+        grcore_code_register(context, engine, codes[k],
+            (uintptr_t)bench_jit_bytes[k], sizeof bench_jit_bytes[k],
+            &meta) != GRCORE_OK) {
+      setup_failed("code");
+    }
+  }
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRCORE_ActivationRef ref;
+    const bool retire = i % BENCH_RETIRE_EVERY == 0;
+    const size_t k = (size_t)(i / BENCH_RETIRE_EVERY) % BENCH_JIT_RANGES;
+    if (grcore_activation_enter(stack, GRCORE_ACTIVATION_JIT, engine, false,
+            NULL, &ref) != GRCORE_OK ||
+        (retire &&
+            grcore_code_unregister(context, (uintptr_t)bench_jit_bytes[k]) !=
+                GRCORE_OK) ||
+        grcore_activation_leave(stack, ref) != GRCORE_OK ||
+        (retire &&
+            grcore_code_register(context, engine, codes[k],
+                (uintptr_t)bench_jit_bytes[k], sizeof bench_jit_bytes[k],
+                &meta) != GRCORE_OK)) {
+      setup_failed("activation");
+    }
+    sink += ref.id;
+  }
+  grcore_context_destroy(context);
+  for (size_t k = 0; k < BENCH_JIT_RANGES; k++) {
+    grcore_code_release(codes[k]);
+  }
+  grcore_group_destroy(group);
+  return sink;
+}
+
 /* A budget scope opened, charged once and closed: the price of a template
  * call's boundary on the fuel path. */
 static uint64_t fuel_scope_run(uint64_t iterations) {
@@ -821,6 +877,7 @@ static const Case cases[] = {
     {"frame-walk", frame_walk_run, 20u * 1000u * 1000u, 10000u},
     {"activation", activation_pair_run, 50u * 1000u * 1000u, 100000u},
     {"activation-jit", activation_jit_run, 50u * 1000u * 1000u, 100000u},
+    {"activation-jit-retire", activation_jit_retire_run, 20u * 1000u * 1000u, 100000u},
     {"fuel-scope", fuel_scope_run, 50u * 1000u * 1000u, 100000u},
     {"roots-16", roots_run, 50u * 1000u * 1000u, 10000u},
     {"snapshot-take", snapshot_take_run, 1u * 1000u * 1000u, 1000u},

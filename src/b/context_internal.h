@@ -178,24 +178,20 @@ uintptr_t grcore_thread_id(void);
 
 /*
  * The calling thread's id, or zero for a thread that has not been given one
- * yet. On ELF it uses the initial-exec TLS model: the owner check reads it on
- * every guarded call (several times in each call of compiled code), and the
- * general-dynamic model a shared library gets by default costs a call of
- * `__tls_get_addr` (about twelve instructions) on each read where this costs
- * one load. The price is eight bytes of the static TLS block, which a
- * `dlopen` of the library draws from glibc's surplus. design.md, "A cheaper
+ * yet. The owner check reads it on every guarded call, several times in each
+ * call of compiled code. It keeps the default TLS model, which a library
+ * loaded by `dlopen` must have; on x86-64 and i386 the library is compiled
+ * with TLS descriptors (`-mtls-dialect=gnu2`, the Makefile), which aarch64
+ * GCC uses by default, so a read in a library the loader placed in static TLS
+ * costs a call of a two-instruction resolver instead of `__tls_get_addr`.
+ * `make check-tls` holds the built library to that. design.md, "A cheaper
  * activation record", has the measurement and the alternatives.
  */
-#if defined(__ELF__) && defined(__GNUC__)
-#define GRCORE_THREAD_SELF_MODEL __attribute__((tls_model("initial-exec")))
-#else
-#define GRCORE_THREAD_SELF_MODEL
-#endif
 #ifdef __cplusplus
 /* The unit tests include this header from C++, where the keyword differs. */
-extern GRCORE_THREAD_SELF_MODEL thread_local uintptr_t grcore_thread_self;
+extern thread_local uintptr_t grcore_thread_self;
 #else
-extern GRCORE_THREAD_SELF_MODEL _Thread_local uintptr_t grcore_thread_self;
+extern _Thread_local uintptr_t grcore_thread_self;
 #endif
 
 /**

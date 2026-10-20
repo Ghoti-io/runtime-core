@@ -40,3 +40,6 @@ check-wiring:
 
 check-hook:
 	@tools/check-hook.sh .githooks/commit-msg
+
+check-tls:
+	@tools/check-tls.sh $(APP_DIR)/$(TARGET)

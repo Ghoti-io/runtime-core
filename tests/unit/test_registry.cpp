@@ -9,6 +9,7 @@
  */
 
 #include "test_helpers.h"
+#include "../../src/a/guest_internal.h"
 #include <ghoti.io/runtime-core/a/deopt.h>
 
 #include <algorithm>
@@ -502,6 +503,38 @@ TEST(EntrySlot, ReplacingCodeRetiresTheOldReferenceAndTakesANewOne) {
 }
 
 /* ---- Code lifetime ------------------------------------------------------ */
+
+TEST(Retire, TheRetiredCountersAgreeWithWhatIsRetiredAtEveryStep) {
+  // The release returns at once when both counters are zero, so every path
+  // that flags an entry, parks a slot's reference or releases them must keep
+  // the counters exact: checked after each step of ranges and slots retired
+  // under a JIT record, released, registered again and retired once more.
+  RWorld w;
+  HandCode other;
+  ASSERT_EQ(w.code.add_to(w.ctx, w.alpha), GRCORE_OK);
+  ASSERT_EQ(other.add_to(w.ctx, w.alpha), GRCORE_OK);
+  GRCORE_EntrySlot * s = nullptr;
+  ASSERT_EQ(grcore_entry_slot_create(w.ctx, &s), GRCORE_OK);
+  ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, w.code.at(0)), GRCORE_OK);
+  EXPECT_TRUE(grcore_registry_counts_agree(w.stack));
+  for (int round = 0; round < 3; round++) {
+    GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+    ASSERT_EQ(grcore_code_unregister(w.ctx, other.start()), GRCORE_OK);
+    EXPECT_TRUE(grcore_registry_counts_agree(w.stack)) << round;
+    ASSERT_EQ(grcore_entry_slot_clear(w.ctx, s), GRCORE_OK);
+    EXPECT_TRUE(grcore_registry_counts_agree(w.stack)) << round;
+    EXPECT_EQ(grcore_code_retired_count(w.ctx), 2u) << round;
+    ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+    EXPECT_TRUE(grcore_registry_counts_agree(w.stack)) << round;
+    EXPECT_EQ(grcore_code_retired_count(w.ctx), 0u) << round;
+    ASSERT_EQ(grcore_code_register(w.ctx, w.alpha, other.code, other.start(),
+                  other.size(), &other.meta),
+        GRCORE_OK);
+    ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, w.code.at(0)),
+        GRCORE_OK);
+    EXPECT_TRUE(grcore_registry_counts_agree(w.stack)) << round;
+  }
+}
 
 TEST(Retire, ASlotClearedUnderALiveJitRecordIsReleasedWhenTheLastOneLeavesAndNotBefore) {
   RWorld w;

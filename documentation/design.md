@@ -567,88 +567,143 @@ than the compiled body saved. What the record guarantees is unchanged (the
 checks above, the order of the refusals, the native depth, the walk cell, the
 release of retired code); four things it did on the way were not needed:
 
-- *The owner check was a call chain ending in `__tls_get_addr`.* The calling
-  thread's id is now a file-scope `_Thread_local` (`grcore_thread_self`) read
-  by an inline `grcore_context_owned_inline` in `context_internal.h`, which
-  `grcore_stack_owned` and `grcore_context_is_owner` share, and on ELF it has
-  the initial-exec TLS model: one load from the thread pointer where the
-  general-dynamic model of a shared library calls the resolver (about twelve
-  instructions, more than twenty with the calls around it). Every guarded
-  stack call makes this check, so it is paid many times in each call of
-  compiled code, not twice. The check no longer gives a thread its id: a
-  thread with none (zero) owns nothing, because a released context's owner is
-  zero, and every owner was set from an id that was given out. Its test
-  (`Activation.AThreadThatHasNeverAskedForAnIdOwnsNoReleasedContext`) is a
-  thread whose first call into the core is an entry into a released context.
+- *The owner check was a chain of calls ending in `__tls_get_addr`.* The
+  calling thread's id is now a file-scope `_Thread_local`
+  (`grcore_thread_self`) read by an inline `grcore_context_owned_inline` in
+  `context_internal.h`, which `grcore_stack_owned` and
+  `grcore_context_is_owner` share. Every guarded stack call makes this check,
+  so it is paid many times in each call of compiled code, not twice. The
+  check no longer gives a thread its id: a thread with none (zero) owns
+  nothing, because a released context's owner is zero and every owner was set
+  from an id that was given out; and the counter skips zero when it wraps (a
+  32-bit build after 2^32 threads, which no test can reach), so zero is never
+  an id. The variable keeps the default TLS model, which a library that may be
+  loaded by `dlopen` must keep, and is compiled with TLS descriptors (below).
 - *The array was "reserved" by a call on every entry.* The test that it is
   full is made inline, and the reserve is called only to grow it.
 - *The native depth went through `grcore_context_enter_depth` and its argument
   checks.* The step itself (`grcore_context_depth_step_in` and `_out`, static
   inline in `context_internal.h`) is what both the record and the public call
-  use, so the limit is decided in one place.
+  use, so the limit is decided in one place. The limit is still read through
+  `grcore_options_get_native_depth`, out of line, because the options are B's
+  opaque object: measured at 4 instructions a call in the getter (and a call
+  and return), left as it is. The nesting count is still the public
+  `grcore_context_nested_enter` and `_leave`: only a nested record (a
+  re-entry, a nested interpreter or native record) calls them, and a JIT
+  record from the interpreter is not one. The leave's result is ignored, as
+  before: it refuses only a non-owner (every caller of the record's drop
+  checked ownership) or a count of zero (this record counted one).
 - *Leaving the last JIT record compacted the code registry every time.*
   `grcore_registry_release_retired` walked every registered range even with
   nothing retired, so the cost of every call grew with the number of compiled
-  functions. It now returns at once when nothing is retired
-  (`retired_entries` counts exactly the flagged entries). The record is also
-  read in place on the way out rather than copied, and filled on the way in by
-  one compound literal, so a member not named is zero, whatever the slot held
-  before (`Activation.ARecordEnteredWhereAnotherWasLeftStartsWithNothingOfIt`).
+  functions. It now returns at once when nothing is retired. That trusts the
+  counters `retired_entries` and `retired_nodes`, so the Registry tests check
+  them against the flagged entries and the list after every step
+  (`grcore_registry_counts_agree`, a walk for the tests only). The record is
+  also read in place on the way out rather than copied, and filled on the way
+  in by one compound literal, so a member not named is zero, whatever the slot
+  held before: not `rebuilt` (whose leave would otherwise accept frames left
+  on the stack), and no boundary flag (whose leave would otherwise take a
+  live resumable boundary's count, or a native record's upgrade).
 
-Each was seen to fail on a planted defect, by hand, with the tree restored and
-the test passing again afterwards: the owner check without its zero test (the
-never-asked thread is let in), the release's early return blind to retired
-ranges and, separately, to retired slot references (the two `Retire` and
-`Registry` tests that leave a JIT record with only one of them pending), the
-array grown one record late (`ManyRecordsGrowTheArrayAndKeepTheirContents`
-crashes), a new record that keeps the slot's old compiled frame, the shared
-depth step admitting one past its limit, and a leave that keeps its native
-depth.
+**The thread-local and `dlopen`.** A first version gave the id the
+initial-exec model, which costs one load. That was wrong for this library: an
+initial-exec object claims part of the static TLS block, a `dlopen` of it draws
+on glibc's small surplus and fails ("cannot allocate memory in static TLS
+block") once that is spent, and musl, bionic and the BSDs have less or none;
+hosts load engines as plugins, and defiant-core loads modules with
+`gcu_library_open`. What it uses instead is the default (general-dynamic)
+model compiled with TLS descriptors: `-mtls-dialect=gnu2` on x86-64 and i386
+(both have the dialect), and aarch64 GCC's own default. A read is then an
+indirect call of the descriptor's resolver: for a library the loader placed
+in static TLS (every library loaded at startup, and a `dlopen`ed one when
+surplus is left), `_dl_tlsdesc_return`, two instructions; for one it could
+not, the dynamic resolver, as slow as `__tls_get_addr` but correct. The other
+targets pay what their TLS costs and the check stays correct there: MinGW's
+`_Thread_local` is GCC's emutls, a call of `__emutls_get_address` with a
+lookup on each read (and this library is a DLL there, so a static TLS slot
+was never available); Mach-O's thread-locals go through a thunk the dynamic
+loader sets up (`tlv_get_addr`), a call of a few instructions once the
+thread's block exists, and are `dlopen`-safe by design. Two checks hold this:
+`make check-tls` (`tools/check-tls.sh`) reads the built library with
+`readelf` and fails on `STATIC_TLS` or an initial-exec relocation, and on
+x86-64, i386 and aarch64 on a thread-local reached without descriptors;
+`check-gates` builds a descriptor control and an initial-exec, a traditional
+dialect and a TLS-free object to show it fails on each. And `make
+check-dlopen` runs a probe that is not linked against the library: it
+`dlopen`s it and, through `dlsym`, enters and leaves records on its own thread
+and on a new one (which must also be refused the first thread's stack); then,
+with the library closed, it `dlopen`s a small module linked against it (the
+way a host loads an engine) and has the module do the same; and it runs again
+with `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=0`, so the id is reached
+through the dynamic resolver.
 
-Measured by callgrind (instructions, deterministic, host GCC 14.2 `-O2`, the
-bench's `--smoke` run of 100,000 pairs, `--toggle-collect` on the case;
-runtime-core's bench links the library statically, so its TLS was already one
-load there and these figures do not include the TLS saving):
+Each piece was seen to fail on a planted defect, by hand, with the tree
+restored and the test passing again afterwards: the owner check without its
+zero test (`Activation.AThreadThatHasNeverAskedForAnIdOwnsNoReleasedContext`
+lets the never-asked thread in, and
+`Activation.AThreadWhoseOnlyCallIsAnOwnerQueryIsNotTheOwner` hears yes); the
+release's early return blind to retired ranges, and separately to retired
+slot references (`Registry.SharedRegistrationRetiresOnlyAfterLastReleaseUnderJit`,
+`Retire.ASlotClearedUnderALiveJitRecordIsReleasedWhenTheLastOneLeavesAndNotBefore`);
+a range retired without being counted
+(`Retire.TheRetiredCountersAgreeWithWhatIsRetiredAtEveryStep`); the array
+grown one record late (`ManyRecordsGrowTheArrayAndKeepTheirContents`
+crashes); a new record that keeps the slot's compiled frame
+(`ARecordEnteredWhereAnotherWasLeftStartsWithNothingOfIt`), its `rebuilt`
+flag (`ChainRebuild.ARecordEnteredWhereARebuiltOneWasLeftKeepsTheStrictRule`)
+or its boundary flags
+(`ARecordEnteredWhereAResumableBoundaryWasLeftLeavesTheBoundaryCountAlone`);
+the shared depth step admitting one past its limit; a leave that keeps its
+native depth; and, for `check-tls`, the id declared initial-exec and the
+`-mtls-dialect=gnu2` line removed from the Makefile. The positive side of the
+zero test is `Activation.AFreshThreadThatAcquiresAReleasedContextOwnsItAndMayEnter`.
 
-| Case | Before (`170daf8`) | After | |
-| --- | --- | --- | --- |
-| `activation` (NATIVE, a C segment) | 352 | 248 | -30% |
-| `activation-jit` (JIT, no segment, eight ranges registered) | 618 | 274 | -56% |
+Measured by callgrind (instructions, deterministic, host Debian GCC 14.2
+`-O2`, not the gcc16 image, whose figures belong to story 5's round): the
+bench's `--smoke` run of 100,000 pairs, `--toggle-collect` on the case.
+runtime-core's bench links the library statically, where the linker relaxes
+any TLS access to one load, so these figures show the record and not the TLS
+model:
 
-`activation-jit` is the case an engine's entry to compiled code is; the
-eight registered ranges are what made its old figure larger than
-`activation`'s, through the compaction.
-
-Through the shared library, where the TLS saving shows, lang-tang `5e43ae1`'s
-bench rows (`--smoke --only <row>`, callgrind with `--toggle-collect` on the
-case function, instructions per template call, setup included) went from
-`170daf8` to this change as follows; its entry to compiled code paid 231 and
-220 for the record before and 134 and 129 after, `__tls_get_addr` went from
-about 240 instructions a compiled call to none, and the interpreted rows gain
-too because every guarded call of the stack made the same owner check:
-
-| lang-tang row | Before | After |
+| Case (host GCC 14.2) | Before (`170daf8`) | After (this commit) |
 | --- | --- | --- |
-| steady-template-interpreted-warm-call | 7,746 | 7,223 |
-| steady-template-compiled-warm-call | 8,367 | 7,749 |
-| steady-template-rows-interpreted-per-row | 27,571 | 26,054 |
-| steady-template-rows-compiled-per-row | 28,215 | 26,988 |
+| `activation` (NATIVE, a C segment) | 352 | 256 |
+| `activation-jit` (JIT, no segment, eight ranges registered) | 618 | 282 |
+| `activation-jit-retire` (the same, a range retired every 64 pairs) | 633 | 301 |
 
-Rejected: *a separate entry for JIT records* (`grcore_activation_enter_jit`,
-taking no kind, segment or nesting), a public API change for a saving the
-general entry gets by making its common steps cheap; *caching the owner in the
-stack* (the stack is reachable from any thread, and the check is what refuses
-the wrong one); *the thread pointer as the thread's id* (a load, and no TLS at
-all, but a thread pointer is reused after its thread ends, so a context owned
-by a dead thread would pass the check from a new one: ids are never reused for
-exactly that reason); and *TLS descriptors* (`-mtls-dialect=gnu2`, as cheap
-for a library loaded at startup and with no static-TLS cost for one loaded by
-`dlopen`, but a compiler flag for the whole library and for x86-64 alone,
-where the attribute is one declaration). The price of initial-exec is eight
-bytes of the static TLS block: a `dlopen` of the library takes them from
-glibc's surplus, which a process that has exhausted it refuses with "cannot
-allocate memory in static TLS block". Nothing in the suite loads runtime-core
-with `dlopen` today; a host that must is the case for moving to descriptors.
+`activation-jit` is the case an engine's entry to compiled code is; the eight
+registered ranges are what made its old figure larger than `activation`'s,
+through the compaction. `activation-jit-retire` takes the release's slow path
+one pair in 64 (the unregister and register again are inside its figure).
+
+Through the shared library, where the TLS model shows: lang-tang `5e43ae1`'s
+bench rows (`--smoke --only <row>`, `--smc-check=all-non-file`,
+`--toggle-collect` on the case function, instructions per template call,
+setup included). The middle column is the initial-exec version (`c1bd859`),
+kept to show what the descriptors cost against it:
+
+| lang-tang row (host GCC 14.2) | Before (`170daf8`) | `c1bd859` (initial-exec, withdrawn) | After (this commit, descriptors) |
+| --- | --- | --- | --- |
+| steady-template-interpreted-warm-call | 7,746 | 7,223 | 7,317 |
+| steady-template-compiled-warm-call | 8,367 | 7,749 | 7,845 |
+| steady-template-rows-interpreted-per-row | 27,571 | 26,054 | 26,394 |
+| steady-template-rows-compiled-per-row | 28,215 | 26,988 | 27,286 |
+
+In the compiled warm row the entry to compiled code paid 231 and 220 for the
+record before, and 140 and 135 after; `__tls_get_addr` (about 243 a call
+across every owner check) is replaced by `_dl_tlsdesc_return` (two
+instructions, about 44 a call with its call). The interpreted rows gain too,
+because every guarded call of the stack makes the same owner check.
+
+Rejected: *initial-exec TLS* (above); *a separate entry for JIT records*
+(`grcore_activation_enter_jit`, taking no kind, segment or nesting), a public
+API change for a saving the general entry gets by making its common steps
+cheap; *caching the owner in the stack* (the stack is reachable from any
+thread, and the check is what refuses the wrong one); and *the thread pointer
+as the thread's id* (a load, and no TLS at all, but a thread pointer is reused
+after its thread ends, so a context owned by a dead thread would pass the
+check from a new one: ids are never reused for exactly that reason).
 
 **The nesting count, and why it lives in B (AD-5).** An ordinary nested
 activation (a REENTRY always, an INTERPRETER when the caller says so) cannot pause to the
@@ -1578,7 +1633,7 @@ ten-thousandth of the guest's time.
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and eighteen real cases, seventeen operations and one whole validation,
+was taken on, and nineteen real cases, eighteen operations and one whole validation,
 `codemeta-validate`. The operations are: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
 poll's slow path through four handlers (one in each phase), a post to a port, a push
@@ -1586,11 +1641,12 @@ and pop of a guest frame, the engine-aware poll's fast path, a walk of
 sixteen frames at a pause (reported per frame read), an activation record
 entered and left (a NATIVE one with a C segment, and, as `activation-jit`, a
 JIT one with none over eight registered code ranges, which is what an engine's
-entry to compiled code is), a fuel scope opened, charged and closed, the enumeration of the
+entry to compiled code is, and `activation-jit-retire`, the same with a range
+retired every 64 pairs), a fuel scope opened, charged and closed, the enumeration of the
 roots of sixteen frames (reported per frame), a snapshot taken of a context
 holding one 8 KiB blob (and released), the restore of it, and one profiler sample
 at depth one and at depth thirty-two (a request posted, then the poll that takes
-it). `codemeta-validate` is the eighteenth: it validates a code-metadata
+it). `codemeta-validate` is the nineteenth: it validates a code-metadata
 table of 100 sites with 1,000 live slots and 1,000 derived pointers each, and
 one of 20,000 sites of 20,000 functions; its unit is one validation of both.
 
@@ -1615,6 +1671,10 @@ is the `stack-pushpop` and `activation` rows above.
 
 The cost of a rebuild that converts raw values (`grcore_compiled_rebuild` with floats live) has no case of its own here: it needs an engine descriptor with a conversion and compiled code at a site. What exists is lang-tang's figure for the whole of a compiled function's exit at a float return, measured in `lang-tang`'s `design.md` ("Floats, measured"): entering compiled code, the exit, the rebuild of the live raw values (two there, counted by `values_boxed`) and the interpreter finishing the instruction cost about 230 ns on every call, over the same function without the exit (EVO-X2, `return` of a float, calls 10 on at one loop iteration). The rebuild's share of that was not measured separately. No `rebuild-1` or `rebuild-8` case was added.
 
+`activation-jit` and `activation-jit-retire` were added on 2026-10-20 and have
+no time in this table, which is one run of 2026-10-05; their instruction counts,
+before and after the cheaper record, are in "A, part 2" above.
+
 | Case | Best of seven | Unit |
 | --- | --- | --- |
 | calibration | 1.73 ns | one xorshift step |
@@ -1628,7 +1688,6 @@ The cost of a rebuild that converts raw values (`grcore_compiled_rebuild` with f
 | stack-poll | 7.87 ns | the engine-aware poll's fast path |
 | frame-walk | 31.0 ns | one frame read, in a walk of sixteen at a pause |
 | activation | 27.2 ns | an activation record entered and left |
-| activation-jit | 20.1 ns | a JIT record entered and left over eight registered ranges (added 2026-10-20 with the cheaper record, runtime-core after `170daf8`, same machine, load average 4.4; not a figure of the 2026-10-05 run) |
 | fuel-scope | 51.5 ns | a fuel scope opened, charged and closed |
 | roots-16 | 12.9 ns | one frame, in an enumeration of the roots of sixteen |
 | snapshot-take | 318 ns | a snapshot of a context holding one 8 KiB blob, and its release |

@@ -34,6 +34,7 @@ REQUIRED = {
     "check-version": ["tools/check-version.sh"],
     "check-wiring": ["tools/check-wiring.py"],
     "check-hook": ["tools/check-hook.sh"],
+    "check-tls": ["tools/check-tls.sh"],
 }
 
 problems = []

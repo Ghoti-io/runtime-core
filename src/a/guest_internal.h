@@ -230,6 +230,11 @@ GRCORE_Result grcore_unwind_frames(
  *   Called when the last one leaves. */
 void grcore_registry_release_retired(GRCORE_Stack * stack);
 
+/** @brief Whether the registry's retired counters equal what it holds: the
+ *   entries flagged retired and the nodes on the retired list. The release's
+ *   early return trusts both, so the Registry tests check them (registry.c). */
+bool grcore_registry_counts_agree(const GRCORE_Stack * stack);
+
 /** @brief Releases everything the registry holds, retired or not, and frees
  *   it. For the context's destruction only. */
 void grcore_registry_destroy(GRCORE_Stack * stack);

@@ -167,7 +167,11 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
     (void)grcore_context_depth_step_out(context, GRCORE_DEPTH_NATIVE);
   }
   if (rec->nested) {
-    grcore_context_nested_leave(context);
+    /* It refuses only a non-owner or a count of zero. Every caller checked
+     * ownership, and this record counted one when it was entered, so a
+     * refusal here would be a defect of the count, not a case to handle. The
+     * old code ignored it too. */
+    (void)grcore_context_nested_leave(context);
   }
   if (rec->boundary_resumable && context->resumable_boundaries) {
     context->resumable_boundaries--;
