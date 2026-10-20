@@ -617,8 +617,22 @@ load there and these figures do not include the TLS saving):
 
 `activation-jit` is the case an engine's entry to compiled code is; the
 eight registered ranges are what made its old figure larger than
-`activation`'s, through the compaction. lang-tang's figures through the shared
-library are in its story's notes.
+`activation`'s, through the compaction.
+
+Through the shared library, where the TLS saving shows, lang-tang `5e43ae1`'s
+bench rows (`--smoke --only <row>`, callgrind with `--toggle-collect` on the
+case function, instructions per template call, setup included) went from
+`170daf8` to this change as follows; its entry to compiled code paid 231 and
+220 for the record before and 134 and 129 after, `__tls_get_addr` went from
+about 240 instructions a compiled call to none, and the interpreted rows gain
+too because every guarded call of the stack made the same owner check:
+
+| lang-tang row | Before | After |
+| --- | --- | --- |
+| steady-template-interpreted-warm-call | 7,746 | 7,223 |
+| steady-template-compiled-warm-call | 8,367 | 7,749 |
+| steady-template-rows-interpreted-per-row | 27,571 | 26,054 |
+| steady-template-rows-compiled-per-row | 28,215 | 26,988 |
 
 Rejected: *a separate entry for JIT records* (`grcore_activation_enter_jit`,
 taking no kind, segment or nesting), a public API change for a saving the
