@@ -666,7 +666,7 @@ runtime-core's bench links the library statically, where the linker relaxes
 any TLS access to one load, so these figures show the record and not the TLS
 model:
 
-| Case (host GCC 14.2) | Before (`170daf8`) | After (this commit) |
+| Case (host GCC 14.2) | Before (`170daf8`) | After (`5766df9`) |
 | --- | --- | --- |
 | `activation` (NATIVE, a C segment) | 352 | 256 |
 | `activation-jit` (JIT, no segment, eight ranges registered) | 618 | 282 |
@@ -683,7 +683,7 @@ bench rows (`--smoke --only <row>`, `--smc-check=all-non-file`,
 setup included). The middle column is the initial-exec version (`c1bd859`),
 kept to show what the descriptors cost against it:
 
-| lang-tang row (host GCC 14.2) | Before (`170daf8`) | `c1bd859` (initial-exec, withdrawn) | After (this commit, descriptors) |
+| lang-tang row (host GCC 14.2) | Before (`170daf8`) | `c1bd859` (initial-exec, withdrawn) | After (`5766df9`, descriptors) |
 | --- | --- | --- | --- |
 | steady-template-interpreted-warm-call | 7,746 | 7,223 | 7,317 |
 | steady-template-compiled-warm-call | 8,367 | 7,749 | 7,845 |
