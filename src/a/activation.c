@@ -79,17 +79,24 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   nested = nested || kind == GRCORE_ACTIVATION_REENTRY;
   GRCORE_Context * context = stack->context;
   /* Everything that can be refused comes first, and the native depth, which is
-   * given back if a later step fails, last of the refusable ones. */
-  void * grown;
-  GRCORE_Result r = grcore_guest_array_reserve(context, stack->activations,
-      &stack->activation_capacity, stack->activation_count,
-      sizeof *stack->activations, &grown);
-  if (r != GRCORE_OK) {
-    return r;
+   * given back if a later step fails, last of the refusable ones. The array is
+   * grown only when it is full, so an entry into an array with room (every
+   * entry but the few that grow it) makes no call for it. */
+  GRCORE_Result r;
+  if (stack->activation_count >= stack->activation_capacity) {
+    void * grown;
+    r = grcore_guest_array_reserve(context, stack->activations,
+        &stack->activation_capacity, stack->activation_count,
+        sizeof *stack->activations, &grown);
+    if (r != GRCORE_OK) {
+      return r;
+    }
+    stack->activations = grown;
   }
-  stack->activations = grown;
+  /* The same step grcore_context_enter_depth takes, without its argument
+   * checks: the context is the owner's and the kind is a constant. */
   if (enters_native_depth(kind)) {
-    r = grcore_context_enter_depth(context, GRCORE_DEPTH_NATIVE);
+    r = grcore_context_depth_step_in(context, GRCORE_DEPTH_NATIVE);
     if (r != GRCORE_OK) {
       return r;
     }
@@ -98,7 +105,7 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
     r = grcore_context_nested_enter(context);
     if (r != GRCORE_OK) {
       if (enters_native_depth(kind)) {
-        grcore_context_leave_depth(context, GRCORE_DEPTH_NATIVE);
+        (void)grcore_context_depth_step_out(context, GRCORE_DEPTH_NATIVE);
       }
       return r;
     }
@@ -115,25 +122,19 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
   /* What compiled code recorded belongs to the record that is innermost now,
    * and the one being entered starts with none (AD-28). */
   (void)grcore_activation_absorb_cell(stack);
+  /* Every member not named is zero: no compiled frame yet, not rebuilt, and
+   * no boundary state (grcore_boundary_enter sets that after this returns). */
   GRCORE_ActivationRecord * rec = &stack->activations[stack->activation_count++];
-  rec->id = ++stack->activation_serial;
-  rec->kind = kind;
-  rec->engine = engine;
-  rec->nested = nested;
-  rec->base_frames = stack->frame_count;
-  rec->lo = segment == NULL ? 0 : segment->lo;
-  rec->hi = segment == NULL ? 0 : segment->hi;
-  rec->frame_base = 0;
-  rec->return_address = 0;
-  rec->rebuilt = false;
-  rec->set_limit = set_limit;
-  rec->boundary = false;
-  rec->boundary_resumable = false;
-  rec->boundary_upgraded_native = false;
-  rec->boundary_caller = 0;
-  rec->boundary_instance = 0;
-  rec->foreign_exception_engine = 0;
-  rec->foreign_exception_identity = 0;
+  *rec = (GRCORE_ActivationRecord){
+      .id = ++stack->activation_serial,
+      .kind = kind,
+      .engine = engine,
+      .nested = nested,
+      .base_frames = stack->frame_count,
+      .lo = segment == NULL ? 0 : segment->lo,
+      .hi = segment == NULL ? 0 : segment->hi,
+      .set_limit = set_limit,
+  };
   if (kind == GRCORE_ACTIVATION_JIT) {
     stack->jit_live++;
   }
@@ -145,39 +146,46 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
   if (stack == NULL || stack->activation_count == 0) {
     return false;
   }
-  GRCORE_ActivationRecord rec = stack->activations[--stack->activation_count];
-  if (rec.set_limit) {
+  GRCORE_Context * context = stack->context;
+  /* Read in place: nothing below writes the array before the release of
+   * retired code, the last step, which is the only one that runs callbacks. */
+  const GRCORE_ActivationRecord * rec =
+      &stack->activations[--stack->activation_count];
+  const bool jit = rec->kind == GRCORE_ACTIVATION_JIT;
+  if (rec->set_limit) {
     /* The limit names the stack this re-entry measured from, which nobody is
      * running on once it is left (a later re-entry may be on another thread). */
-    stack->context->native_limit = 0;
+    context->native_limit = 0;
   }
-  if (rec.kind == GRCORE_ACTIVATION_JIT) {
+  if (jit) {
     /* Its compiled frames are gone, and so is anything compiled code recorded
      * for them: a later walk must not read frames that were left. */
-    stack->context->walk_cell[0] = 0;
-    stack->context->walk_cell[1] = 0;
+    context->walk_cell[0] = 0;
+    context->walk_cell[1] = 0;
   }
-  if (enters_native_depth(rec.kind)) {
-    grcore_context_leave_depth(stack->context, GRCORE_DEPTH_NATIVE);
+  if (enters_native_depth(rec->kind)) {
+    (void)grcore_context_depth_step_out(context, GRCORE_DEPTH_NATIVE);
   }
-  if (rec.nested) {
-    grcore_context_nested_leave(stack->context);
+  if (rec->nested) {
+    grcore_context_nested_leave(context);
   }
-  if(rec.boundary_resumable&&stack->context->resumable_boundaries)
-    stack->context->resumable_boundaries--;
-  if(rec.boundary_upgraded_native){
-    for(size_t i=stack->activation_count;i>0;i--){
-      GRCORE_ActivationRecord*native=&stack->activations[i-1];
-      if(native->kind==GRCORE_ACTIVATION_NATIVE&&native->nested&&
-          native->boundary_resumable){
-        native->boundary_resumable=false;
-        if(stack->context->resumable_boundaries)
-          stack->context->resumable_boundaries--;
+  if (rec->boundary_resumable && context->resumable_boundaries) {
+    context->resumable_boundaries--;
+  }
+  if (rec->boundary_upgraded_native) {
+    for (size_t i = stack->activation_count; i > 0; i--) {
+      GRCORE_ActivationRecord * native = &stack->activations[i - 1];
+      if (native->kind == GRCORE_ACTIVATION_NATIVE && native->nested &&
+          native->boundary_resumable) {
+        native->boundary_resumable = false;
+        if (context->resumable_boundaries) {
+          context->resumable_boundaries--;
+        }
         break;
       }
     }
   }
-  if (rec.kind == GRCORE_ACTIVATION_JIT && --stack->jit_live == 0) {
+  if (jit && --stack->jit_live == 0) {
     /* No compiled frame can be on the native stack now, so nothing can return
      * into retired code (AD-28). */
     grcore_registry_release_retired(stack);

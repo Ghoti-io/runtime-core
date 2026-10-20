@@ -383,7 +383,12 @@ GRCORE_Code * grcore_entry_slot_code(const GRCORE_EntrySlot * slot) {
 
 void grcore_registry_release_retired(GRCORE_Stack * stack) {
   GRCORE_CodeRegistry * r = stack->registry;
-  if (r == NULL || stack->jit_live != 0) {
+  /* Nothing retired is the common case, and it is called whenever the last JIT
+   * record is left (every call of compiled code from the interpreter): without
+   * this test the compaction below walked every registered range each time.
+   * `retired_entries` counts exactly the entries flagged retired. */
+  if (r == NULL || stack->jit_live != 0 ||
+      (r->retired == NULL && r->retired_entries == 0)) {
     return;
   }
   const GRCORE_Allocator * a = engine_allocator(stack->context);

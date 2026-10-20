@@ -413,6 +413,7 @@
 #define grcore_stack_slots GHOTIIO_RUNTIME_CORE(grcore_stack_slots)
 #define grcore_stack_top GHOTIIO_RUNTIME_CORE(grcore_stack_top)
 #define grcore_thread_id GHOTIIO_RUNTIME_CORE(grcore_thread_id)
+#define grcore_thread_self GHOTIIO_RUNTIME_CORE(grcore_thread_self)
 #define grcore_unwind_all GHOTIIO_RUNTIME_CORE(grcore_unwind_all)
 #define grcore_unwind_frames GHOTIIO_RUNTIME_CORE(grcore_unwind_frames)
 #define grcore_unwind_to_activation GHOTIIO_RUNTIME_CORE(grcore_unwind_to_activation)

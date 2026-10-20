@@ -25,15 +25,16 @@
  *
  * Every library ships one from its first commit, so that "performant" is a
  * claim with a way to check it. Besides the calibration case it holds the
- * seventeen cases of the runtime, sixteen operations and one validation:
+ * eighteen cases of the runtime, seventeen operations and one validation:
  * creating and destroying a context, a counting
  * malloc/free pair, a keyed slot lookup, the poll's fast path, its slow path
  * through four handlers, a post to a port, a push and pop of a guest frame,
  * the engine-aware poll's fast path, a walk of sixteen frames at a pause, an
- * activation record entered and left, a fuel scope opened, charged and closed,
+ * activation record entered and left (a native one, and a JIT one over a
+ * registry of compiled code), a fuel scope opened, charged and closed,
  * the enumeration of the roots of sixteen frames, a snapshot taken and
  * restored, a profiler sample at depth one and at depth thirty-two, and (the
- * seventeenth) the validation of two code-metadata tables.
+ * eighteenth) the validation of two code-metadata tables.
  *
  * The calibration case is a fixed amount of integer work that touches no
  * library code, run the same way every real case will be, so a figure from a
@@ -485,6 +486,54 @@ static uint64_t activation_pair_run(uint64_t iterations) {
   return sink;
 }
 
+/* A JIT record entered and left, as an engine enters compiled code from its
+ * interpreter on every call: no C segment, not nested, with eight compiled
+ * ranges registered and none retired, so leaving the last JIT record runs the
+ * release of retired code over a registry that has nothing to release. */
+#define BENCH_JIT_RANGES 8
+static unsigned char bench_jit_bytes[BENCH_JIT_RANGES][16];
+
+static void bench_code_release(void * payload) {
+  (void)payload;
+}
+
+static uint64_t activation_jit_run(uint64_t iterations) {
+  GRCORE_Group * group;
+  GRCORE_Context * context;
+  GRCORE_EngineId engine;
+  if (grcore_group_create(NULL, NULL, &group) != GRCORE_OK ||
+      grcore_context_create(group, NULL, &context) != GRCORE_OK ||
+      grcore_engine_register(context, &bench_engine, &engine) != GRCORE_OK) {
+    setup_failed("setup");
+  }
+  static const GRCORE_CodeMeta meta = {GRCORE_CODEMETA_FORMAT_VERSION, 0,
+      sizeof bench_jit_bytes[0], 0, NULL};
+  for (size_t k = 0; k < BENCH_JIT_RANGES; k++) {
+    GRCORE_Code * code;
+    if (grcore_code_create(NULL, NULL, bench_code_release, &code) != GRCORE_OK ||
+        grcore_code_register(context, engine, code,
+            (uintptr_t)bench_jit_bytes[k], sizeof bench_jit_bytes[k],
+            &meta) != GRCORE_OK) {
+      setup_failed("code");
+    }
+    grcore_code_release(code); /* the registry holds its own reference */
+  }
+  GRCORE_Stack * stack = grcore_context_stack(context);
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRCORE_ActivationRef ref;
+    if (grcore_activation_enter(stack, GRCORE_ACTIVATION_JIT, engine, false,
+            NULL, &ref) != GRCORE_OK ||
+        grcore_activation_leave(stack, ref) != GRCORE_OK) {
+      setup_failed("activation");
+    }
+    sink += ref.id;
+  }
+  grcore_context_destroy(context);
+  grcore_group_destroy(group);
+  return sink;
+}
+
 /* A budget scope opened, charged once and closed: the price of a template
  * call's boundary on the fuel path. */
 static uint64_t fuel_scope_run(uint64_t iterations) {
@@ -771,6 +820,7 @@ static const Case cases[] = {
     {"stack-poll", stack_poll_fast_run, 200u * 1000u * 1000u, 100000u},
     {"frame-walk", frame_walk_run, 20u * 1000u * 1000u, 10000u},
     {"activation", activation_pair_run, 50u * 1000u * 1000u, 100000u},
+    {"activation-jit", activation_jit_run, 50u * 1000u * 1000u, 100000u},
     {"fuel-scope", fuel_scope_run, 50u * 1000u * 1000u, 100000u},
     {"roots-16", roots_run, 50u * 1000u * 1000u, 10000u},
     {"snapshot-take", snapshot_take_run, 1u * 1000u * 1000u, 1000u},

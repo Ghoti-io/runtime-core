@@ -558,6 +558,84 @@ and no scope opened inside it is still open, so the two LIFO disciplines
 cannot cross. A record stays open across a pause, which is what lets a
 context paused inside nested scopes and activations migrate and resume.
 
+**A cheaper activation record (spec-template-compiled, story 4c).** Every
+call of compiled code from an interpreter enters and leaves a JIT record, so a
+short compiled function pays both on every call: lang-tang's template rows
+measured `grcore_activation_enter` at 231 instructions and
+`grcore_activation_leave` at 220 a call (callgrind, lang-tang `5e43ae1`), more
+than the compiled body saved. What the record guarantees is unchanged (the
+checks above, the order of the refusals, the native depth, the walk cell, the
+release of retired code); four things it did on the way were not needed:
+
+- *The owner check was a call chain ending in `__tls_get_addr`.* The calling
+  thread's id is now a file-scope `_Thread_local` (`grcore_thread_self`) read
+  by an inline `grcore_context_owned_inline` in `context_internal.h`, which
+  `grcore_stack_owned` and `grcore_context_is_owner` share, and on ELF it has
+  the initial-exec TLS model: one load from the thread pointer where the
+  general-dynamic model of a shared library calls the resolver (about twelve
+  instructions, more than twenty with the calls around it). Every guarded
+  stack call makes this check, so it is paid many times in each call of
+  compiled code, not twice. The check no longer gives a thread its id: a
+  thread with none (zero) owns nothing, because a released context's owner is
+  zero, and every owner was set from an id that was given out. Its test
+  (`Activation.AThreadThatHasNeverAskedForAnIdOwnsNoReleasedContext`) is a
+  thread whose first call into the core is an entry into a released context.
+- *The array was "reserved" by a call on every entry.* The test that it is
+  full is made inline, and the reserve is called only to grow it.
+- *The native depth went through `grcore_context_enter_depth` and its argument
+  checks.* The step itself (`grcore_context_depth_step_in` and `_out`, static
+  inline in `context_internal.h`) is what both the record and the public call
+  use, so the limit is decided in one place.
+- *Leaving the last JIT record compacted the code registry every time.*
+  `grcore_registry_release_retired` walked every registered range even with
+  nothing retired, so the cost of every call grew with the number of compiled
+  functions. It now returns at once when nothing is retired
+  (`retired_entries` counts exactly the flagged entries). The record is also
+  read in place on the way out rather than copied, and filled on the way in by
+  one compound literal, so a member not named is zero, whatever the slot held
+  before (`Activation.ARecordEnteredWhereAnotherWasLeftStartsWithNothingOfIt`).
+
+Each was seen to fail on a planted defect, by hand, with the tree restored and
+the test passing again afterwards: the owner check without its zero test (the
+never-asked thread is let in), the release's early return blind to retired
+ranges and, separately, to retired slot references (the two `Retire` and
+`Registry` tests that leave a JIT record with only one of them pending), the
+array grown one record late (`ManyRecordsGrowTheArrayAndKeepTheirContents`
+crashes), a new record that keeps the slot's old compiled frame, the shared
+depth step admitting one past its limit, and a leave that keeps its native
+depth.
+
+Measured by callgrind (instructions, deterministic, host GCC 14.2 `-O2`, the
+bench's `--smoke` run of 100,000 pairs, `--toggle-collect` on the case;
+runtime-core's bench links the library statically, so its TLS was already one
+load there and these figures do not include the TLS saving):
+
+| Case | Before (`170daf8`) | After | |
+| --- | --- | --- | --- |
+| `activation` (NATIVE, a C segment) | 352 | 248 | -30% |
+| `activation-jit` (JIT, no segment, eight ranges registered) | 618 | 274 | -56% |
+
+`activation-jit` is the case an engine's entry to compiled code is; the
+eight registered ranges are what made its old figure larger than
+`activation`'s, through the compaction. lang-tang's figures through the shared
+library are in its story's notes.
+
+Rejected: *a separate entry for JIT records* (`grcore_activation_enter_jit`,
+taking no kind, segment or nesting), a public API change for a saving the
+general entry gets by making its common steps cheap; *caching the owner in the
+stack* (the stack is reachable from any thread, and the check is what refuses
+the wrong one); *the thread pointer as the thread's id* (a load, and no TLS at
+all, but a thread pointer is reused after its thread ends, so a context owned
+by a dead thread would pass the check from a new one: ids are never reused for
+exactly that reason); and *TLS descriptors* (`-mtls-dialect=gnu2`, as cheap
+for a library loaded at startup and with no static-TLS cost for one loaded by
+`dlopen`, but a compiler flag for the whole library and for x86-64 alone,
+where the attribute is one declaration). The price of initial-exec is eight
+bytes of the static TLS block: a `dlopen` of the library takes them from
+glibc's surplus, which a process that has exhausted it refuses with "cannot
+allocate memory in static TLS block". Nothing in the suite loads runtime-core
+with `dlopen` today; a host that must is the case for moving to descriptors.
+
 **The nesting count, and why it lives in B (AD-5).** An ordinary nested
 activation (a REENTRY always, an INTERPRETER when the caller says so) cannot pause to the
 host, because there is a C frame of the host's, or of an opaque function's,
@@ -1486,17 +1564,19 @@ ten-thousandth of the guest's time.
 Every library ships a benchmark harness from its first commit (AD-26). This
 one holds a calibration case, fixed integer work that touches no library
 code, so that a figure from a real case can be read against the machine it
-was taken on, and seventeen real cases, sixteen operations and one whole validation,
+was taken on, and eighteen real cases, seventeen operations and one whole validation,
 `codemeta-validate`. The operations are: creating and destroying a context, a
 counting malloc/free pair, a keyed slot lookup, the poll's fast path, the
 poll's slow path through four handlers (one in each phase), a post to a port, a push
 and pop of a guest frame, the engine-aware poll's fast path, a walk of
 sixteen frames at a pause (reported per frame read), an activation record
-entered and left, a fuel scope opened, charged and closed, the enumeration of the
+entered and left (a NATIVE one with a C segment, and, as `activation-jit`, a
+JIT one with none over eight registered code ranges, which is what an engine's
+entry to compiled code is), a fuel scope opened, charged and closed, the enumeration of the
 roots of sixteen frames (reported per frame), a snapshot taken of a context
 holding one 8 KiB blob (and released), the restore of it, and one profiler sample
 at depth one and at depth thirty-two (a request posted, then the poll that takes
-it). `codemeta-validate` is the seventeenth: it validates a code-metadata
+it). `codemeta-validate` is the eighteenth: it validates a code-metadata
 table of 100 sites with 1,000 live slots and 1,000 derived pointers each, and
 one of 20,000 sites of 20,000 functions; its unit is one validation of both.
 
@@ -1534,6 +1614,7 @@ The cost of a rebuild that converts raw values (`grcore_compiled_rebuild` with f
 | stack-poll | 7.87 ns | the engine-aware poll's fast path |
 | frame-walk | 31.0 ns | one frame read, in a walk of sixteen at a pause |
 | activation | 27.2 ns | an activation record entered and left |
+| activation-jit | 20.1 ns | a JIT record entered and left over eight registered ranges (added 2026-10-20 with the cheaper record, runtime-core after `170daf8`, same machine, load average 4.4; not a figure of the 2026-10-05 run) |
 | fuel-scope | 51.5 ns | a fuel scope opened, charged and closed |
 | roots-16 | 12.9 ns | one frame, in an enumeration of the roots of sixteen |
 | snapshot-take | 318 ns | a snapshot of a context holding one 8 KiB blob, and its release |

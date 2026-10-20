@@ -175,23 +175,15 @@ GRCORE_Result grcore_context_enter_depth(
   if (context == NULL || (unsigned)kind > GRCORE_DEPTH_NATIVE) {
     return GRCORE_ERR_INVALID;
   }
-  uint64_t limit = kind == GRCORE_DEPTH_GUEST
-      ? grcore_options_get_guest_depth(context->options)
-      : grcore_options_get_native_depth(context->options);
-  if (context->depth[kind] >= limit) {
-    return GRCORE_ERR_LIMIT;
-  }
-  context->depth[kind]++;
-  return GRCORE_OK;
+  return grcore_context_depth_step_in(context, kind);
 }
 
 GRCORE_Result grcore_context_leave_depth(
     GRCORE_Context * context, GRCORE_DepthKind kind) {
   if (context == NULL || (unsigned)kind > GRCORE_DEPTH_NATIVE ||
-      context->depth[kind] == 0) {
+      !grcore_context_depth_step_out(context, kind)) {
     return GRCORE_ERR_INVALID;
   }
-  context->depth[kind]--;
   return GRCORE_OK;
 }
 

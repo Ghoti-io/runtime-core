@@ -58,7 +58,10 @@ static uint32_t tag_for(uint64_t offset) {
 }
 
 static bool owner_of(const GRCORE_Stack * stack) {
-  return stack != NULL && grcore_context_is_owner(stack->context);
+  /* The check every guarded stack call makes first, so it is the inline load
+   * and compare rather than a call of grcore_context_is_owner (the same
+   * predicate). A stack always has its context. */
+  return stack != NULL && grcore_context_owned_inline(stack->context);
 }
 
 bool grcore_stack_owned(const GRCORE_Stack * stack) {

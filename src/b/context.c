@@ -33,18 +33,18 @@
 #include <stdint.h>
 #include <string.h>
 
+GRCORE_THREAD_SELF_MODEL _Thread_local uintptr_t grcore_thread_self = 0;
+
 uintptr_t grcore_thread_id(void) {
   static uintptr_t next_id = 0;
-  static _Thread_local uintptr_t mine = 0;
-  if (mine == 0) {
-    mine = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
+  if (grcore_thread_self == 0) {
+    grcore_thread_self = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
   }
-  return mine;
+  return grcore_thread_self;
 }
 
 static bool owned_by_caller(const GRCORE_Context * context) {
-  return __atomic_load_n(&context->owner, __ATOMIC_ACQUIRE) ==
-      grcore_thread_id();
+  return grcore_context_owned_inline(context);
 }
 
 bool grcore_context_owned_by_caller(const GRCORE_Context * context) {

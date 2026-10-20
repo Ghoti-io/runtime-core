@@ -34,6 +34,7 @@
 
 #include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
+#include <ghoti.io/runtime-core/b/options.h>
 #include <ghoti.io/runtime-core/b/poll.h>
 #include <ghoti.io/runtime-core/b/request.h>
 #include <ghoti.io/runtime-core/b/roots.h>
@@ -175,8 +176,78 @@ struct GRCORE_Context {
  */
 uintptr_t grcore_thread_id(void);
 
+/*
+ * The calling thread's id, or zero for a thread that has not been given one
+ * yet. On ELF it uses the initial-exec TLS model: the owner check reads it on
+ * every guarded call (several times in each call of compiled code), and the
+ * general-dynamic model a shared library gets by default costs a call of
+ * `__tls_get_addr` (about twelve instructions) on each read where this costs
+ * one load. The price is eight bytes of the static TLS block, which a
+ * `dlopen` of the library draws from glibc's surplus. design.md, "A cheaper
+ * activation record", has the measurement and the alternatives.
+ */
+#if defined(__ELF__) && defined(__GNUC__)
+#define GRCORE_THREAD_SELF_MODEL __attribute__((tls_model("initial-exec")))
+#else
+#define GRCORE_THREAD_SELF_MODEL
+#endif
+#ifdef __cplusplus
+/* The unit tests include this header from C++, where the keyword differs. */
+extern GRCORE_THREAD_SELF_MODEL thread_local uintptr_t grcore_thread_self;
+#else
+extern GRCORE_THREAD_SELF_MODEL _Thread_local uintptr_t grcore_thread_self;
+#endif
+
+/**
+ * @brief Whether the calling thread owns the context (acquire load), without
+ *   a call.
+ *
+ * A thread with no id yet owns nothing: every owner a context has held was a
+ * thread's id, given out once and never zero, and a released context's owner
+ * is zero, which must not match a thread that has never asked for an id. So
+ * the comparison is against the id as it is, and no id is assigned here.
+ */
+static inline bool grcore_context_owned_inline(const GRCORE_Context * context) {
+  uintptr_t self = grcore_thread_self;
+  return self != 0 &&
+      __atomic_load_n(&context->owner, __ATOMIC_ACQUIRE) == self;
+}
+
 /** @brief Whether the calling thread owns the context (acquire load). */
 bool grcore_context_owned_by_caller(const GRCORE_Context * context);
+
+/**
+ * @brief One step into a depth budget, for a context and kind the caller has
+ *   already validated: ::GRCORE_ERR_LIMIT at the limit, else one is counted.
+ *
+ * ::grcore_context_enter_depth is this behind its argument checks, and an
+ * activation record's entry calls it directly, so the two cannot disagree on
+ * the limit.
+ */
+static inline GRCORE_Result grcore_context_depth_step_in(
+    GRCORE_Context * context, GRCORE_DepthKind kind) {
+  uint64_t limit = kind == GRCORE_DEPTH_GUEST
+      ? grcore_options_get_guest_depth(context->options)
+      : grcore_options_get_native_depth(context->options);
+  if (context->depth[kind] >= limit) {
+    return GRCORE_ERR_LIMIT;
+  }
+  context->depth[kind]++;
+  return GRCORE_OK;
+}
+
+/**
+ * @brief One step out of a depth budget, for a validated context and kind:
+ *   false, with nothing changed, when the count is already zero.
+ */
+static inline bool grcore_context_depth_step_out(
+    GRCORE_Context * context, GRCORE_DepthKind kind) {
+  if (context->depth[kind] == 0) {
+    return false;
+  }
+  context->depth[kind]--;
+  return true;
+}
 
 /**
  * @brief Recomputes the derived fuel and memory requests from the budgets, so

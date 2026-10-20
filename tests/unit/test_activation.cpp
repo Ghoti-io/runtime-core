@@ -399,3 +399,74 @@ int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+TEST(Activation, AThreadThatHasNeverAskedForAnIdOwnsNoReleasedContext) {
+  // A released context's owner is zero, and the owner check reads the calling
+  // thread's id without giving it one, so a thread whose first call into the
+  // core is this one must still be refused: no id is not the id zero.
+  StackWorld w;
+  ASSERT_EQ(grcore_context_release(w.ctx), GRCORE_OK);
+  GRCORE_Result enter = GRCORE_OK, leave = GRCORE_OK;
+  bool owner = true;
+  GRCORE_ActivationRef out = {0};
+  std::thread([&] {
+    enter = grcore_activation_enter(
+        w.stack, GRCORE_ACTIVATION_JIT, w.alpha, false, nullptr, &out);
+    leave = grcore_activation_leave(w.stack, GRCORE_ActivationRef{1});
+    owner = grcore_context_is_owner(w.ctx);
+  }).join();
+  EXPECT_EQ(enter, GRCORE_ERR_INVALID);
+  EXPECT_EQ(leave, GRCORE_ERR_INVALID);
+  EXPECT_FALSE(owner);
+  EXPECT_EQ(out.id, 0u);
+  ASSERT_EQ(grcore_context_acquire(w.ctx), GRCORE_OK);
+  EXPECT_EQ(grcore_activation_count(w.stack), 0u);
+  EXPECT_EQ(native(w), 0u);
+}
+
+TEST(Activation, ARecordEnteredWhereAnotherWasLeftStartsWithNothingOfIt) {
+  // The array slot a record is entered into held the last record left there:
+  // its compiled frame, its segment, its nesting and its boundary state must
+  // not carry over to the new one.
+  StackWorld w;
+  GRCORE_ActivationRef jit = enter_ok(w.stack, GRCORE_ACTIVATION_JIT, w.alpha);
+  ASSERT_EQ(grcore_activation_set_compiled(w.stack, jit, 0x5000, 0x6000),
+      GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  GRCORE_BoundaryRef boundary = {0};
+  ASSERT_EQ(grcore_boundary_enter(w.stack, w.alpha, w.beta, 0x77, true,
+                &boundary),
+      GRCORE_OK);
+  ASSERT_EQ(grcore_boundary_set_foreign_exception(w.stack, boundary, w.alpha,
+                9),
+      GRCORE_OK);
+  ASSERT_EQ(grcore_boundary_leave(w.stack, boundary), GRCORE_OK);
+  GRCORE_CSegment seg = {0x1000, 0x2000};
+  GRCORE_ActivationRef native_rec = enter_ok(
+      w.stack, GRCORE_ACTIVATION_NATIVE, w.alpha, true, &seg);
+  ASSERT_EQ(grcore_activation_leave(w.stack, native_rec), GRCORE_OK);
+
+  GRCORE_ActivationRef fresh = enter_ok(w.stack, GRCORE_ACTIVATION_JIT, w.beta);
+  GRCORE_ActivationInfo info;
+  ASSERT_EQ(grcore_activation_info(w.stack, fresh, &info), GRCORE_OK);
+  EXPECT_EQ(info.kind, GRCORE_ACTIVATION_JIT);
+  EXPECT_EQ(info.engine, w.beta);
+  EXPECT_FALSE(info.nested);
+  EXPECT_EQ(info.base_frame_count, 0u);
+  EXPECT_EQ(info.segment_lo, 0u);
+  EXPECT_EQ(info.segment_hi, 0u);
+  EXPECT_EQ(info.frame_base, 0u);
+  EXPECT_EQ(info.return_address, 0u);
+  uintptr_t instance = 0;
+  EXPECT_EQ(grcore_boundary_active_instance(w.stack, w.beta, &instance),
+      GRCORE_ERR_INVALID);
+  GRCORE_EngineId engine = 0;
+  uint64_t identity = 0;
+  EXPECT_EQ(grcore_boundary_get_foreign_exception(w.stack,
+                GRCORE_BoundaryRef{fresh.id}, &engine, &identity),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_context_nested_depth(w.ctx), 0u);
+  EXPECT_EQ(native(w), 1u);
+  ASSERT_EQ(grcore_activation_leave(w.stack, fresh), GRCORE_OK);
+  EXPECT_EQ(native(w), 0u);
+}
