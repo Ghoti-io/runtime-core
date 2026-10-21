@@ -126,6 +126,11 @@ struct GRCORE_Context {
   uint64_t fuel_used;
   uint64_t fuel_limit;
   uint64_t depth[2];
+  /* The options' guest and native depth limits, indexed like `depth`. Copied
+   * when the context is made: the options are the context's own copy and
+   * nothing changes them after, and every JIT, NATIVE and REENTRY activation
+   * record reads the native one, which through the opaque options was a call. */
+  uint64_t depth_limit[2];
   bool reclaim_tried;    ///< The collector has had its chance at this overage.
 
   /* Fuel scopes (AD-21), outermost first. Owner only; allocated through the
@@ -222,10 +227,7 @@ bool grcore_context_owned_by_caller(const GRCORE_Context * context);
  */
 static inline GRCORE_Result grcore_context_depth_step_in(
     GRCORE_Context * context, GRCORE_DepthKind kind) {
-  uint64_t limit = kind == GRCORE_DEPTH_GUEST
-      ? grcore_options_get_guest_depth(context->options)
-      : grcore_options_get_native_depth(context->options);
-  if (context->depth[kind] >= limit) {
+  if (context->depth[kind] >= context->depth_limit[kind]) {
     return GRCORE_ERR_LIMIT;
   }
   context->depth[kind]++;

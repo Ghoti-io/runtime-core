@@ -44,7 +44,15 @@ static bool enters_native_depth(GRCORE_ActivationKind kind) {
       kind == GRCORE_ACTIVATION_REENTRY;
 }
 
-bool grcore_activation_absorb_cell(GRCORE_Stack * stack) {
+/* grcore_stack_owned without the call: the same predicate (stack.c's owner_of),
+ * made of the same inline load and compare. Every entry and leave makes it. */
+static inline bool stack_owned(const GRCORE_Stack * stack) {
+  return stack != NULL && grcore_context_owned_inline(stack->context);
+}
+
+/* The walk cell moved into the innermost record: grcore_activation_absorb_cell,
+ * and the entry's own step, inline in both. */
+static inline bool absorb_cell(GRCORE_Stack * stack) {
   GRCORE_Context * context = stack->context;
   if (context->walk_cell[0] == 0) {
     return true;
@@ -66,22 +74,54 @@ bool grcore_activation_absorb_cell(GRCORE_Stack * stack) {
   return true;
 }
 
-GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
+bool grcore_activation_absorb_cell(GRCORE_Stack * stack) {
+  return absorb_cell(stack);
+}
+
+/* The last steps of every entry, once nothing more can be refused: what
+ * compiled code recorded is moved to the record that is innermost now, and the
+ * new record is pushed. */
+static inline GRCORE_ActivationRef push_record(GRCORE_Stack * stack,
     GRCORE_ActivationKind kind, GRCORE_EngineId engine, bool nested,
-    const GRCORE_CSegment * segment, GRCORE_ActivationRef * out_ref) {
-  if (!grcore_stack_owned(stack) || out_ref == NULL ||
-      (unsigned)kind > GRCORE_ACTIVATION_REENTRY ||
-      engine > stack->engine_count ||
-      (segment != NULL && segment->lo >= segment->hi)) {
-    return GRCORE_ERR_INVALID;
+    const GRCORE_CSegment * segment, bool set_limit) {
+  /* The one being entered starts with no compiled frame (AD-28). */
+  (void)absorb_cell(stack);
+  /* Every member a record that is not a boundary has is written, whatever the
+   * slot held before: no compiled frame yet, not rebuilt, and no boundary state
+   * (grcore_boundary_enter sets that, and the members only a boundary has,
+   * after this returns). */
+  GRCORE_ActivationRecord * rec = &stack->activations[stack->activation_count++];
+  const uint64_t id = ++stack->activation_serial;
+  rec->id = id;
+  rec->kind = kind;
+  rec->engine = engine;
+  rec->base_frames = stack->frame_count;
+  rec->lo = segment == NULL ? 0 : segment->lo;
+  rec->hi = segment == NULL ? 0 : segment->hi;
+  rec->frame_base = 0;
+  rec->return_address = 0;
+  rec->nested = nested;
+  rec->set_limit = set_limit;
+  rec->rebuilt = false;
+  rec->boundary = false;
+  rec->boundary_resumable = false;
+  rec->boundary_upgraded_native = false;
+  if (kind == GRCORE_ACTIVATION_JIT) {
+    stack->jit_live++;
   }
-  /* A re-entry is a nested activation by definition (AD-5). */
-  nested = nested || kind == GRCORE_ACTIVATION_REENTRY;
+  return (GRCORE_ActivationRef){id};
+}
+
+/* Every entry the common one below does not take: a nested record (a re-entry
+ * always), or one that must grow the array first. The arguments are checked.
+ * Out of line, so that the common entry keeps no registers for its calls. */
+static GRCORE_Result __attribute__((noinline)) enter_general(
+    GRCORE_Stack * stack, GRCORE_ActivationKind kind, GRCORE_EngineId engine,
+    bool nested, const GRCORE_CSegment * segment,
+    GRCORE_ActivationRef * out_ref) {
   GRCORE_Context * context = stack->context;
   /* Everything that can be refused comes first, and the native depth, which is
-   * given back if a later step fails, last of the refusable ones. The array is
-   * grown only when it is full, so an entry into an array with room (every
-   * entry but the few that grow it) makes no call for it. */
+   * given back if a later step fails, last of the refusable ones. */
   GRCORE_Result r;
   if (stack->activation_count >= stack->activation_capacity) {
     void * grown;
@@ -119,52 +159,48 @@ GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
     grcore_context_native_limit_here(context);
     set_limit = context->native_limit != 0;
   }
-  /* What compiled code recorded belongs to the record that is innermost now,
-   * and the one being entered starts with none (AD-28). */
-  (void)grcore_activation_absorb_cell(stack);
-  /* Every member not named is zero: no compiled frame yet, not rebuilt, and
-   * no boundary state (grcore_boundary_enter sets that after this returns). */
-  GRCORE_ActivationRecord * rec = &stack->activations[stack->activation_count++];
-  *rec = (GRCORE_ActivationRecord){
-      .id = ++stack->activation_serial,
-      .kind = kind,
-      .engine = engine,
-      .nested = nested,
-      .base_frames = stack->frame_count,
-      .lo = segment == NULL ? 0 : segment->lo,
-      .hi = segment == NULL ? 0 : segment->hi,
-      .set_limit = set_limit,
-  };
-  if (kind == GRCORE_ACTIVATION_JIT) {
-    stack->jit_live++;
-  }
-  out_ref->id = rec->id;
+  *out_ref = push_record(stack, kind, engine, nested, segment, set_limit);
   return GRCORE_OK;
 }
 
-bool grcore_activation_drop_top(GRCORE_Stack * stack) {
-  if (stack == NULL || stack->activation_count == 0) {
-    return false;
+GRCORE_Result grcore_activation_enter(GRCORE_Stack * stack,
+    GRCORE_ActivationKind kind, GRCORE_EngineId engine, bool nested,
+    const GRCORE_CSegment * segment, GRCORE_ActivationRef * out_ref) {
+  if (!stack_owned(stack) || out_ref == NULL ||
+      (unsigned)kind > GRCORE_ACTIVATION_REENTRY ||
+      engine > stack->engine_count ||
+      (segment != NULL && segment->lo >= segment->hi)) {
+    return GRCORE_ERR_INVALID;
   }
+  /* The common entry, which every call of compiled code from an interpreter
+   * makes: not nested, so no nesting count and no native-stack limit (a
+   * re-entry is nested by definition, AD-5), into an array with room. Its one
+   * refusable step is the native depth, as it is the general entry's last. */
+  nested = nested || kind == GRCORE_ACTIVATION_REENTRY;
+  if (nested || stack->activation_count >= stack->activation_capacity) {
+    return enter_general(stack, kind, engine, nested, segment, out_ref);
+  }
+  if (enters_native_depth(kind)) {
+    GRCORE_Result r =
+        grcore_context_depth_step_in(stack->context, GRCORE_DEPTH_NATIVE);
+    if (r != GRCORE_OK) {
+      return r;
+    }
+  }
+  *out_ref = push_record(stack, kind, engine, false, segment, false);
+  return GRCORE_OK;
+}
+
+/* What a record's leave undoes beside the native depth and the walk cell: the
+ * nesting count, the native-stack limit and the boundary counts. Out of line:
+ * none of it is a JIT record's from the interpreter. */
+static void __attribute__((noinline)) drop_rare(
+    GRCORE_Stack * stack, const GRCORE_ActivationRecord * rec) {
   GRCORE_Context * context = stack->context;
-  /* Read in place: nothing below writes the array before the release of
-   * retired code, the last step, which is the only one that runs callbacks. */
-  const GRCORE_ActivationRecord * rec =
-      &stack->activations[--stack->activation_count];
-  const bool jit = rec->kind == GRCORE_ACTIVATION_JIT;
   if (rec->set_limit) {
     /* The limit names the stack this re-entry measured from, which nobody is
      * running on once it is left (a later re-entry may be on another thread). */
     context->native_limit = 0;
-  }
-  if (jit) {
-    /* Its compiled frames are gone, and so is anything compiled code recorded
-     * for them: a later walk must not read frames that were left. */
-    context->walk_cell[0] = 0;
-    context->walk_cell[1] = 0;
-  }
-  if (enters_native_depth(rec->kind)) {
-    (void)grcore_context_depth_step_out(context, GRCORE_DEPTH_NATIVE);
   }
   if (rec->nested) {
     /* It refuses only a non-owner or a count of zero. Every caller checked
@@ -189,17 +225,51 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
       }
     }
   }
-  if (jit && --stack->jit_live == 0) {
+}
+
+/* Drops the top record of a stack that has one: grcore_activation_drop_top
+ * after its checks, and grcore_activation_leave after its own, which the
+ * compiler inlines into both. */
+static inline void drop_record(GRCORE_Stack * stack) {
+  GRCORE_Context * context = stack->context;
+  /* Read in place: nothing below writes the array before the release of
+   * retired code, the last step, which is the only one that runs callbacks. */
+  const GRCORE_ActivationRecord * rec =
+      &stack->activations[--stack->activation_count];
+  const GRCORE_ActivationKind kind = rec->kind;
+  if (kind == GRCORE_ACTIVATION_JIT) {
+    /* Its compiled frames are gone, and so is anything compiled code recorded
+     * for them: a later walk must not read frames that were left. */
+    context->walk_cell[0] = 0;
+    context->walk_cell[1] = 0;
+  }
+  if (enters_native_depth(kind)) {
+    (void)grcore_context_depth_step_out(context, GRCORE_DEPTH_NATIVE);
+  }
+  if (rec->set_limit || rec->nested || rec->boundary_resumable ||
+      rec->boundary_upgraded_native) {
+    drop_rare(stack, rec);
+  }
+  if (kind == GRCORE_ACTIVATION_JIT && --stack->jit_live == 0 &&
+      grcore_registry_holds_retired(stack->registry)) {
     /* No compiled frame can be on the native stack now, so nothing can return
-     * into retired code (AD-28). */
+     * into retired code (AD-28). Nothing retired is the common case, and the
+     * test is the release's own, so the call is made only to release. */
     grcore_registry_release_retired(stack);
   }
+}
+
+bool grcore_activation_drop_top(GRCORE_Stack * stack) {
+  if (stack == NULL || stack->activation_count == 0) {
+    return false;
+  }
+  drop_record(stack);
   return true;
 }
 
 GRCORE_Result grcore_activation_leave(
     GRCORE_Stack * stack, GRCORE_ActivationRef ref) {
-  if (!grcore_stack_owned(stack) || ref.id == 0 ||
+  if (!stack_owned(stack) || ref.id == 0 ||
       stack->activation_count == 0) {
     return GRCORE_ERR_INVALID;
   }
@@ -220,7 +290,7 @@ GRCORE_Result grcore_activation_leave(
           stack->activation_count) {
     return GRCORE_ERR_INVALID;
   }
-  grcore_activation_drop_top(stack);
+  drop_record(stack);
   return GRCORE_OK;
 }
 
@@ -322,6 +392,8 @@ GRCORE_Result grcore_boundary_enter(GRCORE_Stack *stack,
   record->boundary=true;record->boundary_resumable=resumable;
   record->boundary_upgraded_native=upgraded_native;
   record->boundary_caller=caller;record->boundary_instance=instance_token;
+  /* The entry leaves the members only a boundary has as the slot held them. */
+  record->foreign_exception_engine=0;record->foreign_exception_identity=0;
   if(resumable)stack->context->resumable_boundaries++;
   out_ref->id=activation.id;return GRCORE_OK;
 }

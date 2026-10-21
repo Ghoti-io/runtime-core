@@ -545,6 +545,64 @@ TEST(Activation, ARecordEnteredWhereAResumableBoundaryWasLeftLeavesTheBoundaryCo
   ASSERT_EQ(grcore_activation_leave(w.stack, native_rec), GRCORE_OK);
 }
 
+TEST(Activation, ARecordThatGrowsTheArrayIsEnteredAsAskedNotAsNested) {
+  // An entry that is not nested takes the common path only while the array
+  // has room; the one that finds it full takes the general one, which must
+  // enter the same record: not nested, no nesting count, the native depth.
+  StackWorld w;
+  std::vector<GRCORE_ActivationRef> refs;
+  for (int i = 0; i < 40; i++) {
+    const GRCORE_ActivationKind kind =
+        i % 2 ? GRCORE_ACTIVATION_JIT : GRCORE_ACTIVATION_NATIVE;
+    refs.push_back(enter_ok(w.stack, kind, w.alpha));
+    GRCORE_ActivationInfo info;
+    ASSERT_EQ(grcore_activation_info(w.stack, refs.back(), &info), GRCORE_OK);
+    EXPECT_EQ(info.kind, kind);
+    EXPECT_FALSE(info.nested) << "record " << i;
+    EXPECT_EQ(grcore_context_nested_depth(w.ctx), 0u) << "record " << i;
+    EXPECT_EQ(native(w), static_cast<uint64_t>(i) + 1);
+  }
+  EXPECT_EQ(w.stack->jit_live, 20u);
+  for (size_t i = refs.size(); i > 0; i--) {
+    ASSERT_EQ(grcore_activation_leave(w.stack, refs[i - 1]), GRCORE_OK);
+  }
+  EXPECT_EQ(native(w), 0u);
+  EXPECT_EQ(w.stack->jit_live, 0u);
+}
+
+TEST(Activation, ABoundaryEnteredWhereAnotherWithAForeignExceptionWasLeftHasNone) {
+  // An entry writes only what every record has, and a boundary's own members
+  // are written by the boundary's entry. A boundary in the slot where one with
+  // a foreign exception was left must not report that exception, nor the old
+  // caller's instance.
+  StackWorld w;
+  GRCORE_BoundaryRef old_boundary = {0};
+  ASSERT_EQ(grcore_boundary_enter(w.stack, w.alpha, w.beta, 0x33, false,
+                &old_boundary),
+      GRCORE_OK);
+  ASSERT_EQ(grcore_boundary_set_foreign_exception(w.stack, old_boundary,
+                w.alpha, 41),
+      GRCORE_OK);
+  ASSERT_EQ(grcore_boundary_leave(w.stack, old_boundary), GRCORE_OK);
+
+  GRCORE_BoundaryRef fresh = {0};
+  ASSERT_EQ(grcore_boundary_enter(w.stack, w.beta, w.alpha, 0x44, false,
+                &fresh),
+      GRCORE_OK);
+  GRCORE_EngineId engine = 0;
+  uint64_t identity = 0;
+  EXPECT_EQ(grcore_boundary_get_foreign_exception(w.stack, fresh, &engine,
+                &identity),
+      GRCORE_ERR_INVALID);
+  EXPECT_EQ(identity, 0u);
+  uintptr_t instance = 0;
+  EXPECT_EQ(grcore_boundary_active_instance(w.stack, w.alpha, &instance),
+      GRCORE_OK);
+  EXPECT_EQ(instance, 0x44u);
+  EXPECT_EQ(w.stack->activations[0].boundary_caller, w.beta);
+  ASSERT_EQ(grcore_boundary_leave(w.stack, fresh), GRCORE_OK);
+}
+
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

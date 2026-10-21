@@ -149,6 +149,9 @@ GRCORE_Result grcore_context_create(GRCORE_Group * group,
       grcore_options_get_memory_bytes(c->options),
       grcore_options_get_memory_reserve(c->options));
   c->fuel_limit = grcore_options_get_fuel(c->options);
+  c->depth_limit[GRCORE_DEPTH_GUEST] = grcore_options_get_guest_depth(c->options);
+  c->depth_limit[GRCORE_DEPTH_NATIVE] =
+      grcore_options_get_native_depth(c->options);
   c->unwind_result = GRCORE_OK;
   c->owner = grcore_thread_id();
   c->config = GRCORE_CONFIG_PARKED_OUTSIDE;

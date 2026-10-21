@@ -99,12 +99,14 @@ typedef struct GRCORE_ActivationRecord {
   uint64_t id;            ///< From the stack's serial; never reused.
   GRCORE_ActivationKind kind;
   GRCORE_EngineId engine; ///< Zero for none.
-  bool nested;
   size_t base_frames;     ///< The frame count when it was entered.
   uintptr_t lo;           ///< The C segment, or both zero.
   uintptr_t hi;
   uintptr_t frame_base;   ///< Innermost compiled frame's base; zero for none.
   uintptr_t return_address; ///< Where that frame is stopped (AD-28).
+  /* Every member above, and the flags, are written by every entry
+   * (grcore_activation_enter). */
+  bool nested;
   bool set_limit;         ///< A re-entry that set the native-stack limit, and so
                           ///< clears it when it is left.
   bool rebuilt;           ///< A JIT record whose compiled frames were rebuilt
@@ -113,6 +115,9 @@ typedef struct GRCORE_ActivationRecord {
   bool boundary;
   bool boundary_resumable;
   bool boundary_upgraded_native;
+  /* Meaningful only while `boundary` is set, and so written only by
+   * grcore_boundary_enter, all four, and read only where `boundary` is. A
+   * record that is not a boundary leaves them as the slot held them. */
   GRCORE_EngineId boundary_caller;
   uintptr_t boundary_instance;
   GRCORE_EngineId foreign_exception_engine;
@@ -226,8 +231,37 @@ bool grcore_stack_hook_frame(const GRCORE_Stack * stack, GRCORE_FrameRef ref,
 GRCORE_Result grcore_unwind_frames(
     GRCORE_Stack * stack, size_t target, size_t * popped);
 
+/**
+ * @brief The code registry (registry.c, which alone writes it). Defined here
+ *   only so that the leave of the last JIT record can ask
+ *   ::grcore_registry_holds_retired without a call.
+ */
+struct GRCORE_CodeRegistry {
+  struct RegEntry * entries;   ///< Sorted by `start`; ranges do not overlap.
+  size_t count;
+  size_t capacity;
+  size_t retired_entries;      ///< Entries flagged `retired`.
+  struct RetireNode * retired; ///< Slot code waiting to be released.
+  size_t retired_nodes;
+  size_t retired_peak;   ///< The most `retired_entries + retired_nodes` has been.
+  struct SlotRec * slots;
+};
+
+/**
+ * @brief Whether the registry holds anything retired: a range flagged retired
+ *   or slot code on the retired list. False for no registry.
+ *
+ * The one predicate the release's early return and the leave of a JIT record
+ * share. It trusts `retired_entries` to count the flagged entries, which
+ * ::grcore_registry_counts_agree checks in the tests.
+ */
+static inline bool grcore_registry_holds_retired(const GRCORE_CodeRegistry * r) {
+  return r != NULL && (r->retired != NULL || r->retired_entries != 0);
+}
+
 /** @brief Releases the retired code once no JIT record is open (registry.c).
- *   Called when the last one leaves. */
+ *   The leave of the last one calls it when ::grcore_registry_holds_retired;
+ *   it makes the same test itself, so any caller may call it. */
 void grcore_registry_release_retired(GRCORE_Stack * stack);
 
 /** @brief Whether the registry's retired counters equal what it holds: the

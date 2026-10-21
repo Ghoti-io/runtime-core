@@ -584,10 +584,10 @@ release of retired code); four things it did on the way were not needed:
 - *The native depth went through `grcore_context_enter_depth` and its argument
   checks.* The step itself (`grcore_context_depth_step_in` and `_out`, static
   inline in `context_internal.h`) is what both the record and the public call
-  use, so the limit is decided in one place. The limit is still read through
+  use, so the limit is decided in one place. The limit was still read through
   `grcore_options_get_native_depth`, out of line, because the options are B's
-  opaque object: measured at 4 instructions a call in the getter (and a call
-  and return), left as it is. The nesting count is still the public
+  opaque object (4 instructions a call in the getter, and a call and return);
+  the second pass below copies it into the context. The nesting count is still the public
   `grcore_context_nested_enter` and `_leave`: only a nested record (a
   re-entry, a nested interpreter or native record) calls them, and a JIT
   record from the interpreter is not one. The leave's result is ignored, as
@@ -600,11 +600,12 @@ release of retired code); four things it did on the way were not needed:
   counters `retired_entries` and `retired_nodes`, so the Registry tests check
   them against the flagged entries and the list after every step
   (`grcore_registry_counts_agree`, a walk for the tests only). The record is
-  also read in place on the way out rather than copied, and filled on the way
-  in by one compound literal, so a member not named is zero, whatever the slot
-  held before: not `rebuilt` (whose leave would otherwise accept frames left
-  on the stack), and no boundary flag (whose leave would otherwise take a
-  live resumable boundary's count, or a native record's upgrade).
+  also read in place on the way out rather than copied, and every member is
+  written on the way in, whatever the slot held before: not `rebuilt` (whose
+  leave would otherwise accept frames left on the stack), and no boundary flag
+  (whose leave would otherwise take a live resumable boundary's count, or a
+  native record's upgrade). This pass did it with one compound literal; the
+  second pass writes the members by name (below).
 
 **The thread-local and `dlopen`.** A first version gave the id the
 initial-exec model, which costs one load. That was wrong for this library: an
@@ -704,6 +705,104 @@ thread, and the check is what refuses the wrong one); and *the thread pointer
 as the thread's id* (a load, and no TLS at all, but a thread pointer is reused
 after its thread ends, so a context owned by a dead thread would pass the
 check from a new one: ids are never reused for exactly that reason).
+
+**A second pass (spec-template-compiled, story 4f).** After the first pass a
+JIT record still cost about 249 instructions a call in lang-tang's compiled
+warm template row (`_dl_tlsdesc_return` aside), more than the 152 by which
+that row was slower than the interpreted one. Counted function by function
+and line by line, most of it was calls and the registers they made the
+entry keep, not checks. The contract is the same: every check and refusal of
+`activation.h` in the same order (owner, arguments, growth, depth, nesting),
+the walk cell absorbed and cleared, the frame floor of a rebuilt record, scope
+ordering, the boundary and resumable counts, and retired code released when
+the last JIT record goes. What changed, with what each saved a call in that
+row:
+
+- *The owner check is inline in the entry and the leave* (`stack_owned` in
+  `activation.c`, the same predicate as `grcore_stack_owned`, built on the same
+  `grcore_context_owned_inline`): the two calls of `grcore_stack_owned` were
+  about 29 instructions a call between them.
+- *The leave drops the record inline.* `grcore_activation_drop_top` and the
+  leave share a static inline `drop_record`, so the leave no longer calls a
+  function that checks again what it has just checked (`drop_top` was 48, the
+  leave grew by 26). What only a nested record undoes (the nesting count, the
+  native-stack limit, a boundary's counts) is out of line (`drop_rare`),
+  behind one test of the four flags, which GCC folds into one masked load.
+  Every one of the four is set only on a nested record today, so a plant that
+  drops `set_limit` or `boundary_upgraded_native` from that test is not seen
+  (the `nested` flag still takes the branch); the test names all four so that
+  it does not rest on that.
+- *Nothing retired, no call.* The release's early return is a static inline
+  predicate, `grcore_registry_holds_retired` in `guest_internal.h` (beside the
+  registry struct, which moved there from `registry.c` for it), that the leave
+  and the release both use: the call that returned at once was 20.
+- *The common entry is its own path.* An entry that is not nested (a re-entry
+  always is) into an array with room, which is every call of compiled code
+  from an interpreter, takes the native depth and pushes the record; growth,
+  the nesting count and a re-entry's native-stack limit are in
+  `enter_general`, out of line, which does every step in the old order and
+  ends in the same `push_record`. The entry keeps two registers where it kept
+  six, and the walk cell is tested inline and moved only when compiled code
+  left something in it (`absorb_cell`, shared with
+  `grcore_activation_absorb_cell`). With the members written by name
+  (below), the entry went from 102 to 70 with its inline parts, and the call
+  of `absorb_cell` (6) is gone.
+- *Members written by name.* The compound literal zeroed all 104 bytes of the
+  record with `rep stos`, thirteen counted instructions and a slow start on
+  real hardware. The entry now writes every member a record has, and the
+  four only a boundary has (its caller, its instance, its foreign exception)
+  are written by `grcore_boundary_enter`, which is the only reader's
+  precondition: `grcore_boundary_active_instance` and
+  `grcore_boundary_get_foreign_exception` read them only on a record whose
+  `boundary` flag is set.
+- *The depth limits are in the context.* `depth_limit[]` is copied from the
+  options when the context is made (the options are its own copy and never
+  change, as `fuel_limit` already was), and `grcore_context_depth_step_in`
+  reads it: the native getter's 4 and its call in the record, and in both
+  tiers the guest getter's call at every guest frame
+  (`grcore_context_enter_depth`, 18 instructions a template call).
+
+Planted by hand, each seen to fail and its control to pass: the common path taken by a nested entry (`AReentryIsAlwaysNested...`,
+`NativeStackBytes.AReentryFindsTheRunsLimit...`); taken by an entry into a full
+array (`ManyRecordsGrowTheArray...` crashes); the general path entering every
+record as nested (`ARecordThatGrowsTheArrayIsEnteredAsAskedNotAsNested`, new);
+the native depth skipped on the common path, and kept by the leave; the entry
+not moving the walk cell, and the leave not clearing it (`WalkCell.*`); the
+entry keeping the slot's compiled frame, `rebuilt`, resumable or upgrade flag
+(the first pass's slot tests); the boundary entry keeping the slot's foreign
+exception (`ABoundaryEnteredWhereAnotherWithAForeignExceptionWasLeftHasNone`,
+new); the drop's test blind to `nested`; `drop_rare` keeping the native-stack
+limit or the native record's upgrade; the retired test blind to ranges and,
+separately, to slot code (`Registry.*`, `Retire.*`, `EntrySlot.*`); and the
+guest limit copied from the native option (`Depth.EnteringPastTheBudget...`).
+
+Callgrind as above (host GCC 14.2, the bench linked statically, per pair, the
+bench's loop of 18 included):
+
+| Case (host GCC 14.2) | First pass (`5766df9`) | Second pass |
+| --- | --- | --- |
+| `activation` (NATIVE, a C segment) | 256 | 154 |
+| `activation-jit` (JIT, no segment, eight ranges registered) | 282 | 160 |
+| `activation-jit-retire` (a range retired every 64 pairs) | 301 | 179 |
+
+And through the shared library: lang-tang `b0c985f`'s bench built by GCC 16.2.0
+in the build image, its dependencies by the host's GCC 14.2, `--smc-check=all
+--toggle-collect` on the case function, instructions per template call (4,802
+a case). The record alone in the compiled warm row went from about 249 to 135
+(the entry 70, the leave 65):
+
+| lang-tang row | Before | After | Change |
+| --- | --- | --- | --- |
+| steady-template-interpreted-warm-call | 7,015 | 6,996 | -18 |
+| steady-template-compiled-warm-call | 7,167 | 7,035 | -132 |
+| steady-template-rows-interpreted-per-row | 25,628 | 25,506 | -122 |
+| steady-template-rows-compiled-per-row | 24,961 | 24,693 | -267 |
+
+The compiled warm call is now 39 instructions a call above the interpreted one
+(it was 152). What is left of the record is its contract: the owner check
+twice (each a descriptor call), the argument checks, the depth step and its
+return, the serial, the record's members, the leave's order and frame checks
+and the scope check.
 
 **The nesting count, and why it lives in B (AD-5).** An ordinary nested
 activation (a REENTRY always, an INTERPRETER when the caller says so) cannot pause to the

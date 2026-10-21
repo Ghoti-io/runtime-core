@@ -62,16 +62,8 @@ typedef struct SlotRec {
   struct SlotRec * next;
 } SlotRec;
 
-struct GRCORE_CodeRegistry {
-  RegEntry * entries;      ///< Sorted by `start`; ranges do not overlap.
-  size_t count;
-  size_t capacity;
-  size_t retired_entries;  ///< Entries flagged `retired`.
-  RetireNode * retired;    ///< Slot code waiting to be released.
-  size_t retired_nodes;
-  size_t retired_peak;     ///< The most `retired_entries + retired_nodes` has been.
-  SlotRec * slots;
-};
+/* struct GRCORE_CodeRegistry is in guest_internal.h, beside the test the leave
+ * of a JIT record makes inline (grcore_registry_holds_retired). */
 
 /* Notes the retired list's length after it grew. */
 static void note_retired_peak(GRCORE_CodeRegistry * r) {
@@ -387,8 +379,7 @@ void grcore_registry_release_retired(GRCORE_Stack * stack) {
    * record is left (every call of compiled code from the interpreter): without
    * this test the compaction below walked every registered range each time.
    * `retired_entries` counts exactly the entries flagged retired. */
-  if (r == NULL || stack->jit_live != 0 ||
-      (r->retired == NULL && r->retired_entries == 0)) {
+  if (stack->jit_live != 0 || !grcore_registry_holds_retired(r)) {
     return;
   }
   const GRCORE_Allocator * a = engine_allocator(stack->context);
