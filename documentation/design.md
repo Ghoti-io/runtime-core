@@ -1754,7 +1754,7 @@ budget is recorded once a first measurement of a real case exists, and these are
 those measurements. They were taken with `make bench` on an Intel Core 7 150U
 (12 threads), gcc 14.2.0 `-O2 -g`, release, `-std=c17`, best of seven repeats,
 on 2026-10-05, against runtime-core `e1f0bd6` with this change. The machine was
-not idle: other sessions' builds held the load average between 4.6 and 6.3
+not idle: other builds held the load average between 4.6 and 6.3
 throughout, which is why the calibration case reads 1.73 ns a step here where
 runtime-jit and lang-tang recorded 1.1 to 1.4 on the same machine, and why the
 median of a few cases (keyed lookup, roots) sits well above the best. Read a
