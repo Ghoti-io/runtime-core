@@ -18,8 +18,9 @@ A (the guest stack, engine descriptors, the abstract frame, the frame walk and
 scopes, activation records, the unwinder and budget scopes), and context
 snapshots (the snapshot object and the hooks on keys, and the guest stack's own
 hooks), and the sampling profiler (an OBSERVE service with an optional timer). What is not here is the collector, the JIT and the debugger, each a
-library of its own, taken from the runtime stack's architecture spine (AD-1 to
-AD-26).
+library of its own. The AD-n numbers (AD-1 to AD-26) name the architectural
+decisions, and the CAP-n numbers the capabilities, that the runtime libraries
+share, so that each library cites one by the same name; the text around each citation states the rule it applies.
 
 ## What this library is
 
@@ -67,8 +68,8 @@ not read by anything, and a new header is added to it by someone remembering.
 
 ## Why the edge gate reads two places
 
-The spine forbids `core` depending on any service, on codegen, on an engine,
-or on ctang (AD-2). `check-edges` checks every `#include` under `src/` and
+`core` must not depend on any service, on codegen, on an engine, or on ctang
+(AD-2), so that it can be used on its own. `check-edges` checks every `#include` under `src/` and
 `include/`, and the `NEEDED` list of every built shared object. Neither alone
 is enough: the `#include` lines can be clean while a `.so` still links a
 library through a build flag, and a link line can be clean while a header
@@ -97,8 +98,7 @@ The suite's nine result constants are unchanged and keep their numbers.
 code ends in an uncaught exception or a Wasm trap (AD-13), and the reason is
 read from the context. Folding it into `ERR_INTERNAL` would make "the guest's
 program threw" and "the runtime's invariant failed" one result, and a host
-that must tell them apart could not. The departure is recorded in
-CONVENTIONS.md section 13.
+that must tell them apart could not.
 
 ## B, part 1: groups, contexts, options, keys, accounting
 
@@ -123,8 +123,8 @@ changing them afterwards cannot change a context that exists. Nothing is
 enforced yet; the story that enforces a budget also decides what it charges.
 
 **Rejected: a `_Limits` struct.** A field added to a struct breaks every
-caller that built one. The spine reserves `_Limits` for parsers and
-validators, whose limits are inputs to a pure function.
+caller that built one. A `_Limits` struct is for parsers and validators,
+whose limits are inputs to a pure function.
 
 **Keys.** A key is a static object, identified by its address, carrying a
 cardinality, a phase and a destructor (AD-19). A context stores
@@ -316,8 +316,8 @@ outside `run`.
 
 **Rejected: pause as a C `longjmp` or a second native stack.** It pins the
 thread, so the context could not migrate, and a stack that outlives its
-frames is the option (c) the spine reserves behind A's guest-stack
-abstraction for a later, deliberate step.
+frames is a per-context native stack segment, which is kept possible behind
+A's guest-stack abstraction for a later, deliberate step.
 
 **The runtime poll (AD-21).** A native whose work the guest controls (a
 regex, a sort, a copy) calls `grcore_runtime_poll` every bounded amount of
@@ -1274,8 +1274,8 @@ the other half: the convention, the call sequence and the hooks.
 **Why the part exists (CAP-6).** Calls as deoptimization exits were milestone 1's
 defect (Corey, 2026-10-05): lang-tang's baseline JIT left compiled code at every
 `CALL`, so call-heavy code ran slower with the JIT on than off, and the rule that
-forced it ("no JIT frame calls a JIT frame") was story 15's, not the spine's. The
-spine already had what a compiled call needs (AD-17's precise walk of JIT frames,
+forced it ("no JIT frame calls a JIT frame") was story 15's, not an architectural rule. The
+architecture already had what a compiled call needs (AD-17's precise walk of JIT frames,
 AD-22's lazy deoptimization, the call GC-point kind in the code metadata); this
 part is what was missing in the core. The protocol is `runtime-jit`'s ("Calls
 between compiled functions"), the engine's side is lang-tang's ("The baseline
@@ -1442,8 +1442,7 @@ and no test would catch a regression that kept the list at exactly twice the dis
 many discards (a host that keeps one nested activation open across a long run of a
 large, thrashing program). The remedy then is an epoch (free what no open record can
 reach, not only when none is open), which is this library's design and is not
-started; `_bmad-output/implementation-artifacts/deferred-work.md` names the
-condition.
+started.
 
 **Tail calls ask nothing new of the core (AD-28, CAP-8).** A compiled tail call
 replaces the caller's native frame and its guest frame (`runtime-jit`'s `design.md`,
@@ -1525,7 +1524,7 @@ already does, and the story that added the call found no need to change it:
 ## B, part 3: context snapshots
 
 A snapshot (`b/snapshot.h`) is the first thing in this library that outlives
-the context it describes. It is the spine's reserved seam for CAP-11: a context
+the context it describes. It is the seam kept for CAP-11: a context
 started from a frozen, pre-initialised image gives the output of one
 initialised from scratch (AD-12, AD-19, AD-20).
 
@@ -1537,8 +1536,8 @@ with an atomic (retain relaxed, the release that reaches zero acquire-release,
 as `GRCORE_Code` does), keeps its own copy of the allocator it was made with
 (it is not the context's, since a snapshot may outlive the context), and may be
 restored any number of times, into contexts on any thread, concurrently. It is
-an in-memory object. A byte format or a file is **not done** (the spine defers
-it); the blobs' contents are deliberately in native byte order and host sizes,
+an in-memory object. A byte format or a file is **not done** (it is
+deferred); the blobs' contents are deliberately in native byte order and host sizes,
 and `reader_string` hands out pointers into the snapshot, because nothing here
 is parsed from outside the process.
 
@@ -1749,8 +1748,8 @@ it). `codemeta-validate` is the nineteenth: it validates a code-metadata
 table of 100 sites with 1,000 live slots and 1,000 derived pointers each, and
 one of 20,000 sites of 20,000 functions; its unit is one validation of both.
 
-No budget is asserted, so nothing fails if a figure moves; the spine says a
-budget is recorded once a first measurement of a real case exists, and these are
+No budget is asserted, so nothing fails if a figure moves; the rule (AD-26) is
+that a budget is recorded once a first measurement of a real case exists, and these are
 those measurements. They were taken with `make bench` on an Intel Core 7 150U
 (12 threads), gcc 14.2.0 `-O2 -g`, release, `-std=c17`, best of seven repeats,
 on 2026-10-05, against runtime-core `e1f0bd6` with this change. The machine was
