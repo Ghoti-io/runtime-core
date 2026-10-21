@@ -627,7 +627,7 @@ ifeq ($(OS_NAME), Linux)
 		[ -z "$$time_ms" ] && time_ms=0; \
 		total_tests=$$((total_tests + num_tests)); \
 		total_time=$$((total_time + time_ms)); \
-		has_leak=$$(echo "$$output" | grep -c "are definitely lost\|are indirectly lost\|are possibly lost" || true); \
+		has_leak=$$(echo "$$output" | grep -c "are definitely lost\|are indirectly lost\|are possibly lost\|ERROR SUMMARY: [1-9]" || true); \
 		if [ $$exit_code -eq 0 ] && [ $$has_leak -eq 0 ]; then \
 			printf '%-30s %8d %8dms PASS\n' "$$test_name" "$$num_tests" "$$time_ms"; \
 		else \

@@ -24,6 +24,12 @@
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__has_include) && __has_include(<valgrind/valgrind.h>)
+#include <valgrind/valgrind.h>
+#else
+#define RUNNING_ON_VALGRIND 0
+#define VALGRIND_CLO_CHANGE(option) ((void)0)
+#endif
 #endif
 
 namespace {
@@ -144,6 +150,13 @@ ChildResult in_child(const std::function<void()> & fn) {
   if (pid == 0) {
     close(fds[0]);
     dup2(fds[1], 2);
+    // A child that aborts, as these tests mean it to, never frees the world it
+    // inherited, and Valgrind's leak check at its exit would report every block
+    // of it as lost. The leak check is the parent's to make; the child keeps
+    // every other check, and test-valgrind-quiet fails on any error it reports.
+    if (RUNNING_ON_VALGRIND) {
+      VALGRIND_CLO_CHANGE("--leak-check=no");
+    }
     fn();
     _exit(0);
   }
