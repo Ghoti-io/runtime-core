@@ -1,0 +1,21 @@
+# 03 release leaves alive
+# defect: a holder's release does nothing, so the object stays rooted and the token stays live
+# caught by: the round-trip test: the count and the roots after a release
+# test: testHandles
+# filter: Handles.PinResolveInspectAndReleaseRoundTrip
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -506,7 +506,9 @@
+     Standing s = standing(e, asker);
+     if (s.holder || s.owner) {
+       status = e->owner != NULL ? GRCORE_HANDLE_LIVE : GRCORE_HANDLE_TOMBSTONE;
+-      entry_release(t, i);
++      if (s.owner) { /* planted: only the owner's release takes effect */
++        entry_release(t, i);
++      }
+     } else {
+       status = GRCORE_HANDLE_FOREIGN;
+     }

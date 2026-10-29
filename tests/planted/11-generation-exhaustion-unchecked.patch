@@ -1,0 +1,20 @@
+# 11 generation exhaustion unchecked
+# defect: a table that has issued every generation issues one more
+# caught by: the exhausted-generation test
+# test: testHandles
+# filter: Handles.ARunOutOfGenerations*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -380,8 +380,7 @@
+   GRCORE_HandleParty * hp = party_find(t, holder);
+   if (hp == NULL) {
+     r = GRCORE_ERR_INVALID;
+-  } else if (hp->held_count >= t->limit_per_holder || t->live >= t->limit_total ||
+-      t->next_generation == UINT64_MAX) {
++  } else if (hp->held_count >= t->limit_per_holder || t->live >= t->limit_total) {
+     r = GRCORE_ERR_LIMIT;
+   }
+   GRCORE_HandleParty * op = NULL;

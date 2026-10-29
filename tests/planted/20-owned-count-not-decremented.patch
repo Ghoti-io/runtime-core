@@ -1,0 +1,20 @@
+# 20 owned count not decremented
+# defect: releasing an owned entry leaves the owner's count and list standing
+# caught by: the round-trip test: owned count and roots after release
+# test: testHandles
+# filter: Handles.PinResolveInspectAndReleaseRoundTrip
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -259,7 +259,8 @@
+ static void entry_release(GRCORE_HandleTable * t, uint32_t i) {
+   GRCORE_HandleEntry * e = &t->entries[i];
+   if (e->owner != NULL) {
+-    owned_unlink(t, e->owner, i);
++    /* planted: not unlinked from the owner */
++    e->owner->owned_count--;
+   } else {
+     t->tombstones--;
+   }

@@ -1,0 +1,19 @@
+# 10 total limit unchecked
+# defect: the total limit is not applied
+# caught by: the limits test
+# test: testHandles
+# filter: Handles.LimitsBind*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -380,7 +380,7 @@
+   GRCORE_HandleParty * hp = party_find(t, holder);
+   if (hp == NULL) {
+     r = GRCORE_ERR_INVALID;
+-  } else if (hp->held_count >= t->limit_per_holder || t->live >= t->limit_total ||
++  } else if (hp->held_count >= t->limit_per_holder ||
+       t->next_generation == UINT64_MAX) {
+     r = GRCORE_ERR_LIMIT;
+   }

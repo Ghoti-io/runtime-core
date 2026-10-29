@@ -1,0 +1,27 @@
+# 17 unlocked inspect
+# defect: inspect reads the table without its lock
+# caught by: ThreadSanitizer, in the owner-dies-under-the-holder test (the TSan arm only)
+# test: testHandles
+# filter: Handles.AnOwnerDying*
+# arm: tsan
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -471,7 +471,7 @@
+   if (!caller_ok(t, asker)) {
+     return GRCORE_HANDLE_BAD_CALL;
+   }
+-  lock(t);
++  /* planted: no lock */
+   GRCORE_HandleStatus status = GRCORE_HANDLE_STALE;
+   uint32_t i = entry_find(t, token);
+   if (i != GRCORE_HANDLE_NONE) {
+@@ -489,7 +489,6 @@
+       status = GRCORE_HANDLE_FOREIGN;
+     }
+   }
+-  unlock(t);
+   return status;
+ }
+ 

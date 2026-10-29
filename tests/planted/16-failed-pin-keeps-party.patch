@@ -1,0 +1,19 @@
+# 16 failed pin keeps party
+# defect: a pin whose root source was refused keeps the party it made
+# caught by: the refused-root-source test
+# test: testHandles
+# filter: Handles.ARootSourceTheContextRefuses*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -393,7 +393,7 @@
+     r = grcore_context_add_root_source(owner, &kHandleRoots, op);
+     if (r == GRCORE_OK) {
+       op->root_registered = true;
+-    } else if (made) {
++    } else if (made && 0) { /* planted */
+       /* Nothing else refers to a party made by this call. */
+       owner->handle_party = NULL;
+       party_drop(t, op);

@@ -31,6 +31,7 @@
 #include <ghoti.io/runtime-core/macros.h>
 
 #include "account_internal.h"
+#include "handles_internal.h"
 
 #include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
@@ -152,6 +153,11 @@ struct GRCORE_Context {
   GRCORE_RootEntry * roots;
   size_t root_count;
   size_t root_capacity;
+
+  /* The cross-heap handle table (b/handles.h): this context's part in it, made
+   * on first use and freed by destroy. Touched only by the owning thread, and
+   * under the table's lock. */
+  GRCORE_HandleParty * handle_party;
 
   /* The poll. One block, sized for the registrations the table can hold, so a
    * poll never allocates: `votes` and `verdict_keys` have the built-in kinds

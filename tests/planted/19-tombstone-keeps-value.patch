@@ -1,0 +1,19 @@
+# 19 tombstone keeps value
+# defect: a dead owner's entry keeps its value word
+# caught by: the dead-owner test: nothing may be rooted or readable after the owner dies
+# test: testHandles
+# filter: Handles.ADeadOwnersEntries*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -530,7 +530,7 @@
+     GRCORE_HandleEntry * e = &t->entries[i];
+     uint32_t next = e->owned_next;
+     e->owner = NULL;
+-    e->value = 0;
++    /* planted: value kept */
+     e->owned_prev = e->owned_next = GRCORE_HANDLE_NONE;
+     t->tombstones++;
+     i = next;

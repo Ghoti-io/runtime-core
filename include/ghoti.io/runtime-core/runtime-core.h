@@ -32,7 +32,8 @@
  *
  * B is complete for now (`b/`: groups, contexts, options, keys, the page
  * provider with memory accounting behind them, requests and ports, the poll,
- * `run` and `resume`, the budgets with their fuel scopes, and root sources).
+ * `run` and `resume`, the budgets with their fuel scopes, root sources, and the
+ * group's cross-heap handle table).
  * A is complete for now too (`a/`: engine descriptors, the guest stack, the
  * abstract frame with its walk and scopes, activation records, the unwinder,
  * budget scopes, the code-metadata format and the JIT layout descriptor).
@@ -66,6 +67,7 @@
 #include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/group.h>
+#include <ghoti.io/runtime-core/b/handles.h>
 #include <ghoti.io/runtime-core/b/key.h>
 #include <ghoti.io/runtime-core/b/options.h>
 #include <ghoti.io/runtime-core/b/page.h>

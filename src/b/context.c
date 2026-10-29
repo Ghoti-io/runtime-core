@@ -180,6 +180,10 @@ GRCORE_Result grcore_context_destroy(GRCORE_Context * context) {
       reg.key->destroy(context, reg.value);
     }
   }
+  /* What the context owned in the group's handle table becomes tombstones and
+   * what it held is released (b/handles.h). After the destructors, which may
+   * release their own tokens, and while the context is still valid. */
+  grcore_handles_context_destroyed(context);
   /* After the destructors, which may still post to or read the port. A post
    * that races this finds the context gone and is refused. */
   grcore_context_port_detach(context);

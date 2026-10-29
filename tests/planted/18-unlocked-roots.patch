@@ -1,0 +1,24 @@
+# 18 unlocked roots
+# defect: the root source reads the entry list without the lock
+# caught by: ThreadSanitizer, in the threaded pin-and-release test (the TSan arm only)
+# test: testHandles
+# filter: Handles.ThreadsPin*
+# arm: tsan
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -322,12 +322,11 @@
+     return;
+   }
+   GRCORE_HandleTable * t = p->table;
+-  lock(t);
++  /* planted: no lock */
+   for (uint32_t i = p->owned_head; i != GRCORE_HANDLE_NONE;
+       i = t->entries[i].owned_next) {
+     visitor->slot(visitor->user, &t->entries[i].value);
+   }
+-  unlock(t);
+ }
+ 
+ static const GRCORE_RootSource kHandleRoots =

@@ -43,3 +43,6 @@ check-hook:
 
 check-tls:
 	@tools/check-tls.sh $(APP_DIR)/$(TARGET)
+
+check-planted:
+	@tools/check-planted.sh --arm release

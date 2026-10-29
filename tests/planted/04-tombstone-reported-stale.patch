@@ -1,0 +1,19 @@
+# 04 tombstone reported stale
+# defect: a dead owner's entry reports STALE instead of TOMBSTONE
+# caught by: the dead-owner test
+# test: testHandles
+# filter: Handles.ADeadOwnersEntries*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -478,7 +478,7 @@
+     const GRCORE_HandleEntry * e = &t->entries[i];
+     Standing s = standing(e, asker);
+     if (s.holder || s.owner) {
+-      status = e->owner != NULL ? GRCORE_HANDLE_LIVE : GRCORE_HANDLE_TOMBSTONE;
++      status = e->owner != NULL ? GRCORE_HANDLE_LIVE : GRCORE_HANDLE_STALE; /* planted */
+       if (out_owner != NULL) {
+         *out_owner = e->owner_serial;
+       }

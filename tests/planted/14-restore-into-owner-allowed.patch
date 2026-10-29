@@ -1,0 +1,21 @@
+# 14 restore into owner allowed
+# defect: a restore into a context that owns entries is not refused
+# caught by: the restore test
+# test: testHandles
+# filter: Handles.ARestoreInto*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/snapshot.c
++++ b/src/b/snapshot.c
+@@ -429,9 +429,7 @@
+       context->fuel_scope_count != 0 || context->nested != 0 ||
+       (env != NULL && !grcore_restore_env_valid(env)) ||
+       (snapshot->paused && env_entry(env) == NULL) ||
+-      /* A restore replaces the heap, and the values the group's handle table
+-       * roots for this context would name nothing in the new one. */
+-      grcore_handles_owned_count(&context->group->handles, context) != 0) {
++      0) { /* planted */
+     return GRCORE_ERR_INVALID;
+   }
+   /* The key set must be the snapshot's, exactly: a blob with no key on this

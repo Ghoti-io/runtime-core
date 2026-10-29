@@ -3,7 +3,8 @@
 **Current boundary status:** Story 12 adds an engine-neutral mixed-engine
 boundary activation protocol. The API keeps foreign exception identity opaque
 and preserves boundary/instance state across resumable pauses. It does not own
-or dereference cross-heap handles; Tang's Story 13 owns the handle table.
+or dereference cross-heap handles; the handle table is `b/handles.h`, described
+under "B, part 5" below.
 
 A resumable boundary temporarily promotes its enclosing nested native
 activation so polls may pause while a continuation is live. That promotion is
@@ -1725,6 +1726,71 @@ ten-thousandth of the guest's time.
 - *Allocating a new entry in the handler.* A handler is read-only and is given no
   allocating API; a fixed table, with a counted overflow, keeps that true and
   makes a full table a measurement rather than a failure.
+
+## B, part 5: the cross-heap handle table (CAP-14)
+
+A context that must keep a reference to a value in *another* context's heap
+(an untrusted WebAssembly module in its own context, holding a value of the
+language that made it) cannot hold a pointer: the other heap moves and dies on
+its own thread. `b/handles.h` is the one way. The group owns a table of
+entries. Each records an opaque 64-bit *value word*, the context that **owns**
+it (whose heap the word names a value in) and the context that **holds** it
+(was given the token). The holder keeps a `GRCORE_HandleToken`, a name and
+nothing more: only the owner, on its own thread, can turn it into the word
+(`grcore_handles_resolve`), which is what lets an owner's poll execute a
+holder's request without ever handing out a pointer into its heap.
+
+**Roots reuse the root-source mechanism.** The first entry a context owns
+registers one root source with it, whose enumeration reports each owned word as
+a precise slot. A moving collector rewrites the slot, so the next `resolve`
+returns the moved word, and a released entry is simply no longer enumerated.
+The table therefore has no trace callback and no layout knowledge: the word
+*is* the root, and what it means stays the owner's. The enumeration holds the
+table's lock, so a visitor must not call the table; a collector's visitor
+rewrites a word and returns.
+
+**Tokens never come back.** A token is a 64-bit generation, a 32-bit index and
+a 32-bit table tag. The generation is one counter for the whole table, taken at
+issue and never reused; a table that has issued the last one refuses another
+(`GRCORE_ERR_LIMIT`) rather than wrap. The index is reused, which is why the
+generation is table-wide: a per-entry generation restarts when its entry is
+reused, and the stale token of an earlier use would then be valid again.
+`inspect` is the holder's per-call check (live, tombstone or stale); a context
+that is neither holder nor owner is told only `FOREIGN`.
+
+**A dead owner leaves a tombstone, a dead holder releases.** The table is told
+by `grcore_context_destroy`: what the context owned keeps its entry with the
+word dropped, so a holder learns that the target *died* rather than that its
+token is bad; what it held is released. A tombstone is freed by its holder and
+counts against the holder's limit until then. A holder is named to the owner
+that pins for it by a checked name (`GRCORE_HandleHolder`: a never-reused serial
+and a slot), obtained on the holder's own thread, so an owner on another thread
+never holds a pointer to a context that may die; a dead holder is refused.
+
+**Threads and budgets.** One mutex guards the table. Every call that names a
+context needs the calling thread to own it, so the context's own fields are
+touched only by that thread; no other lock is held under the mutex. Live
+entries are limited per holder and in total, set by `grcore_handles_set_limits`
+(zero is refused: it could be read as unlimited or as the default); memory is
+charged to the group's meter and is given back when the last participating
+context is destroyed. A snapshot does not capture entries, so a restore into a
+context that owns some is refused.
+
+**Rejected:** a per-entry trace hook supplied by the owner (a second root
+mechanism for the same job, and a way for a module to write what it likes); a
+per-entry generation; freeing an entry when its owner dies (the holder could
+not tell a dead target from a bad token); a context pointer to name the holder
+(a use after free by construction); a mutex per context's list (the sections
+are short, and contention is a measurement to be made, not a guess). Not built
+here: token *operations* (a holder's request is an ordinary request to the
+owner, AD-4), and the cycle tracer across heaps, which will want the per-owner
+root enumeration already there.
+
+The tests are `tests/unit/test_handles.cpp`. They are proved by
+`tests/planted/` and `tools/check-planted.sh`: twenty defects planted one at a
+time into a throwaway copy of the tree (a reused generation, a missed root, a
+release that leaves the object alive, a lost lock among them), each of which
+the named test must fail, with the control passing once it is taken out.
 
 ## Benchmarks
 

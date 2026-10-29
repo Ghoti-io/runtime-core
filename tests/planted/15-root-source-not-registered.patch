@@ -1,0 +1,19 @@
+# 15 root source not registered
+# defect: the first pin registers no root source with the owner
+# caught by: the roots test: the source count and the words
+# test: testHandles
+# filter: Handles.AValueHeldThroughTheTable*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -389,7 +389,7 @@
+   if (r == GRCORE_OK) {
+     r = party_of(t, owner, &op, &made);
+   }
+-  if (r == GRCORE_OK && !op->root_registered) {
++  if (r == GRCORE_OK && !op->root_registered && 0) { /* planted */
+     r = grcore_context_add_root_source(owner, &kHandleRoots, op);
+     if (r == GRCORE_OK) {
+       op->root_registered = true;

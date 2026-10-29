@@ -30,6 +30,7 @@
 #include <ghoti.io/runtime-core/macros.h>
 
 #include "account_internal.h"
+#include "handles_internal.h"
 
 #include <ghoti.io/runtime-core/b/group.h>
 
@@ -44,6 +45,7 @@ struct GRCORE_Group {
   GRCORE_Counting counting;
   size_t contexts; ///< Touched only through `__atomic` builtins.
   size_t ports;    ///< Likewise.
+  GRCORE_HandleTable handles; ///< The cross-heap handle table (b/handles.h).
 };
 
 /** @brief Counts a context in. */

@@ -1,0 +1,19 @@
+# 02 missed root
+# defect: the root source reports nothing, so a value held through the table is not a root
+# caught by: the roots test: the words the collector is shown
+# test: testHandles
+# filter: Handles.AValueHeldThroughTheTable*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -325,7 +325,7 @@
+   lock(t);
+   for (uint32_t i = p->owned_head; i != GRCORE_HANDLE_NONE;
+       i = t->entries[i].owned_next) {
+-    visitor->slot(visitor->user, &t->entries[i].value);
++    (void)visitor; /* planted: no root reported */
+   }
+   unlock(t);
+ }

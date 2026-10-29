@@ -1,0 +1,19 @@
+# 06 foreign accepted
+# defect: every context is taken for the holder
+# caught by: the foreign-context test
+# test: testHandles
+# filter: Handles.ATokenIsRefused*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -436,7 +436,7 @@
+   Standing s = { false, false };
+   const GRCORE_HandleParty * p = c->handle_party;
+   if (p != NULL) {
+-    s.holder = e->holder == p;
++    s.holder = true; /* planted */
+     s.owner = e->owner == p;
+   }
+   return s;

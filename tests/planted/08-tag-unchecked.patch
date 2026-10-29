@@ -1,0 +1,19 @@
+# 08 tag unchecked
+# defect: a token of another table is accepted
+# caught by: the forged and foreign token test
+# test: testHandles
+# filter: Handles.ForgedAndForeign*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -301,7 +301,7 @@
+ 
+ /* The entry a token names, or GRCORE_HANDLE_NONE. The lock is held. */
+ static uint32_t entry_find(const GRCORE_HandleTable * t, GRCORE_HandleToken k) {
+-  if (k.tag != t->tag || k.generation == 0 || k.index >= t->entry_used) {
++  if (k.generation == 0 || k.index >= t->entry_used) {
+     return GRCORE_HANDLE_NONE;
+   }
+   return t->entries[k.index].generation == k.generation ? k.index

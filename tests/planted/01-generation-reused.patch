@@ -1,0 +1,20 @@
+# 01 generation reused
+# defect: a token's generation is derived from its index, so a reused index reissues the generation
+# caught by: the generation test: an old token must stay stale after its index is taken again
+# test: testHandles
+# filter: Handles.AGenerationIsNeverReused*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -408,7 +408,8 @@
+     GRCORE_HandleEntry * e = &t->entries[i];
+     memset(e, 0, sizeof *e);
+     e->value = value;
+-    e->generation = t->next_generation++;
++    e->generation = (uint64_t)i + 1; /* planted */
++    t->next_generation++;
+     e->owner = op;
+     e->owner_serial = op->serial;
+     e->holder = hp;

@@ -236,7 +236,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # check-symbols is right to reject in a shipping library.
 TEST_GATES ?= check-symbols check-aliasing check-stamps check-fp-contract check-labels \
 	check-direction check-edges check-gates check-version check-wiring check-hook check-tls \
-	check-dlopen examples
+	check-dlopen check-planted examples
 
 VALGRIND_FLAGS := --leak-check=full --show-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1 --suppressions=tests/valgrind.supp
 
@@ -375,7 +375,7 @@ $(APP_DIR)/examples/%$(EXE_EXTENSION): examples/%.c $(APP_DIR)/$(STATIC_TARGET) 
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(CORELIBRARY) $(CUTIL_LIBS)
 
 .PHONY: clean cloc docs docs-pdf examples coverage check-symbols check-stamps check-fp-contract check-aliasing
-.PHONY: check-labels check-direction check-edges check-gates bench test-tsan
+.PHONY: check-labels check-direction check-edges check-gates check-planted check-planted-tsan bench test-tsan
 .PHONY: all install test test-quiet test-asan test-valgrind test-valgrind-quiet test-watch uninstall watch
 .PHONY: all-debug install-debug test-debug test-valgrind-debug test-watch-debug uninstall-debug watch-debug
 .PHONY: fuzz fuzz-clean
@@ -472,6 +472,16 @@ check-edges: $(APP_DIR)/$(TARGET) ## Fail on a forbidden #include or NEEDED edge
 
 check-gates: ## Prove each gate fails on its planted defect and passes its control
 	@tools/check-gates.sh
+
+# The handle table's tests, proved by defects planted one at a time into a
+# throwaway copy of the tree (tests/planted/, tools/check-planted.sh). The
+# release arm is in `make test`; the TSan arm builds a second tree with
+# ThreadSanitizer and is run beside `make test-tsan`.
+check-planted: ## Prove the handle-table tests fail on their planted defects (release arm)
+	@PREFIX="$(PREFIX)" tools/check-planted.sh --arm release
+
+check-planted-tsan: ## The same for the defects only ThreadSanitizer sees (a missing lock)
+	@PREFIX="$(PREFIX)" tools/check-planted.sh --arm tsan
 
 check-version: ## Fail if a version other than 0.0.0 is written wrongly
 	@tools/check-version.sh Makefile .

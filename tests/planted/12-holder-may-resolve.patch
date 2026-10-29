@@ -1,0 +1,19 @@
+# 12 holder may resolve
+# defect: a holder may read the value word, which only the owner may
+# caught by: the foreign-context test
+# test: testHandles
+# filter: Handles.ATokenIsRefused*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -452,7 +452,7 @@
+   uint32_t i = entry_find(t, token);
+   if (i != GRCORE_HANDLE_NONE) {
+     const GRCORE_HandleEntry * e = &t->entries[i];
+-    if (standing(e, owner).owner) {
++    if (standing(e, owner).owner || standing(e, owner).holder) { /* planted */
+       status = GRCORE_HANDLE_LIVE;
+       if (out_value != NULL) {
+         *out_value = e->value;

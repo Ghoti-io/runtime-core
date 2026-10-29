@@ -53,6 +53,10 @@ GRCORE_Result grcore_group_create(const GRCORE_Allocator * allocator,
   g->ports = 0;
   grcore_meter_init(&g->meter);
   grcore_counting_init(&g->counting, &g->meter, allocator, pages);
+  if (grcore_handles_table_init(&g->handles, g) != GRCORE_OK) {
+    allocator->free_fn(allocator->ctx, g);
+    return GRCORE_ERR_OOM;
+  }
   *out_group = g;
   return GRCORE_OK;
 }
@@ -62,6 +66,7 @@ GRCORE_Result grcore_group_destroy(GRCORE_Group * group) {
       grcore_group_port_count(group) != 0) {
     return GRCORE_ERR_INVALID;
   }
+  grcore_handles_table_destroy(&group->handles);
   group->allocator->free_fn(group->allocator->ctx, group);
   return GRCORE_OK;
 }

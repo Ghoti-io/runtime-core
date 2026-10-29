@@ -35,6 +35,7 @@ REQUIRED = {
     "check-wiring": ["tools/check-wiring.py"],
     "check-hook": ["tools/check-hook.sh"],
     "check-tls": ["tools/check-tls.sh"],
+    "check-planted": ["tools/check-planted.sh"],
 }
 
 problems = []

@@ -34,6 +34,7 @@
 #include <ghoti.io/runtime-core/macros.h>
 
 #include "context_internal.h"
+#include "group_internal.h"
 
 #include <ghoti.io/runtime-core/b/snapshot.h>
 
@@ -427,7 +428,10 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
       context->config != GRCORE_CONFIG_PARKED_OUTSIDE ||
       context->fuel_scope_count != 0 || context->nested != 0 ||
       (env != NULL && !grcore_restore_env_valid(env)) ||
-      (snapshot->paused && env_entry(env) == NULL)) {
+      (snapshot->paused && env_entry(env) == NULL) ||
+      /* A restore replaces the heap, and the values the group's handle table
+       * roots for this context would name nothing in the new one. */
+      grcore_handles_owned_count(&context->group->handles, context) != 0) {
     return GRCORE_ERR_INVALID;
   }
   /* The key set must be the snapshot's, exactly: a blob with no key on this

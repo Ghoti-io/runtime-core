@@ -1,0 +1,20 @@
+# 13 holder name reused
+# defect: a holder's serial is its slot number, so a later context in the slot has the dead one's name
+# caught by: the holder-name test
+# test: testHandles
+# filter: Handles.EnrollIsIdempotent*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -146,7 +146,8 @@
+     return GRCORE_ERR_OOM;
+   }
+   p->table = t;
+-  p->serial = t->next_serial++;
++  p->serial = slot + 1; /* planted */
++  t->next_serial++;
+   p->slot = (uint32_t)slot;
+   p->owned_head = GRCORE_HANDLE_NONE;
+   p->held_head = GRCORE_HANDLE_NONE;

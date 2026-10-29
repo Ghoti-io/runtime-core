@@ -1,6 +1,6 @@
 # Fixture for the gate self-test; not part of the library.
 TEST_GATES ?= check-symbols check-aliasing check-stamps check-fp-contract check-labels \
-	check-direction check-edges check-version check-wiring check-hook check-tls
+	check-direction check-edges check-version check-wiring check-hook check-tls check-planted
 
 test: all $(TEST_GATES)
 	@echo test
@@ -45,3 +45,6 @@ check-hook:
 
 check-tls:
 	@tools/check-tls.sh $(APP_DIR)/$(TARGET)
+
+check-planted:
+	@tools/check-planted.sh --arm release

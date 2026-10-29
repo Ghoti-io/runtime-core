@@ -1,0 +1,19 @@
+# 05 holder death keeps entries
+# defect: a dead holder's entries are not released
+# caught by: the dead-holder test and the empty table at the end of every test
+# test: testHandles
+# filter: Handles.ADeadHoldersEntries*
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -540,7 +540,7 @@
+   /* What it held is released, tombstones and an entry it owned itself too. */
+   for (uint32_t i = p->held_head; i != GRCORE_HANDLE_NONE;) {
+     uint32_t next = t->entries[i].held_next;
+-    entry_release(t, i);
++    t->entries[i].holder = NULL; /* planted: not released */
+     i = next;
+   }
+   party_drop(t, p);
