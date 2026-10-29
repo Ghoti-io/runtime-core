@@ -477,11 +477,21 @@ check-gates: ## Prove each gate fails on its planted defect and passes its contr
 # throwaway copy of the tree (tests/planted/, tools/check-planted.sh). The
 # release arm is in `make test`; the TSan arm builds a second tree with
 # ThreadSanitizer and is run beside `make test-tsan`.
+# Linux only: the script applies patches with patch(1) and names the Linux
+# build tree. Elsewhere it is skipped by name, never silently passed.
 check-planted: ## Prove the handle-table tests fail on their planted defects (release arm)
+ifeq ($(OS_NAME), Linux)
 	@PREFIX="$(PREFIX)" tools/check-planted.sh --arm release
+else
+	@printf 'check-planted: skipped on %s: the planted defects run on Linux only\n' "$(OS_NAME)"
+endif
 
 check-planted-tsan: ## The same for the defects only ThreadSanitizer sees (a missing lock)
+ifeq ($(OS_NAME), Linux)
 	@PREFIX="$(PREFIX)" tools/check-planted.sh --arm tsan
+else
+	@printf 'ThreadSanitizer builds are only supported on Linux\n' >&2; exit 1
+endif
 
 check-version: ## Fail if a version other than 0.0.0 is written wrongly
 	@tools/check-version.sh Makefile .
