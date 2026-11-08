@@ -27,6 +27,8 @@
  * root source, and hands out generation-checked tokens for them.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <ghoti.io/runtime-core/macros.h>
 
 #include "context_internal.h"
@@ -65,7 +67,7 @@ static uint64_t splitmix64(uint64_t x) {
 static uint32_t make_tag(const void * address) {
   static uint64_t counter;
   struct timespec ts = { 0, 0 };
-  (void)timespec_get(&ts, TIME_UTC);
+  (void)clock_gettime(CLOCK_REALTIME, &ts);
   uint64_t n = __atomic_add_fetch(&counter, 1, __ATOMIC_RELAXED);
   uint64_t x = splitmix64(n ^ (uint64_t)(uintptr_t)address ^
       ((uint64_t)ts.tv_sec << 20) ^ (uint64_t)ts.tv_nsec);
