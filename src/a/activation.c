@@ -235,7 +235,7 @@ static void __attribute__((noinline)) drop_rare(
 /* Drops the top record of a stack that has one: grcore_activation_drop_top
  * after its checks, and grcore_activation_leave after its own, which the
  * compiler inlines into both. */
-static inline void drop_record(GRCORE_Stack * stack) {
+static inline void drop_record(GRCORE_Stack * stack, bool unwinding) {
   GRCORE_Context * context = stack->context;
   /* Read in place: nothing below writes the array before the release of
    * retired code, the last step, which is the only one that runs callbacks. */
@@ -263,7 +263,23 @@ static inline void drop_record(GRCORE_Stack * stack) {
     /* No compiled frame can be on the native stack now, so nothing can return
      * into retired code (AD-28). Nothing retired is the common case, and the
      * test is the release's own, so the call is made only to release. */
-    grcore_registry_release_retired(stack);
+    if (unwinding) {
+      /* The unwinder only edits data: the compiled frames of this record are
+       * still on the native stack and return into this code when the C frames
+       * above `run` unwind by returning. It is released when `run` returns. */
+      stack->release_deferred = true;
+    } else {
+      grcore_registry_release_retired(stack);
+    }
+  }
+}
+
+void grcore_activation_flush_deferred(GRCORE_Stack * stack) {
+  if (stack != NULL && stack->release_deferred && stack->jit_live == 0) {
+    stack->release_deferred = false;
+    if (grcore_registry_holds_retired(stack->registry)) {
+      grcore_registry_release_retired(stack);
+    }
   }
 }
 
@@ -271,7 +287,7 @@ bool grcore_activation_drop_top(GRCORE_Stack * stack) {
   if (stack == NULL || stack->activation_count == 0) {
     return false;
   }
-  drop_record(stack);
+  drop_record(stack, true);
   return true;
 }
 
@@ -298,7 +314,7 @@ GRCORE_Result grcore_activation_leave(
           stack->activation_count) {
     return GRCORE_ERR_INVALID;
   }
-  drop_record(stack);
+  drop_record(stack, false);
   return GRCORE_OK;
 }
 

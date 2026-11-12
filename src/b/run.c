@@ -36,6 +36,10 @@
 
 #include <stdint.h>
 
+void grcore_context_set_run_return(GRCORE_Context * context, void (*fn)(GRCORE_Context *)) {
+  context->run_return = fn;
+}
+
 /* The start of a run or a resume: what the last one reported is stale. */
 static void begin_run(GRCORE_Context * c) {
   c->run_epoch++;
@@ -115,6 +119,9 @@ GRCORE_Result grcore_run(GRCORE_Context * context, GRCORE_EntryFn entry,
   /* The native-stack limit is measured from here (AD-28). */
   grcore_context_native_limit_here(context);
   GRCORE_Result r = settle(context, entry(context, state), out_outcome);
+  if (context->run_return != NULL) {
+    context->run_return(context);
+  }
   context->native_limit = 0; /* it names a stack nobody is running on now */
   return r;
 }
@@ -144,6 +151,9 @@ GRCORE_Result grcore_resume(
   grcore_context_native_limit_here(context);
   GRCORE_Result r = settle(context, context->entry(context, context->entry_state),
       out_outcome);
+  if (context->run_return != NULL) {
+    context->run_return(context);
+  }
   context->native_limit = 0;
   return r;
 }

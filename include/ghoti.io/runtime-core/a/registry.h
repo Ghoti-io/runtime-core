@@ -47,7 +47,11 @@
  * frame may still return into that code. The reference goes to the *retired
  * list*, and is released when the context has no open
  * ::GRCORE_ACTIVATION_JIT record, which is when no compiled frame can be on
- * its native stack. With none open it is released at once. Retired code is
+ * its native stack. With none open it is released at once. A record dropped by
+ * the unwinder does not count as left: the unwinder only edits data, and the
+ * compiled frames of that record return into the retired code when the C frames
+ * above `run` return, so what waited on it is released when `run` or `resume`
+ * returns. Retired code is
  * still found by ::grcore_code_lookup (it says so), because a frame that
  * returns into it must still be walked. A new range may not overlap retired
  * code either: the memory is still held.
@@ -131,7 +135,7 @@ GRCORE_API GRCORE_Result grcore_code_register(GRCORE_Context * context,
  *
  * After the last registration is released, the registry's reference is
  * retired: released at once if the context has no open JIT record, otherwise
- * when the last one is left. Until then the range is still found, as retired.
+ * when the last one is left (when `run` returns, if an unwind dropped it). Until then the range is still found, as retired.
  *
  * @param context The context. The caller must own it.
  * @param start The `start` the range was registered with.

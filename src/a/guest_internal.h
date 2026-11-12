@@ -141,6 +141,7 @@ struct GRCORE_Stack {
   size_t frame_count;
   uint64_t move_count;
   bool always_move;
+  bool release_deferred; ///< An unwind dropped the last JIT record while retired code waited.
   bool walk_cell_broken; ///< A walk cell was set outside a JIT record and a record was then entered.
   const GRCORE_EngineDescriptor ** engines;
   size_t engine_count;
@@ -314,6 +315,12 @@ bool grcore_activation_absorb_cell(GRCORE_Stack * stack);
 /** @brief Leaves the top activation, whatever the stack's state: gives back
  *   its native depth and nesting. Returns false if there is none. */
 bool grcore_activation_drop_top(GRCORE_Stack * stack);
+
+/** @brief Releases the retired code an unwind left waiting, once no compiled
+ *   frame can be on the native stack: `run` and `resume` call it as they
+ *   return. An unwind only edits data, so the compiled frames above the record
+ *   it dropped have not returned yet and may be returning into that code. */
+void grcore_activation_flush_deferred(GRCORE_Stack * stack);
 
 /** @brief Closes the top budget scope record and its fuel scope, and any fuel
  *   scope opened above it directly through B. Returns false if there is

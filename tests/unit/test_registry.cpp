@@ -656,21 +656,34 @@ TEST(Retire, CodeNamedByARangeAndASlotGoesOnlyWhenBothHaveLetGo) {
   EXPECT_EQ(w.code.released, 1);
 }
 
-TEST(Retire, AnUnwindThatDropsTheJitRecordReleasesWhatWaitedOnIt) {
+/* The unwinder only edits data: the compiled frames of the record it drops are
+ * still on the native stack, and return into the code that was retired. So the
+ * release waits until `run` returns, when none can be. */
+TEST(Retire, AnUnwindThatDropsTheJitRecordReleasesWhatWaitedOnItWhenRunReturns) {
   RWorld w;
   GRCORE_EntrySlot * s = nullptr;
   ASSERT_EQ(grcore_entry_slot_create(w.ctx, &s), GRCORE_OK);
   ASSERT_EQ(grcore_entry_slot_set(w.ctx, s, w.code.code, w.code.at(0)), GRCORE_OK);
   w.code.give_up();
-  GRCORE_ActivationRef host = enter(w.stack, GRCORE_ACTIVATION_HOST);
-  enter(w.stack, GRCORE_ACTIVATION_JIT);
-  enter(w.stack, GRCORE_ACTIVATION_NATIVE);
-  ASSERT_EQ(grcore_entry_slot_clear(w.ctx, s), GRCORE_OK);
-  EXPECT_EQ(w.code.released, 0);
-  size_t popped = 0;
-  ASSERT_EQ(grcore_unwind_to_activation(w.stack, host, &popped), GRCORE_OK);
-  EXPECT_EQ(grcore_activation_count(w.stack), 1u);
-  EXPECT_EQ(w.code.released, 1);
+  int released_during_the_run = -1;
+  Fn fn{[&](GRCORE_Context * c) {
+    GRCORE_Stack * stack = grcore_context_stack(c);
+    GRCORE_ActivationRef host = enter(stack, GRCORE_ACTIVATION_HOST);
+    enter(stack, GRCORE_ACTIVATION_JIT);
+    enter(stack, GRCORE_ACTIVATION_NATIVE);
+    EXPECT_EQ(grcore_entry_slot_clear(c, s), GRCORE_OK);
+    EXPECT_EQ(w.code.released, 0);
+    size_t popped = 0;
+    EXPECT_EQ(grcore_unwind_to_activation(stack, host, &popped), GRCORE_OK);
+    EXPECT_EQ(grcore_activation_count(stack), 1u);
+    released_during_the_run = w.code.released; // the native it came from has not returned
+    EXPECT_EQ(grcore_activation_leave(stack, host), GRCORE_OK);
+    return GRCORE_STEP_FINISHED;
+  }};
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
+  EXPECT_EQ(released_during_the_run, 0) << "released while compiled frames could return into it";
+  EXPECT_EQ(w.code.released, 1) << "and never released";
 }
 
 TEST(Retire, DestroyingTheContextReleasesEverythingWhateverIsOpen) {

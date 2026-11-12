@@ -177,6 +177,9 @@ struct GRCORE_Context {
   GRCORE_EntryFn entry;
   void * entry_state;
   uint64_t run_epoch; ///< Increments on every accepted run or resume.
+  /** Called as `run` or `resume` returns, with the context: the guest stack's
+   *  (A's) one place to act once no compiled frame can be on the native stack. */
+  void (*run_return)(GRCORE_Context *);
 };
 
 /**
@@ -285,6 +288,9 @@ bool grcore_context_snapshot_pending(
     const GRCORE_Context * context, GRCORE_RequestKind kind);
 
 /** @brief Clears the terminate request. Only the end of `run` does this. */
+/** Sets the function called as `run` or `resume` returns. Owner only. */
+void grcore_context_set_run_return(GRCORE_Context * context, void (*fn)(GRCORE_Context *));
+
 void grcore_context_clear_terminate(GRCORE_Context * context);
 
 /** @brief Clears time and interrupt, which `resume` acknowledges. */

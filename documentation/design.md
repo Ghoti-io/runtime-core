@@ -858,7 +858,10 @@ hook while the frame is still on the stack, leave the deeper activations (which
 gives back their native depth and nesting) and close the deeper scopes. They run
 no guest code: a limit unwind cannot be caught and runs no `finally`. They edit
 data; the C frames above `run` unwind by returning, which is why nothing crosses
-a host frame. `unwind_all` is the end of a run, after an unwind and after a
+a host frame. For the same reason a JIT record the unwinder drops does not release the
+code retired while it was open: the compiled frames of that record are still on the
+native stack and return into it, so the release waits for `run` or `resume` to return.
+`unwind_all` is the end of a run, after an unwind and after a
 finish alike, and so it also settles the case story 4 deferred: frames left on
 the stack when a run finishes leave a stale used depth for the next run.
 

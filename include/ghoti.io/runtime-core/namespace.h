@@ -139,6 +139,7 @@
 /* Public functions, and the private ones the static archive carries. */
 #define grcore_activation_at GHOTIIO_RUNTIME_CORE(grcore_activation_at)
 #define grcore_activation_count GHOTIIO_RUNTIME_CORE(grcore_activation_count)
+#define grcore_activation_flush_deferred GHOTIIO_RUNTIME_CORE(grcore_activation_flush_deferred)
 #define grcore_activation_drop_top GHOTIIO_RUNTIME_CORE(grcore_activation_drop_top)
 #define grcore_activation_enter GHOTIIO_RUNTIME_CORE(grcore_activation_enter)
 #define grcore_boundary_enter GHOTIIO_RUNTIME_CORE(grcore_boundary_enter)
@@ -182,6 +183,7 @@
 #define grcore_context_charge_fuel GHOTIIO_RUNTIME_CORE(grcore_context_charge_fuel)
 #define grcore_context_clear_edge_requests GHOTIIO_RUNTIME_CORE(grcore_context_clear_edge_requests)
 #define grcore_context_clear_request GHOTIIO_RUNTIME_CORE(grcore_context_clear_request)
+#define grcore_context_set_run_return GHOTIIO_RUNTIME_CORE(grcore_context_set_run_return)
 #define grcore_context_clear_terminate GHOTIIO_RUNTIME_CORE(grcore_context_clear_terminate)
 #define grcore_context_create GHOTIIO_RUNTIME_CORE(grcore_context_create)
 #define grcore_context_depth GHOTIIO_RUNTIME_CORE(grcore_context_depth)

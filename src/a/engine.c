@@ -33,6 +33,7 @@
 #include <ghoti.io/runtime-core/macros.h>
 
 #include "guest_internal.h"
+#include "../b/context_internal.h"
 
 #include <ghoti.io/runtime-core/b/budget.h>
 
@@ -70,6 +71,12 @@ bool grcore_decoder_decode(const GRCORE_ConservativeDecoder * decoder,
   }
   *out_address = ((word & decoder->mask) >> decoder->shift) + decoder->base;
   return true;
+}
+
+/* `run` has returned: no compiled frame is on the native stack, so retired code
+ * an unwind left waiting can go. */
+static void guest_run_return(GRCORE_Context * context) {
+  grcore_activation_flush_deferred(grcore_context_stack(context));
 }
 
 GRCORE_Stack * grcore_context_stack(const GRCORE_Context * context) {
@@ -140,6 +147,7 @@ GRCORE_Result grcore_engine_register(GRCORE_Context * context,
     GRCORE_Result r =
         grcore_context_add_root_source(context, &grcore_guest_root_source, stack);
     if (r == GRCORE_OK) {
+      grcore_context_set_run_return(context, guest_run_return);
       r = grcore_context_register(context, &grcore_guest_key, stack);
       if (r != GRCORE_OK) {
         grcore_context_remove_root_source(
