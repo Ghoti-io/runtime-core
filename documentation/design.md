@@ -434,8 +434,9 @@ was.
 **The guest stack is a byte buffer of frames, named by offsets (AD-8, AD-17).**
 A call from guest code to guest code pushes a frame, so an interpreter never
 recurses in C to make it, and a pause is just a return: the whole position is
-data on the stack. A frame is a 40-byte header (the caller's offset, the poll
-identity, the frame size, the engine id, the slot count, a tag) followed by 64-bit slots. A
+data on the stack. A frame is a 48-byte header (the caller's offset, the poll
+identity, the frame size, the engine id, the slot count, the engine's function id
+that pairs the frame with compiled code, a tag) followed by 64-bit slots. A
 consumer holds a `GRCORE_FrameRef`, an offset, never an address, because the
 stack grows by allocating a bigger buffer, copying and freeing the old one.
 `grcore_stack_slots` hands out an address anyway, for an interpreter's inner

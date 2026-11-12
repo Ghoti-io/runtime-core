@@ -44,11 +44,10 @@
  * counted in `dropped`). It commutes with every other DECIDE and OBSERVE
  * handler that does not look at the profiler's own request kind, which the
  * phase-shuffle test mode checks. The one change it makes is to clear that kind,
- * as every service that owns a kind does, and `grcore_pollcall_pending` is
- * live: an OBSERVE handler that asks about the profiler's kind sees it cleared
- * if it runs after the profiler (registration order, unshuffled), so it must be
- * registered before the profiler or not ask. The tests' oracle is registered
- * first for this reason.
+ * as every service that owns a kind does. `grcore_pollcall_pending` answers
+ * from a copy taken at the start of the poll, so what an OBSERVE handler is
+ * told is pending does not depend on whether it runs before or after the
+ * profiler.
  *
  * **Safepoint bias.** A sample is taken at the next poll after the request,
  * not at the instant of the request. Time that passes between polls is

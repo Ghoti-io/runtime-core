@@ -181,8 +181,9 @@ GRCORE_Result grcore_context_destroy(GRCORE_Context * context) {
     }
   }
   /* What the context owned in the group's handle table becomes tombstones and
-   * what it held is released (b/handles.h). After the destructors, which may
-   * release their own tokens, and while the context is still valid. */
+   * what it held is released (b/handles.h). After the destructors, and while the
+   * context is still valid. The table refuses a call made for a context that
+   * is tearing down, so a destructor cannot use it to enroll or pin. */
   grcore_handles_context_destroyed(context);
   /* After the destructors, which may still post to or read the port. A post
    * that races this finds the context gone and is refused. */

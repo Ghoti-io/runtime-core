@@ -205,8 +205,7 @@ static void __attribute__((noinline)) drop_rare(
   if (rec->nested) {
     /* It refuses only a non-owner or a count of zero. Every caller checked
      * ownership, and this record counted one when it was entered, so a
-     * refusal here would be a defect of the count, not a case to handle. The
-     * old code ignored it too. */
+     * refusal here would be a defect of the count, not a case to handle. */
     (void)grcore_context_nested_leave(context);
   }
   if (rec->boundary_resumable && context->resumable_boundaries) {

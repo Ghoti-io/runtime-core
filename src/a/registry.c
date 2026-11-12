@@ -393,9 +393,11 @@ void grcore_registry_release_retired(GRCORE_Stack * stack) {
     a->free_fn(a->ctx, list);
     list = next;
   }
-  /* Take the retired ranges out of the array before any release callback
-   * runs: swap the live ones down in order, which leaves the retired ones, with
-   * their references, past the new end. */
+  /* Swap the live ranges down in order, which leaves the retired ones, with
+   * their references, past the new end of the array. Their release callbacks
+   * run after this, while those references still sit there: a callback may not
+   * call back into the registry (registry.h), because registering would write
+   * over them. */
   size_t old_count = r->count, kept = 0;
   for (size_t i = 0; i < old_count; i++) {
     if (!r->entries[i].retired) {
