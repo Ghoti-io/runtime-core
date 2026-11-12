@@ -549,6 +549,44 @@ const GRCORE_Key kGuestKey = GRCORE_KEY_INIT("counting-guest", GRCORE_CARDINALIT
 
 } // namespace
 
+/* The destination has a life of its own behind it: it spent fuel and paused on
+ * it. design.md: a restored context's fuel used starts at zero and it reports
+ * no pause keys, so neither may be what that life left. */
+TEST(Snapshot, ARestoreIntoAContextThatAlreadyRanReportsNoStaleKeysAndNoSpentFuel) {
+  GuestHolder src_guest;
+  src_guest.g.n = 200;
+  RunWorld src(50);
+  ASSERT_EQ(grcore_context_register(src.ctx, &kGuestKey, &src_guest), GRCORE_OK);
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(src.ctx, counting_entry, &src_guest.g, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  Taken t;
+  ASSERT_EQ(grcore_context_snapshot(src.ctx, nullptr, &t.s), GRCORE_OK);
+
+  GuestHolder dst_guest;
+  dst_guest.g.n = 200;
+  RunWorld dst(30);
+  ASSERT_EQ(grcore_context_register(dst.ctx, &kGuestKey, &dst_guest), GRCORE_OK);
+  ASSERT_EQ(grcore_run(dst.ctx, counting_entry, &dst_guest.g, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  // A paused context is not a destination; end its life by terminating it.
+  GRCORE_Port * port;
+  ASSERT_EQ(grcore_context_port(dst.ctx, &port), GRCORE_OK);
+  ASSERT_EQ(grcore_port_post(port, GRCORE_REQUEST_TERMINATE), GRCORE_OK);
+  ASSERT_EQ(grcore_resume(dst.ctx, &outcome), GRCORE_ERR_LIMIT);
+  grcore_port_release(port);
+  ASSERT_GT(grcore_context_fuel_used(dst.ctx), 0u) << "the control: it spent some";
+  ASSERT_EQ(grcore_context_pause_key_count(dst.ctx), 1u) << "the control: it has a key";
+
+  GRCORE_RestoreEnv env = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
+  env.entry = counting_entry;
+  env.entry_state = &dst_guest.g;
+  env.pause_file = kCountingPollFile;
+  ASSERT_EQ(grcore_context_restore(dst.ctx, t.s, &env), GRCORE_OK);
+  EXPECT_EQ(grcore_context_fuel_used(dst.ctx), 0u);
+  EXPECT_EQ(grcore_context_pause_key_count(dst.ctx), 0u);
+}
+
 TEST(Snapshot, APausedContextRestoresPausedAndResumesToTheUninterruptedAnswer) {
   GuestHolder src_guest;
   src_guest.g.n = 200;

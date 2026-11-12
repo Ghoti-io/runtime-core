@@ -496,6 +496,13 @@ GRCORE_Result grcore_context_restore(GRCORE_Context * context,
           environment(env, reg->key->name), GRCORE_SETTLE_COMMIT);
     }
   }
+  /* A snapshot carries no budgets and no verdict: what the destination's last
+   * life left (fuel it spent, the keys that paused it, the unwind it ended on)
+   * is not the restored context's, which "starts at zero" and "reports none". */
+  context->fuel_used = 0;
+  context->verdict_key_count = 0;
+  context->unwind_result = GRCORE_OK;
+  context->scoped_unwind = 0;
   if (snapshot->paused) {
     context->entry = env_entry(env);
     context->entry_state = env_entry_state(env);

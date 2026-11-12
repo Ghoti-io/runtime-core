@@ -1592,7 +1592,7 @@ snapshot); the pause location's file is borrowed from the host the same way.
 Not captured, supplied again as for a fresh run: the group, the options and
 budgets (fuel used starts at zero, the limits are the destination's), the page
 provider and allocator, the request port, the keys that have no hooks, and the
-keys that paused it (a restored context reports none).
+keys that paused it (a restored context reports none, and the fuel and unwind result its destination's last life left are cleared).
 
 **The guest stack's snapshot hooks (A).** The stack's own key (`runtime-core.guest`)
 has hooks, so every engine's frames travel with a snapshot without the engine
