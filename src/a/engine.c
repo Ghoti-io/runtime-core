@@ -88,6 +88,10 @@ GRCORE_Result grcore_engine_register(GRCORE_Context * context,
     const GRCORE_EngineDescriptor * descriptor, GRCORE_EngineId * out_id) {
   if (context == NULL || !grcore_engine_descriptor_valid(descriptor) ||
       out_id == NULL || descriptor->name == NULL || descriptor->name[0] == '\0' ||
+      /* A shift of 64 or more is no shift (`grcore_decoder_decode` refuses it);
+       * a consumer that shifts by the descriptor's own field would be told a
+       * defined thing only if the descriptor never held it. */
+      (descriptor->decoder.mask != 0 && descriptor->decoder.shift >= 64) ||
       !grcore_context_is_owner(context) ||
       grcore_context_state(context) == GRCORE_CONTEXT_RUNNING) {
     return GRCORE_ERR_INVALID;

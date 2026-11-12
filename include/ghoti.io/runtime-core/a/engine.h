@@ -367,7 +367,8 @@ GRCORE_API bool grcore_engine_descriptor_valid(
  *   ::grcore_engine_descriptor_valid), have a name, and not already be
  *   registered with this context.
  * @param out_id Receives the engine's id, from 1. Written only on success.
- * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, an unnamed
+ * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, a decoder with
+ *   a mask and a shift of 64 or more, an unnamed
  *   or already registered descriptor, an invalid one (`size`), a non-owner or a
  *   wrong state;
  *   ::GRCORE_ERR_LIMIT if the context's memory budget refuses the allocation;

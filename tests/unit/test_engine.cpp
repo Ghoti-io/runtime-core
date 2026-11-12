@@ -107,6 +107,12 @@ TEST(Engine, RegisterRefusesBadArgumentsAndLeavesTheTableUnchanged) {
   static const GRCORE_EngineDescriptor empty_name = GRCORE_ENGINE_DESCRIPTOR_INIT("", nullptr, nullptr,
       nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
       GRCORE_ConservativeDecoder{0, 0, 0}, nullptr, nullptr, nullptr, nullptr);
+  // A decoder that reads address bits but shifts by the width of the word or more
+  // is refused when it is registered, not left to the first consumer that shifts.
+  static const GRCORE_EngineDescriptor wide_shift = GRCORE_ENGINE_DESCRIPTOR_INIT("wide-shift", nullptr, nullptr,
+      nullptr, GRCORE_ScopeInterface{nullptr, nullptr, nullptr},
+      GRCORE_ConservativeDecoder{0xFFFF, 64, 0}, nullptr, nullptr, nullptr, nullptr);
+  EXPECT_EQ(grcore_engine_register(w.ctx, &wide_shift, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_engine_register(w.ctx, &no_name, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(grcore_engine_register(w.ctx, &empty_name, &id), GRCORE_ERR_INVALID);
   EXPECT_EQ(id, 77u); // never written on a refusal
