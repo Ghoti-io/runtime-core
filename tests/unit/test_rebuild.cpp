@@ -25,7 +25,8 @@ const uintptr_t kOutside = reinterpret_cast<uintptr_t>(kOutsideBytes);
 
 struct CodeHolder {
   HandCode code;
-  explicit CodeHolder(bool dead_slot) : code(false, dead_slot, false) {}
+  explicit CodeHolder(bool dead_slot, bool foreign_identity = false)
+      : code(false, dead_slot, false, foreign_identity) {}
 };
 
 /* A world with hand-built code registered for either the plain engine (which
@@ -36,8 +37,9 @@ struct RW : CodeHolder, StackWorld {
   GRCORE_EngineId engine = 0;
   ConvLog log;
   explicit RW(GRCORE_Representation rep = GRCORE_REPR_BITS, bool use_conv = false,
-      bool dead_slot = false, const GRCORE_Allocator * allocator = nullptr)
-      : CodeHolder(dead_slot),
+      bool dead_slot = false, const GRCORE_Allocator * allocator = nullptr,
+      bool foreign_identity = false)
+      : CodeHolder(dead_slot, foreign_identity),
         StackWorld(GRCORE_UNLIMITED, GRCORE_UNLIMITED, GRCORE_DEFAULT_MEMORY_RESERVE,
             GRCORE_UNLIMITED, allocator) {
     code.state[2].representation = rep;
@@ -318,6 +320,29 @@ TEST(ChainRebuild, AGuestFrameWithTheWrongGuestFunctionIsRefused) {
   EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr),
       GRCORE_ERR_INVALID);
   EXPECT_TRUE(c.untouched(w.stack));
+  grcore_unwind_all(w.stack, nullptr);
+}
+
+/* An engine whose guest function ids are not the low bits of its poll
+ * functions sets the id itself. The rebuild records each compiled frame's poll
+ * position; it must not replace the id the frame was paired by. */
+TEST(ChainRebuild, TheRebuildKeepsThePairingIdTheEngineSet) {
+  RW w(GRCORE_REPR_BITS, false, false, nullptr, /*foreign_identity=*/true);
+  Chain c(w, 4);
+  ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
+  for (size_t j = 0; j < 4; j++) {
+    const size_t depth = 3 - j; // the compiled frame's site
+    GRCORE_PollIdentity id = {};
+    ASSERT_EQ(grcore_stack_identity(w.stack, c.guest[j], &id), GRCORE_OK);
+    EXPECT_EQ(id.function, UINT64_C(0x5000) << 32 | (7000 + depth))
+        << "the poll position is the compiled frame's";
+    uint32_t pairing = 0;
+    ASSERT_EQ(grcore_stack_guest_function(w.stack, c.guest[j], &pairing), GRCORE_OK);
+    EXPECT_EQ(pairing, 100 + depth) << "the pairing id is still the engine's";
+  }
+  uint32_t out = 0;
+  EXPECT_EQ(grcore_stack_guest_function(w.stack, c.guest[0], nullptr), GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_stack_guest_function(w.stack, GRCORE_FrameRef{}, &out), GRCORE_ERR_INVALID);
   grcore_unwind_all(w.stack, nullptr);
 }
 

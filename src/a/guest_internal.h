@@ -226,6 +226,13 @@ GRCORE_Result grcore_guest_array_reserve_from(GRCORE_Context * context,
 bool grcore_stack_hook_frame(const GRCORE_Stack * stack, GRCORE_FrameRef ref,
     size_t depth, GRCORE_AbstractFrame * out, GRCORE_FrameHeader * header);
 
+/** @brief Records where a frame polls next (function and offset) and leaves its
+ *   pairing id alone. ::grcore_stack_set_identity does this and also sets the id;
+ *   the chain rebuild, whose frames were paired by the id the engine chose, must
+ *   not. Refused as that function is. */
+GRCORE_Result grcore_stack_set_poll_position(
+    GRCORE_Stack * stack, GRCORE_FrameRef frame, GRCORE_PollIdentity identity);
+
 /** @brief Pops frames, running each engine's `unwind` hook first, until
  *   `target` remain. */
 GRCORE_Result grcore_unwind_frames(

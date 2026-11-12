@@ -711,8 +711,10 @@ struct HandCode {
    * `with_derived` two derived pointers that share the reference at -8 as their
    * base: one at -32 (16 bytes in, by the metadata) and one at -40 (24 bytes in),
    * two words of the frame that no other entry names. */
+  /* `foreign_identity` makes each site's poll identity a function whose low 32
+   * bits are not its guest function id, as a module-qualified engine's are. */
   explicit HandCode(bool raw_live = false, bool dead_slot = false,
-      bool with_derived = false)
+      bool with_derived = false, bool foreign_identity = false)
       : bytes(16 * (kSites + 2)) {
     derived[0] = {-32, -8, 16};
     derived[1] = {-40, -8, 24};
@@ -726,7 +728,8 @@ struct HandCode {
       GRCORE_CodeSite site{};
       site.code_offset = static_cast<uint32_t>(16 * (i + 1));
       site.kind = GRCORE_SITE_GC_POINT_CALL;
-      site.identity = GRCORE_PollIdentity{100 + i, i, 0};
+      site.identity = GRCORE_PollIdentity{
+          foreign_identity ? (UINT64_C(0x5000) << 32 | (7000 + i)) : 100 + i, i, 0};
       site.guest_function = static_cast<uint32_t>(100 + i);
       site.live = live;
       site.live_count = raw_live ? 2 : 1;

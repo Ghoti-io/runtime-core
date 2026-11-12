@@ -327,7 +327,7 @@ GRCORE_Result grcore_stack_engine(const GRCORE_Stack * stack,
   return GRCORE_OK;
 }
 
-GRCORE_Result grcore_stack_set_identity(
+GRCORE_Result grcore_stack_set_poll_position(
     GRCORE_Stack * stack, GRCORE_FrameRef frame, GRCORE_PollIdentity identity) {
   GRCORE_FrameHeader h;
   if (!owner_of(stack) || !grcore_stack_read_frame(stack, frame, &h) ||
@@ -338,6 +338,15 @@ GRCORE_Result grcore_stack_set_identity(
       &identity.function, sizeof identity.function);
   memcpy(stack->buffer + frame.offset + offsetof(GRCORE_FrameHeader, offset),
       &identity.offset, sizeof identity.offset);
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_stack_set_identity(
+    GRCORE_Stack * stack, GRCORE_FrameRef frame, GRCORE_PollIdentity identity) {
+  GRCORE_Result r = grcore_stack_set_poll_position(stack, frame, identity);
+  if (r != GRCORE_OK) {
+    return r;
+  }
   uint32_t guest_function = (uint32_t)identity.function;
   memcpy(stack->buffer + frame.offset +
       offsetof(GRCORE_FrameHeader, guest_function), &guest_function,
@@ -354,6 +363,16 @@ GRCORE_Result grcore_stack_set_guest_function(GRCORE_Stack * stack,
   memcpy(stack->buffer + frame.offset +
       offsetof(GRCORE_FrameHeader, guest_function), &guest_function,
       sizeof guest_function);
+  return GRCORE_OK;
+}
+
+GRCORE_Result grcore_stack_guest_function(const GRCORE_Stack * stack,
+    GRCORE_FrameRef frame, uint32_t * out_guest_function) {
+  GRCORE_FrameHeader h;
+  if (out_guest_function == NULL || !grcore_stack_read_frame(stack, frame, &h)) {
+    return GRCORE_ERR_INVALID;
+  }
+  *out_guest_function = h.guest_function;
   return GRCORE_OK;
 }
 

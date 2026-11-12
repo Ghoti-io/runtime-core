@@ -1360,8 +1360,9 @@ leaves the guest frame's own word (a frame that keeps a header word the compiled
 code does not know is better left with it) unless the engine's slot kind for that
 slot is VALUE, in which case the word is nulled: no collection updated it while
 its frame was paired, so it may name an object that moved or was freed.
-Each rebuilt frame also takes its compiled frame's identity: a caller's call site,
-the innermost frame's exit site. Until then a guest frame has the identity it was
+Each rebuilt frame also takes its compiled frame's poll position: a caller's call site,
+the innermost frame's exit site. Its pairing id stays what the engine set, since the
+frame was paired by it. Until then a guest frame has the identity it was
 pushed with, its function's entry, and the interpreter that resumes a rebuilt frame
 can read it before it polls (a caller waiting under its callee, a frame resumed at a
 named exit, which is not a poll). This used to be each engine's deopt hook's job;

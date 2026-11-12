@@ -557,7 +557,10 @@ GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
     if (index >= keep_frames) {
       continue;
     }
-    (void)grcore_stack_set_identity(stack, guest, cf.identity);
+    /* The pairing id stays what the engine set: a rebuilt frame was paired by
+     * it, and overwriting it with the poll function's low bits would break the
+     * pairing of any engine whose guest function ids differ from them. */
+    (void)grcore_stack_set_poll_position(stack, guest, cf.identity);
     uint64_t * slots = guest_slots(stack, guest);
     GRCORE_AbstractFrame view;
     GRCORE_FrameHeader view_header;

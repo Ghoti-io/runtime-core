@@ -322,9 +322,12 @@ GRCORE_API GRCORE_Result grcore_stack_set_identity(
  * @brief Sets the engine-local function id used to pair this guest frame with
  *   a compiled frame. The poll identity remains separately namespaced.
  *
- * `grcore_stack_set_identity` initializes this id to the low 32 bits of the
- * poll function for source compatibility. Engines whose guest function ids
- * differ from that value may override it with this setter.
+ * `grcore_stack_set_identity` sets this id to the low 32 bits of the poll
+ * function it is given, every time, for source compatibility. An engine whose
+ * guest function ids differ from that value sets it with this setter after the
+ * last `grcore_stack_set_identity` of the frame, because a later one replaces
+ * it. (The chain rebuild does not: it records the compiled frame's poll position
+ * and leaves this id as the engine set it.)
  *
  * @param stack The stack. The caller must own its context.
  * @param frame The frame.
@@ -333,6 +336,19 @@ GRCORE_API GRCORE_Result grcore_stack_set_identity(
  */
 GRCORE_API GRCORE_Result grcore_stack_set_guest_function(
     GRCORE_Stack * stack, GRCORE_FrameRef frame, uint32_t guest_function);
+
+/**
+ * @brief The engine-local function id that pairs this guest frame with a
+ *   compiled frame; the low 32 bits of the poll function until an engine sets
+ *   it.
+ *
+ * @param stack The stack.
+ * @param frame The frame.
+ * @param out_guest_function Receives the id. Written only on success.
+ * @return ::GRCORE_OK or ::GRCORE_ERR_INVALID.
+ */
+GRCORE_API GRCORE_Result grcore_stack_guest_function(const GRCORE_Stack * stack,
+    GRCORE_FrameRef frame, uint32_t * out_guest_function);
 
 /**
  * @brief The identity last recorded in `frame`; zeroes until one is.
