@@ -158,8 +158,10 @@ every access and would hide a violated protocol instead of refusing it.
 call). It would make a thread's identity something the host must carry and
 could forge or lose. The thread id is assigned lazily from a global atomic
 counter on a thread's first call, so it needs no platform thread API and is
-never reused: a thread that exits while owning a context leaves it owned by an
-id no later thread can take. A host should release or destroy a context before
+never reused within the counter's range: a thread that exits while owning a context
+leaves it owned by an id no later thread can take. The counter is a pointer wide, so on
+a 32-bit target it wraps after 2^32 threads have been created in one process, and an id
+is issued again then; no process is expected to create that many. A host should release or destroy a context before
 its thread ends. A paused context the host abandons can still be destroyed by
 its owner.
 
