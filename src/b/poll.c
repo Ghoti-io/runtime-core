@@ -194,12 +194,12 @@ static uint64_t next_random(GRCORE_Context * c) {
 
 /* Runs the handlers of `phase` over registrations [0, count), in registration
  * order or, when `shuffled` and the test mode is on, in a seeded random one.
- * Handlers are looked up afresh each time: one may register at-poll, which
- * can move the table. A handler registered during the phase is not run until
- * the next poll. */
+ * `count` is the registrations the poll began with, because that is what its
+ * vote slots and its tally cover: a handler registered during the poll, of any
+ * phase, is not run until the next poll. The table is read afresh each time,
+ * since a handler may register at-poll and so move it. */
 static void run_phase(GRCORE_Context * c, GRCORE_PollCall * call,
-    GRCORE_Phase phase, bool shuffled) {
-  size_t count = c->registration_count;
+    GRCORE_Phase phase, bool shuffled, size_t count) {
   size_t n = 0;
   call->phase = phase;
   for (size_t i = 0; i < count; i++) {
@@ -297,7 +297,7 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
     call.current = k;
     core_keys[k].poll(c, NULL, &call);
   }
-  run_phase(c, &call, GRCORE_PHASE_DECIDE, true);
+  run_phase(c, &call, GRCORE_PHASE_DECIDE, true, registrations);
   GRCORE_Verdict verdict = tally(c, registrations);
   bool promoted = false;
   if (verdict == GRCORE_VERDICT_PAUSE && !allow_pause) {
@@ -308,7 +308,7 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
 
   /* 2. ACT. A collector that frees memory here is why the memory verdict
    * waits for the next poll. */
-  run_phase(c, &call, GRCORE_PHASE_ACT, false);
+  run_phase(c, &call, GRCORE_PHASE_ACT, false, registrations);
   grcore_context_refresh_derived(c);
   if (!over_memory_budget(c)) {
     c->reclaim_tried = false;
@@ -317,12 +317,12 @@ static GRCORE_Verdict poll_slow(GRCORE_Context * c, GRCORE_Location location,
   }
 
   /* 3. OBSERVE. */
-  run_phase(c, &call, GRCORE_PHASE_OBSERVE, true);
+  run_phase(c, &call, GRCORE_PHASE_OBSERVE, true, registrations);
 
   /* 4. YIELD, only when nothing has stopped the guest. */
   if (verdict == GRCORE_VERDICT_CONTINUE) {
     call.verdict = GRCORE_VERDICT_CONTINUE;
-    run_phase(c, &call, GRCORE_PHASE_YIELD, false);
+    run_phase(c, &call, GRCORE_PHASE_YIELD, false, registrations);
     verdict = tally(c, registrations);
     if (verdict == GRCORE_VERDICT_PAUSE && !allow_pause) {
       verdict = GRCORE_VERDICT_UNWIND;

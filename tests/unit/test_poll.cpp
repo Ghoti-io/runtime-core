@@ -576,6 +576,38 @@ TEST(Poll, AHandlerThatRegistersAtPollGrowsTheTablesWithoutDisturbingThePoll) {
   EXPECT_EQ(pause_keys(w.ctx).size(), 2u + 10u);
 }
 
+TEST(Poll, AHandlerRegisteredDuringAPollIsNotRunUntilTheNextOneWhateverItsPhase) {
+  RunWorld w;
+  // A DECIDE handler registers a YIELD voter while the poll is in progress. The
+  // poll's vote slots and its tally cover the registrations it began with, so
+  // running the new one there would take a vote that is then never counted.
+  Probe decider{"decider"};
+  Probe late{"late"};
+  late.vote = GRCORE_VERDICT_PAUSE;
+  bool registered = false;
+  decider.extra = [&](GRCORE_Context * c, GRCORE_PollCall *) {
+    if (!registered) {
+      registered = true;
+      EXPECT_EQ(grcore_context_register(c, &kYieldKey, &late), GRCORE_OK);
+    }
+  };
+  ASSERT_EQ(grcore_context_register(w.ctx, &kDecideKey, &decider), GRCORE_OK);
+  // A request of the decider's kind takes the poll off the fast path.
+  GRCORE_Port * p;
+  ASSERT_EQ(grcore_context_port(w.ctx, &p), GRCORE_OK);
+  GRCORE_RequestKind kind;
+  ASSERT_EQ(grcore_context_request_kind(w.ctx, &kDecideKey, &kind), GRCORE_OK);
+  ASSERT_EQ(grcore_port_post(p, kind), GRCORE_OK);
+  EXPECT_EQ(polls_in_a_run(w.ctx, 1), std::vector<GRCORE_Verdict>{GRCORE_VERDICT_CONTINUE});
+  EXPECT_TRUE(registered);
+  EXPECT_EQ(late.calls, 0) << "the voter registered during the poll ran in it";
+  // The next poll runs it, counts its vote, and the context pauses for it.
+  ASSERT_EQ(grcore_port_post(p, kind), GRCORE_OK);
+  EXPECT_EQ(polls_in_a_run(w.ctx, 1), std::vector<GRCORE_Verdict>{GRCORE_VERDICT_PAUSE});
+  EXPECT_EQ(late.calls, 1);
+  grcore_port_release(p);
+}
+
 TEST(Poll, EveryAllocationFailureWhileRegisteringLeavesTheTablesConsistent) {
   bool succeeded = false;
   int failures = 0;
