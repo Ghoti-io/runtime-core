@@ -8,10 +8,10 @@
 # The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
 --- a/src/b/handles.c
 +++ b/src/b/handles.c
-@@ -393,7 +393,7 @@
-     r = grcore_context_add_root_source(owner, &kHandleRoots, op);
+@@ -400,7 +400,7 @@
      if (r == GRCORE_OK) {
        op->root_registered = true;
+       registered_here = true;
 -    } else if (made) {
 +    } else if (made && 0) { /* planted */
        /* Nothing else refers to a party made by this call. */

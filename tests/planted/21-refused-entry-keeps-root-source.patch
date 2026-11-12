@@ -1,0 +1,19 @@
+# 21 refused entry keeps the root source
+# defect: a pin refused for want of an entry keeps the root source it registered for the owner
+# caught by: the allocation sweep of pin, which counts the owner's root sources after every refusal
+# test: testHandles
+# filter: Handles.AllocationFailureInPinLeavesTheTableConsistentAtEveryPoint
+# arm: release
+#
+# The patch applies with fuzz 0; tools/check-planted.sh names one that no longer does.
+--- a/src/b/handles.c
++++ b/src/b/handles.c
+@@ -413,7 +413,7 @@
+     if (r != GRCORE_OK) {
+       /* A refusal changes nothing a later call can see: what this call set up
+        * for the owner goes with it. */
+-      if (registered_here) {
++      if (registered_here && 0) { /* planted */
+         (void)grcore_context_remove_root_source(owner, &kHandleRoots, op);
+         op->root_registered = false;
+       }
