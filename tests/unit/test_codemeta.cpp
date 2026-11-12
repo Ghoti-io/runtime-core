@@ -211,6 +211,20 @@ TEST(CodeMeta, AChainOfDerivedPointersIsRefusedByTheChecksOfTheBaseAndTheSlot) {
   EXPECT_EQ(site, 2u);
 }
 
+/* design.md: each VALUE slot of a compiled frame is reported once. A moving
+ * collector that does not test for to-space would forward a slot named twice
+ * twice. Control: the same site with the slots distinct is valid. */
+TEST(CodeMeta, AStackMapThatNamesTheSameReferenceSlotTwiceIsCorrupt) {
+  Built ok = valid();
+  ASSERT_EQ(grcore_codemeta_validate(&ok.meta, 100, nullptr), GRCORE_OK);
+  Built b = valid();
+  b.parts[1].live.push_back(slot(-16, GRCORE_SLOT_VALUE)); // already live at this site
+  b.finish(64, 100);
+  size_t site = 0;
+  EXPECT_NE(std::strstr(refuse_at(b, &site), "same reference slot twice"), nullptr);
+  EXPECT_EQ(site, 1u);
+}
+
 TEST(CodeMeta, ADerivedSlotNamedTwiceIsCorruptAndTwoPointersMayShareABase) {
   Built b = valid();
   b.parts[0].derived = {{-24, -8, 16}, {-24, -16, 8}}; // subtracted twice

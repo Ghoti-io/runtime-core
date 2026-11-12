@@ -168,6 +168,30 @@ static GRCORE_Result check_site(const GRCORE_CodeSite * s, uint32_t frame_bytes,
       CORRUPT("stack map entry carries a converting representation");
     }
   }
+  /* Each VALUE slot is reported once (design.md): a moving collector that does
+   * not test for to-space would forward a slot named twice twice. */
+  for (size_t i = 0; i < s->live_count; i++) {
+    if (s->live[i].slot_kind != GRCORE_SLOT_VALUE) {
+      continue;
+    }
+    bool twice = false;
+    if (marks != NULL) {
+      twice = bit(marks, s->live[i].value);
+      set_bit(marks, s->live[i].value, true);
+    } else {
+      for (size_t j = 0; j < i && !twice; j++) {
+        twice = s->live[j].slot_kind == GRCORE_SLOT_VALUE &&
+            s->live[j].value == s->live[i].value;
+      }
+    }
+    if (twice) {
+      if (marks != NULL) {
+        mark_slots(s, marks, false);
+      }
+      *loc = i;
+      CORRUPT("stack map names the same reference slot twice");
+    }
+  }
   *loc = SIZE_MAX;
   if (marks != NULL) {
     mark_slots(s, marks, true);
