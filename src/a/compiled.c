@@ -64,8 +64,11 @@ GRCORE_Result grcore_compiled_walk_begin(
  * NULL if it can. `floor` is zero for the first frame of the walk. */
 static const char * base_fault(const GRCORE_ActivationRecord * rec,
     uintptr_t base, uintptr_t floor) {
-  if (base % sizeof(uintptr_t) != 0) {
-    return "a frame base is not word-aligned";
+  /* Eight bytes, not a pointer's: the slots are read in place as uint64_t, and
+   * their offsets are multiples of eight, so a base that is only 4-aligned (a
+   * 32-bit target) would make every slot a misaligned access. */
+  if (base % sizeof(uint64_t) != 0) {
+    return "a frame base is not word-aligned (eight bytes)";
   }
   if (base <= floor) {
     return "a frame base is not above the base of the frame it returns to";

@@ -72,7 +72,7 @@
  * marker was, is a broken chain.
  *
  * **A broken chain is never skipped.** The walk checks that each caller base is
- * word-aligned, above its callee's, and, where the record has a C segment,
+ * eight-byte-aligned, above its callee's, and, where the record has a C segment,
  * inside it; that the innermost frame's return address is in registered code at
  * a site; and that a run is above the runs inside it. A chain that fails one
  * ends the walk with ::GRCORE_CWALK_BROKEN and a reason, and the walk stays

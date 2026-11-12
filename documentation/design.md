@@ -1178,7 +1178,7 @@ compiled state. A frame's code is found from its return address, its site from
 the offset in that code; the caller's base and return address are the two words
 at the frame's base. A return address in registered code continues the run; the
 run ends only at the chain-end marker (part 5), and the walk goes on to the next
-record outward that carries state (a compiled run under a nested activation). It checks that each caller base is word-aligned, above its
+record outward that carries state (a compiled run under a nested activation). It checks that each caller base is eight-byte-aligned, above its
 callee's and, when the record has a C segment, inside it; that the innermost
 return address is in code at a site; and that runs ascend. **A broken chain is
 never skipped.** `grcore_compiled_walk_next` returns `GRCORE_CWALK_BROKEN` with a
