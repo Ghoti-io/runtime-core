@@ -205,8 +205,9 @@ GRCORE_API GRCORE_Verdict grcore_pollcall_verdict(const GRCORE_PollCall * call);
 /**
  * @brief Whether this poll may pause to the host.
  *
- * True exactly for a ::grcore_poll made outside every nested activation: a
- * pause verdict voted there ends the run as a pause. False for the runtime
+ * True exactly for a ::grcore_poll made outside every nested activation, or
+ * inside only nested activations that are resumable boundaries (one the run can
+ * be resumed through): a pause verdict voted there ends the run as a pause. False for the runtime
  * poll (::grcore_runtime_poll) and inside a nested activation, where a pause
  * verdict becomes an unwind with ::GRCORE_ERR_LIMIT, and false for NULL. A
  * handler that would vote to pause only for the host's benefit, such as a

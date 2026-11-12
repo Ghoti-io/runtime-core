@@ -41,6 +41,9 @@ TEST(CodePages, BudgetCountsMappingsAndKeepsProviderAliveUntilFinalUnmap) {
   EXPECT_EQ(grcore_code_pages_in_use(pages), page_size);
   EXPECT_EQ(grcore_code_pages_peak(pages), page_size);
   EXPECT_GE(grcore_code_pages_accounted_bytes(pages), page_size);
+  EXPECT_EQ(grcore_code_pages_cap(pages), page_size);
+  ASSERT_NE(grcore_code_pages_allocator(pages), nullptr);
+  EXPECT_NE(grcore_code_pages_allocator(pages)->malloc_fn, nullptr);
   EXPECT_EQ(grcore_page_protect(provider, mapping, page_size,
       GRCORE_PAGE_READ_EXECUTE), GRCORE_OK);
 
