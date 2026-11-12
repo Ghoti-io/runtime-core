@@ -1333,6 +1333,26 @@ TEST(WalkCell, ACellSetWhileTheInnermostRecordIsNotAJitOneIsABrokenWalkAndAborts
   ASSERT_EQ(grcore_activation_leave(w.stack, native), GRCORE_OK);
 }
 
+/* design.md: such a cell "is a broken walk and never silently dropped". Entering
+ * a JIT record and leaving it again used to clear it without a word, and a walk
+ * made while the record was open attributed the stale words to it. */
+TEST(WalkCell, AStaleCellIsStillABrokenWalkAfterAJitRecordWasEnteredAndLeft) {
+  CWorld w;
+  HandStack st(8);
+  std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
+  GRCORE_ActivationRef native = enter(w.stack, GRCORE_ACTIVATION_NATIVE);
+  cell_of(w.ctx)[0] = bases[0];
+  cell_of(w.ctx)[1] = w.code.at(0);
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  Walked got = walk_compiled(w.ctx);
+  EXPECT_EQ(got.end, GRCORE_CWALK_BROKEN) << "the cell was dropped without a report";
+  EXPECT_NE(got.reason.find("entered over it"), std::string::npos) << got.reason;
+  ASSERT_EQ(grcore_activation_leave(w.stack, native), GRCORE_OK);
+  Walked after = walk_compiled(w.ctx);
+  EXPECT_EQ(after.end, GRCORE_CWALK_END) << "the latch ends with the activations";
+}
+
 /* ---- A compiled frame and its guest frame are one frame (AD-28) ------------ */
 
 namespace {

@@ -51,6 +51,11 @@ GRCORE_Result grcore_compiled_walk_begin(
     out_walk->failing = true;
     out_walk->reason =
         "compiled code recorded where a walk starts with no JIT activation open";
+  } else if (stack != NULL && stack->walk_cell_broken) {
+    out_walk->failing = true;
+    out_walk->reason =
+        "compiled code recorded where a walk starts with no JIT activation open, "
+        "and an activation was entered over it";
   }
   return GRCORE_OK;
 }

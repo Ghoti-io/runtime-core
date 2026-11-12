@@ -1305,7 +1305,8 @@ activation leaves the compiled run below it described by the record below) and
 at every walk (`grcore_compiled_walk_begin`), and leaving a JIT record clears it,
 so a later walk cannot read frames that were left. A cell that is set while the
 innermost record is not a JIT one cannot have been set by compiled code, and is
-a broken walk and never silently dropped. Rejected: **a pointer to the record**
+a broken walk and never silently dropped: entering a record over it latches the
+break, which every walk reports until the activations are gone. Rejected: **a pointer to the record**
 (dangling after the array grows), **a thread-local** (code is shared between
 contexts, a paused context resumes on another thread, and TSan sees a race that
 is not one), and **a global** (one context's run is another's frames).

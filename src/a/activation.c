@@ -85,7 +85,13 @@ static inline GRCORE_ActivationRef push_record(GRCORE_Stack * stack,
     GRCORE_ActivationKind kind, GRCORE_EngineId engine, bool nested,
     const GRCORE_CSegment * segment, bool set_limit) {
   /* The one being entered starts with no compiled frame (AD-28). */
-  (void)absorb_cell(stack);
+  if (!absorb_cell(stack) &&
+      (stack->context->walk_cell[0] != 0 || stack->context->walk_cell[1] != 0)) {
+    /* A cell set while the innermost record is not a JIT one is a broken walk.
+     * Entering a record and leaving it again must not make it go away, so it is
+     * latched, and the next walk reports it. */
+    stack->walk_cell_broken = true;
+  }
   /* Every member a record that is not a boundary has is written, whatever the
    * slot held before: no compiled frame yet, not rebuilt, and no boundary state
    * (grcore_boundary_enter sets that, and the members only a boundary has,
@@ -241,6 +247,9 @@ static inline void drop_record(GRCORE_Stack * stack) {
      * for them: a later walk must not read frames that were left. */
     context->walk_cell[0] = 0;
     context->walk_cell[1] = 0;
+  }
+  if (stack->activation_count == 0) {
+    stack->walk_cell_broken = false; /* no walk can reach what it was about */
   }
   if (enters_native_depth(kind)) {
     (void)grcore_context_depth_step_out(context, GRCORE_DEPTH_NATIVE);

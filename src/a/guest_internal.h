@@ -141,6 +141,7 @@ struct GRCORE_Stack {
   size_t frame_count;
   uint64_t move_count;
   bool always_move;
+  bool walk_cell_broken; ///< A walk cell was set outside a JIT record and a record was then entered.
   const GRCORE_EngineDescriptor ** engines;
   size_t engine_count;
   size_t engine_capacity;
