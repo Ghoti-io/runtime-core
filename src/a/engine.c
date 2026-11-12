@@ -224,9 +224,12 @@ GRCORE_InstructionValidity grcore_engine_check_instruction(
 GRCORE_InstructionValidity grcore_engine_check_instruction_for(
     const GRCORE_Context *context,GRCORE_EngineId engine,uint64_t function,
     uint64_t offset) {
-  if(context==NULL||engine==0)return GRCORE_INSTRUCTION_UNKNOWN;
+  if(context==NULL)return GRCORE_INSTRUCTION_UNKNOWN;
   const GRCORE_Stack *stack=grcore_context_stack(context);
-  if(stack==NULL||engine>stack->engine_count)return GRCORE_INSTRUCTION_UNKNOWN;
+  if(stack==NULL)return GRCORE_INSTRUCTION_UNKNOWN;
+  /* An identity with no registered engine names no instruction: it can never
+   * match a poll, which is not the same as an engine that cannot say. */
+  if(engine==0||engine>stack->engine_count)return GRCORE_INSTRUCTION_INVALID;
   const GRCORE_EngineDescriptor *descriptor=stack->engines[engine-1u];
   if(!GRCORE_ENGINE_DESCRIPTOR_HAS(descriptor,instruction_valid)||
       descriptor->instruction_valid==NULL)return GRCORE_INSTRUCTION_UNKNOWN;

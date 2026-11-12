@@ -430,7 +430,9 @@ GRCORE_API GRCORE_Result grcore_engine_inspect(const GRCORE_Context * context,
 GRCORE_API GRCORE_InstructionValidity grcore_engine_check_instruction(
     const GRCORE_Context * context,
     uint64_t function, uint64_t offset);
-/** Check an identity only with the engine namespace that owns it. */
+/** Check an identity only with the engine namespace that owns it. An engine id
+ * that is zero or not registered is ::GRCORE_INSTRUCTION_INVALID; a registered
+ * engine that cannot tell is ::GRCORE_INSTRUCTION_UNKNOWN. */
 GRCORE_API GRCORE_InstructionValidity grcore_engine_check_instruction_for(
     const GRCORE_Context * context, GRCORE_EngineId engine,
     uint64_t function, uint64_t offset);

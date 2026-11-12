@@ -61,7 +61,14 @@ TEST(Engine, InstructionIdentityValidationUsesOptionalEngineCallbacks) {
       UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_VALID);
   EXPECT_EQ(grcore_engine_check_instruction_for(w.ctx,other,
       UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_UNKNOWN);
+  // An engine id that is not registered names no instruction at all.
+  EXPECT_EQ(grcore_engine_check_instruction_for(w.ctx,0,
+      UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_INVALID);
+  EXPECT_EQ(grcore_engine_check_instruction_for(w.ctx,4000000000u,
+      UINT64_C(0x100000002),UINT64_C(0x100000123)),GRCORE_INSTRUCTION_INVALID);
   EXPECT_EQ(grcore_engine_check_instruction(nullptr,0,0),
+      GRCORE_INSTRUCTION_UNKNOWN);
+  EXPECT_EQ(grcore_engine_check_instruction_for(nullptr,id,0,0),
       GRCORE_INSTRUCTION_UNKNOWN);
 }
 
