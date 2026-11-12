@@ -388,6 +388,7 @@ TEST(Wait, ReturnsWokenWhenAnotherThreadPostsAndLeavesTheContextRunning) {
   bool woken = false;
   GRCORE_Result r = GRCORE_ERR_INTERNAL;
   GRCORE_ContextState during = GRCORE_CONTEXT_PAUSED;
+  bool pending_after_wake = false;
   Fn fn{[&](GRCORE_Context * c) {
     std::thread poster([&] {
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -395,6 +396,7 @@ TEST(Wait, ReturnsWokenWhenAnotherThreadPostsAndLeavesTheContextRunning) {
     });
     r = grcore_context_wait(c, GRCORE_UNLIMITED, &woken);
     during = grcore_context_state(c);
+    pending_after_wake = grcore_context_request_pending(c, GRCORE_REQUEST_TIME);
     poster.join();
     return GRCORE_STEP_FINISHED;
   }};
@@ -403,8 +405,10 @@ TEST(Wait, ReturnsWokenWhenAnotherThreadPostsAndLeavesTheContextRunning) {
   EXPECT_EQ(r, GRCORE_OK);
   EXPECT_TRUE(woken);
   EXPECT_EQ(during, GRCORE_CONTEXT_RUNNING);
-  // The wake does not consume the request.
-  EXPECT_TRUE(grcore_context_request_pending(w.ctx, GRCORE_REQUEST_TIME));
+  // The wake does not consume the request: it is still pending when the guest
+  // looks, as its next poll will find it. (The run's end then clears it: a
+  // time that arrives after the last poll belonged to that run.)
+  EXPECT_TRUE(pending_after_wake);
   grcore_port_release(p);
 }
 

@@ -375,10 +375,13 @@ void grcore_context_clear_terminate(GRCORE_Context * context) {
       ~WORD_BIT(GRCORE_REQUEST_TERMINATE), __ATOMIC_ACQ_REL);
 }
 
-void grcore_context_clear_edge_requests(GRCORE_Context * context) {
-  __atomic_fetch_and(&context->request_word,
-      ~(WORD_BIT(GRCORE_REQUEST_TIME) | WORD_BIT(GRCORE_REQUEST_INTERRUPT)),
-      __ATOMIC_ACQ_REL);
+void grcore_context_clear_edge_requests(
+    GRCORE_Context * context, bool time, bool interrupt) {
+  uint64_t mask = (time ? WORD_BIT(GRCORE_REQUEST_TIME) : 0) |
+      (interrupt ? WORD_BIT(GRCORE_REQUEST_INTERRUPT) : 0);
+  if (mask != 0) {
+    __atomic_fetch_and(&context->request_word, ~mask, __ATOMIC_ACQ_REL);
+  }
 }
 
 bool grcore_port_wait(

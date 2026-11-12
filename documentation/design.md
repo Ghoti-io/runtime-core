@@ -205,7 +205,10 @@ touches a context: it posts a *request kind* through a *port*. Five kinds are
 the core's: terminate, time, interrupt, fuel and memory. Fuel and memory are
 *derived*: they are recomputed from the budgets at every slow poll, so they
 are levels that cannot be lost and cannot be posted. Time and interrupt are
-*edges* the host acknowledges, and `resume` clears them. Terminate is sticky
+*edges* the host acknowledges: `resume` clears the ones that paused the context
+(the pause's keys name them), so a time or interrupt that arrived while another
+key paused it, or after the pause, is still pending at the next poll, and a run
+that ends clears the ones that arrived after its last poll. Terminate is sticky
 until `run` returns (AD-21). A service defines its own kinds against its own
 key (`grcore_context_request_kind`), which is what makes every bit of the
 request word attributable (AD-19), and it clears them itself.

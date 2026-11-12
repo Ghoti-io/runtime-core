@@ -288,7 +288,13 @@ bool grcore_context_snapshot_pending(
 void grcore_context_clear_terminate(GRCORE_Context * context);
 
 /** @brief Clears time and interrupt, which `resume` acknowledges. */
-void grcore_context_clear_edge_requests(GRCORE_Context * context);
+/** The core key that votes for a built-in request kind, or NULL for a kind that is not one. */
+const GRCORE_Key * grcore_core_key(GRCORE_RequestKind kind);
+
+/** Clears the named edge requests, the ones a pause told the host about. A time
+ *  or interrupt posted after that pause was never seen and stays pending. */
+void grcore_context_clear_edge_requests(
+    GRCORE_Context * context, bool time, bool interrupt);
 
 /**
  * @brief The context's port, created if it has none. No reference is taken.

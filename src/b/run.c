@@ -48,12 +48,17 @@ static void begin_run(GRCORE_Context * c) {
 }
 
 /* The end of a run that is not a pause: the context is parked outside `run`
- * and terminate, which stays pending until `run` returns (AD-21), is done. */
+ * and terminate, which stays pending until `run` returns (AD-21), is done. A
+ * time or an interrupt that arrived after the run's last poll belonged to this
+ * run, whose guest never saw it: left pending it would pause the first poll of
+ * the next run on a reused context. (One posted before that run starts is the
+ * host arming it, and stays.) */
 static void end_run(GRCORE_Context * c) {
   c->config = GRCORE_CONFIG_PARKED_OUTSIDE;
   c->entry = NULL;
   c->entry_state = NULL;
   grcore_context_clear_terminate(c);
+  grcore_context_clear_edge_requests(c, true, true);
 }
 
 static GRCORE_Result entry_lied(GRCORE_Context * c) {
@@ -122,10 +127,17 @@ GRCORE_Result grcore_resume(
     return GRCORE_ERR_INVALID;
   }
   if (context->run_epoch == UINT64_MAX) return GRCORE_ERR_LIMIT;
-  /* The host has now seen the time and the interrupt. Anything still true,
-   * such as exhausted fuel, is a level and is decided again at the next
-   * poll. */
-  grcore_context_clear_edge_requests(context);
+  /* The host has now seen the edges that paused it: the pause's keys name them.
+   * A time or an interrupt posted after the pause, or while another key paused
+   * it, was never seen and stays pending for the next poll. Anything still
+   * true, such as exhausted fuel, is a level and is decided again then. */
+  bool saw_time = false, saw_interrupt = false;
+  for (size_t i = 0; i < context->verdict_key_count; i++) {
+    saw_time |= context->verdict_keys[i] == grcore_core_key(GRCORE_REQUEST_TIME);
+    saw_interrupt |=
+        context->verdict_keys[i] == grcore_core_key(GRCORE_REQUEST_INTERRUPT);
+  }
+  grcore_context_clear_edge_requests(context, saw_time, saw_interrupt);
   begin_run(context);
   grcore_context_transition(context, GRCORE_CONFIG_RUNNING);
   /* A resume may be on another thread, and so on another native stack. */

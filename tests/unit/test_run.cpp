@@ -228,6 +228,58 @@ TEST(Run, ResumeClearsTimeAndInterruptButNotFuelOrServiceKinds) {
   grcore_port_release(p);
 }
 
+/* The host is told only of what paused it. A deadline that fires while the
+ * host is looking at a fuel pause was never seen, and resuming must not eat it:
+ * the guest would run on past its wall-clock limit with nothing pending. */
+TEST(Run, AResumeKeepsATimeOrInterruptPostedAfterThePauseThatWasForFuelOnly) {
+  for (GRCORE_RequestKind kind : {GRCORE_REQUEST_TIME, GRCORE_REQUEST_INTERRUPT}) {
+    RunWorld w(3);
+    CountingGuest g;
+    g.n = 50;
+    GRCORE_Outcome outcome;
+    ASSERT_EQ(grcore_run(w.ctx, counting_entry, &g, &outcome), GRCORE_OK);
+    ASSERT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+    ASSERT_EQ(grcore_context_pause_key_count(w.ctx), 1u);
+    EXPECT_STREQ(grcore_context_pause_key(w.ctx, 0)->name, "fuel");
+    GRCORE_Port * p;
+    ASSERT_EQ(grcore_context_port(w.ctx, &p), GRCORE_OK);
+    ASSERT_EQ(grcore_port_post(p, kind), GRCORE_OK); // after the pause, unseen
+    ASSERT_EQ(grcore_context_set_fuel(w.ctx, GRCORE_UNLIMITED), GRCORE_OK);
+    ASSERT_EQ(grcore_resume(w.ctx, &outcome), GRCORE_OK);
+    EXPECT_EQ(outcome, GRCORE_OUTCOME_PAUSED) << "the unseen request paused the next poll";
+    ASSERT_EQ(grcore_context_pause_key_count(w.ctx), 1u);
+    EXPECT_STREQ(grcore_context_pause_key(w.ctx, 0)->name,
+        kind == GRCORE_REQUEST_TIME ? "time" : "interrupt");
+    grcore_port_release(p);
+  }
+}
+
+/* A time that arrives after the last poll of a run belonged to that run. */
+TEST(Run, ATimeThatArrivedAfterTheLastPollOfARunDoesNotPauseTheNextRun) {
+  RunWorld w;
+  GRCORE_Port * p;
+  ASSERT_EQ(grcore_context_port(w.ctx, &p), GRCORE_OK);
+  Fn late{[&](GRCORE_Context *) {
+    EXPECT_EQ(grcore_port_post(p, GRCORE_REQUEST_TIME), GRCORE_OK);
+    return GRCORE_STEP_FINISHED; // no poll after it: the guest never saw it
+  }};
+  GRCORE_Outcome outcome;
+  ASSERT_EQ(grcore_run(w.ctx, fn_entry, &late, &outcome), GRCORE_OK);
+  ASSERT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
+  CountingGuest g;
+  g.n = 5;
+  ASSERT_EQ(grcore_run(w.ctx, counting_entry, &g, &outcome), GRCORE_OK);
+  EXPECT_EQ(outcome, GRCORE_OUTCOME_FINISHED);
+  EXPECT_EQ(g.pos, 5u);
+  // The control: the same time posted before a run is the host arming it.
+  ASSERT_EQ(grcore_port_post(p, GRCORE_REQUEST_TIME), GRCORE_OK);
+  CountingGuest h;
+  h.n = 5;
+  ASSERT_EQ(grcore_run(w.ctx, counting_entry, &h, &outcome), GRCORE_OK);
+  EXPECT_EQ(outcome, GRCORE_OUTCOME_PAUSED);
+  grcore_port_release(p);
+}
+
 TEST(Run, TheKeysAndTheLocationOfAPauseAreValidUntilTheNextResume) {
   RunWorld w(3);
   CountingGuest g;
