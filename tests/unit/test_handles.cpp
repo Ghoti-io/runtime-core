@@ -624,6 +624,8 @@ TEST(Handles, AllocationFailureInPinLeavesTheTableConsistentAtEveryPoint) {
         EXPECT_EQ(tok.generation, 0u);
         EXPECT_EQ(grcore_handles_count(w.table), 0u);
         EXPECT_TRUE(roots_of(owner).empty());
+        // An empty source is still a source: the refusal leaves none registered.
+        EXPECT_EQ(grcore_context_root_source_count(owner), 0u) << "failure " << fail;
         // The refused call can simply be made again.
         GRCORE_HandleHolder h2 = w.enroll(holder);
         GRCORE_HandleToken again = w.pin(owner, h2, 78);

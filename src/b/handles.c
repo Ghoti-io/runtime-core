@@ -286,6 +286,9 @@ static GRCORE_Result entry_take(GRCORE_HandleTable * t, uint32_t * out) {
     if (capacity > GRCORE_HANDLES_MAX_ENTRIES) {
       capacity = GRCORE_HANDLES_MAX_ENTRIES;
     }
+    if (capacity > SIZE_MAX / sizeof(GRCORE_HandleEntry)) {
+      return GRCORE_ERR_OOM;
+    }
     GRCORE_HandleEntry * grown = a->malloc_fn(a->ctx, capacity * sizeof *grown);
     if (grown == NULL) {
       return GRCORE_ERR_OOM;
@@ -391,10 +394,12 @@ GRCORE_Result grcore_handles_pin(GRCORE_HandleTable * t, GRCORE_Context * owner,
   if (r == GRCORE_OK) {
     r = party_of(t, owner, &op, &made);
   }
+  bool registered_here = false;
   if (r == GRCORE_OK && !op->root_registered) {
     r = grcore_context_add_root_source(owner, &kHandleRoots, op);
     if (r == GRCORE_OK) {
       op->root_registered = true;
+      registered_here = true;
     } else if (made) {
       /* Nothing else refers to a party made by this call. */
       owner->handle_party = NULL;
@@ -405,6 +410,19 @@ GRCORE_Result grcore_handles_pin(GRCORE_HandleTable * t, GRCORE_Context * owner,
   uint32_t i = GRCORE_HANDLE_NONE;
   if (r == GRCORE_OK) {
     r = entry_take(t, &i);
+    if (r != GRCORE_OK) {
+      /* A refusal changes nothing a later call can see: what this call set up
+       * for the owner goes with it. */
+      if (registered_here) {
+        (void)grcore_context_remove_root_source(owner, &kHandleRoots, op);
+        op->root_registered = false;
+      }
+      if (made) {
+        owner->handle_party = NULL;
+        party_drop(t, op);
+        op = NULL;
+      }
+    }
   }
   if (r == GRCORE_OK) {
     GRCORE_HandleEntry * e = &t->entries[i];
