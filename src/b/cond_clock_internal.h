@@ -85,8 +85,18 @@ static inline void grcore_cond_deadline(struct timespec * deadline, uint64_t ns)
     secs++;
     nanos -= UINT64_C(1000000000);
   }
-  if (secs > (uint64_t)INT32_MAX * 8u) {
-    secs = (uint64_t)INT32_MAX * 8u;
+  /* Far enough ahead to be forever, and never past what `time_t` holds: where
+   * it is 32 bits wide the clamp of a 64-bit one would convert to a negative
+   * number, and the addition would overflow a signed type. */
+  uint64_t room = (uint64_t)INT32_MAX * 8u;
+  if (sizeof(time_t) < sizeof(int64_t)) {
+    const uint64_t most = (uint64_t)INT32_MAX;
+    const uint64_t now = deadline->tv_sec > 0 ? (uint64_t)deadline->tv_sec : 0;
+    room = now >= most ? 0 : most - now - 1u;
+  }
+  if (secs > room) {
+    secs = room;
+    nanos = 0;
   }
   deadline->tv_sec += (time_t)secs;
   deadline->tv_nsec = (long)nanos;

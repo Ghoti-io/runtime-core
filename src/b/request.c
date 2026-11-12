@@ -394,8 +394,9 @@ bool grcore_port_wait(
   while (__atomic_load_n(&context->request_word, __ATOMIC_ACQUIRE) == 0) {
     if (timeout_ns == UINT64_MAX) {
       pthread_cond_wait(&port->cond, &port->mutex);
-    } else if (pthread_cond_timedwait(&port->cond, &port->mutex, &deadline) ==
-        ETIMEDOUT) {
+    } else if (pthread_cond_timedwait(&port->cond, &port->mutex, &deadline) != 0) {
+      /* A timeout, and any other error as one: going round again on a hard
+       * error (a deadline the call refuses) would spin until a request came. */
       break;
     }
   }

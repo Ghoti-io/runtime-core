@@ -412,6 +412,36 @@ TEST(Wait, ReturnsWokenWhenAnotherThreadPostsAndLeavesTheContextRunning) {
   grcore_port_release(p);
 }
 
+/* A finite timeout too long for the clock is a long wait, not no wait: where
+ * time_t is 32 bits the clamp used to convert to a negative deadline and the
+ * wait returned at once (and a loop around it spun). */
+TEST(Wait, AVeryLongFiniteTimeoutStillWaitsForTheRequest) {
+  const uint64_t hundred_years = UINT64_C(100) * 365 * 24 * 3600 * 1000000000;
+  for (uint64_t timeout : {UINT64_MAX - 1, hundred_years}) {
+    RunWorld w;
+    GRCORE_Port * p;
+    ASSERT_EQ(grcore_context_port(w.ctx, &p), GRCORE_OK);
+    bool woken = false;
+    std::chrono::steady_clock::duration took{};
+    Fn fn{[&](GRCORE_Context * c) {
+      std::thread poster([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        EXPECT_EQ(grcore_port_post(p, GRCORE_REQUEST_TIME), GRCORE_OK);
+      });
+      auto start = std::chrono::steady_clock::now();
+      EXPECT_EQ(grcore_context_wait(c, timeout, &woken), GRCORE_OK);
+      took = std::chrono::steady_clock::now() - start;
+      poster.join();
+      return GRCORE_STEP_FINISHED;
+    }};
+    GRCORE_Outcome outcome;
+    ASSERT_EQ(grcore_run(w.ctx, fn_entry, &fn, &outcome), GRCORE_OK);
+    EXPECT_TRUE(woken) << timeout;
+    EXPECT_GE(took, std::chrono::milliseconds(20)) << "it did not wait: " << timeout;
+    grcore_port_release(p);
+  }
+}
+
 TEST(Wait, TimeoutReturnsNotWokenAndRunning) {
   RunWorld w;
   bool woken = true;
