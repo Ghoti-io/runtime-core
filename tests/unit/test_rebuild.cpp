@@ -176,13 +176,16 @@ TEST(ChainRebuild, AGuestFrameAboveTheInnermostCompiledFrameIsLeftAsItIs) {
   grcore_unwind_all(w.stack, nullptr);
 }
 
-TEST(ChainRebuild, ADeadLocationLeavesTheGuestFramesOwnWord) {
+/* Slot 3 is DEAD at the site and a VALUE to the engine (alpha: odd slots). No
+ * collection updated it while its frame was paired, so keeping the guest
+ * frame's word would hand the collector a reference that may have moved. */
+TEST(ChainRebuild, ADeadLocationTheEngineCallsAValueIsNulledNotKept) {
   RW w(GRCORE_REPR_BITS, false, /*dead_slot=*/true);
   Chain c(w, 5, /*slot_count=*/4);
   ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
   for (size_t j = 0; j < 5; j++) {
     EXPECT_EQ(c.slot(w.stack, j, 0), HandStack::ref_of(4 - j));
-    EXPECT_EQ(c.slot(w.stack, j, 3), Chain::sentinel(j, 3)) << "the frame keeps its own word";
+    EXPECT_EQ(c.slot(w.stack, j, 3), 0u) << "a stale VALUE is nulled";
   }
   grcore_unwind_all(w.stack, nullptr);
 }

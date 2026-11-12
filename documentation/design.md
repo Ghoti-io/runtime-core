@@ -1353,8 +1353,10 @@ converting location of the chain, and that the engine can convert them; a
 refusal changes nothing. It then converts in AD-27's two phases across the whole
 chain (null in every converting slot of every frame, convert every raw value into
 a cell, write the slots), so no frame is seen half raw, and a `DEAD` location
-leaves the guest frame's own word (a rebuild may put anything there, and a frame
-that keeps a header word the compiled code does not know is better left with it).
+leaves the guest frame's own word (a frame that keeps a header word the compiled
+code does not know is better left with it) unless the engine's slot kind for that
+slot is VALUE, in which case the word is nulled: no collection updated it while
+its frame was paired, so it may name an object that moved or was freed.
 Each rebuilt frame also takes its compiled frame's identity: a caller's call site,
 the innermost frame's exit site. Until then a guest frame has the identity it was
 pushed with, its function's entry, and the interpreter that resumes a rebuilt frame

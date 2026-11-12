@@ -559,10 +559,23 @@ GRCORE_Result grcore_compiled_rebuild(GRCORE_Context * context,
     }
     (void)grcore_stack_set_identity(stack, guest, cf.identity);
     uint64_t * slots = guest_slots(stack, guest);
+    GRCORE_AbstractFrame view;
+    GRCORE_FrameHeader view_header;
+    bool have_view = grcore_stack_hook_frame(stack, guest, 0, &view, &view_header);
     for (size_t i = 0; i < cf.site->frame_state_count; i++) {
       const GRCORE_CodeLocation * l = &cf.site->frame_state[i];
       if (l->kind == GRCORE_LOC_DEAD) {
-        continue; /* the guest frame keeps its own word */
+        /* The guest frame keeps its own word (a header word the compiled code
+         * does not know is better left), unless the engine says the slot holds
+         * a VALUE: no collection updated it while the frame was paired and
+         * skipped, so it may name an object that moved or was freed, and the
+         * next enumeration would hand that to the collector. Null is a VALUE
+         * every engine accepts. */
+        if (have_view && view.descriptor->slot_kind != NULL &&
+            view.descriptor->slot_kind(&view, i) == GRCORE_SLOT_VALUE) {
+          slots[i] = 0;
+        }
+        continue;
       }
       slots[i] = converts(l) ? 0 : word_of(l, (const void *)cf.frame_base);
     }
