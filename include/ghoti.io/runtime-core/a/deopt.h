@@ -198,8 +198,9 @@ GRCORE_API size_t grcore_deopt_converting_count(const GRCORE_CodeSite * site);
  * @param capacity The cells; may be zero.
  * @param out Receives the reservation. Written only on success.
  * @return `GRCORE_OK`; `GRCORE_ERR_INVALID` for a NULL argument or a non-owner;
- *   `GRCORE_ERR_LIMIT` or `GRCORE_ERR_OOM` when the memory cannot be had (this
- *   is where a rebuild's cost can fail, and not later).
+ *   `GRCORE_ERR_OOM` when the memory cannot be had, or `GRCORE_ERR_LIMIT` when
+ *   the context's own budget refuses the root-source record that registers the
+ *   cells (this is where a rebuild's cost can fail, and not later).
  */
 GRCORE_API GRCORE_Result grcore_deopt_reserve(GRCORE_Context * context,
     size_t capacity, GRCORE_DeoptReservation ** out);
@@ -224,8 +225,8 @@ GRCORE_API size_t grcore_deopt_reservation_capacity(
  * @param reservation The reservation.
  * @param cells How many to add; zero is accepted and does nothing.
  * @return `GRCORE_OK`; `GRCORE_ERR_INVALID` for a NULL argument, a non-owner or
- *   a count that overflows; `GRCORE_ERR_LIMIT` or `GRCORE_ERR_OOM`, with the
- *   reservation unchanged.
+ *   a count that overflows; `GRCORE_ERR_OOM`, with the reservation unchanged
+ *   (the cells are the group's memory, which has no budget).
  */
 GRCORE_API GRCORE_Result grcore_deopt_reservation_extend(GRCORE_Context * context,
     GRCORE_DeoptReservation * reservation, size_t cells);

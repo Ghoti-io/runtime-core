@@ -106,11 +106,15 @@ static GRCORE_Result registry_of(
   }
   if (stack->registry == NULL && create) {
     const GRCORE_Allocator * a = engine_allocator(context);
-    uint64_t refusals = grcore_context_memory_refusals(context);
     stack->registry = a->calloc_fn(a->ctx, 1, sizeof *stack->registry);
     if (stack->registry == NULL) {
-      return grcore_guest_alloc_failure(context, refusals);
+      return GRCORE_ERR_OOM; /* the group's memory has no budget to refuse on */
     }
+  }
+  if (stack->registry != NULL && stack->registry->releasing) {
+    /* A release callback came back into the registry, which its header forbids
+     * and which would write over the retired entries not yet released. */
+    return GRCORE_ERR_INVALID;
   }
   *out = stack->registry;
   return GRCORE_OK;
@@ -194,7 +198,9 @@ GRCORE_Result grcore_code_unregister(GRCORE_Context * context, uintptr_t start) 
   }
   GRCORE_Stack * stack = grcore_context_stack(context);
   if (stack->jit_live == 0) {
+    r->releasing = true; /* a callback that came back in would move `at` */
     grcore_code_release(r->entries[at].code);
+    r->releasing = false;
     remove_entry(r, at);
   } else {
     r->entries[at].retired = true;
@@ -264,10 +270,9 @@ GRCORE_Result grcore_entry_slot_create(
     return GRCORE_ERR_INVALID;
   }
   const GRCORE_Allocator * a = engine_allocator(context);
-  uint64_t refusals = grcore_context_memory_refusals(context);
   SlotRec * s = a->calloc_fn(a->ctx, 1, sizeof *s);
   if (s == NULL) {
-    return grcore_guest_alloc_failure(context, refusals);
+    return GRCORE_ERR_OOM; /* the group's memory has no budget to refuse on */
   }
   s->pub.reserved = s;
   s->owner = r;
@@ -282,7 +287,9 @@ GRCORE_Result grcore_entry_slot_create(
 static void retire(GRCORE_Stack * stack, GRCORE_Code * code, RetireNode * node) {
   GRCORE_CodeRegistry * r = stack->registry;
   if (stack->jit_live == 0) {
+    r->releasing = true;
     grcore_code_release(code);
+    r->releasing = false;
     const GRCORE_Allocator * a = engine_allocator(stack->context);
     a->free_fn(a->ctx, node);
     return;
@@ -314,10 +321,9 @@ GRCORE_Result grcore_entry_slot_set(GRCORE_Context * context,
   /* The one step that can be refused comes first: the node that will retire
    * this code later. */
   const GRCORE_Allocator * a = engine_allocator(context);
-  uint64_t refusals = grcore_context_memory_refusals(context);
   RetireNode * node = a->calloc_fn(a->ctx, 1, sizeof *node);
   if (node == NULL) {
-    return grcore_guest_alloc_failure(context, refusals);
+    return GRCORE_ERR_OOM; /* the group's memory has no budget to refuse on */
   }
   GRCORE_Code * old = s->code;
   RetireNode * old_node = s->node;
@@ -384,6 +390,7 @@ void grcore_registry_release_retired(GRCORE_Stack * stack) {
   }
   const GRCORE_Allocator * a = engine_allocator(stack->context);
   /* Detach first: a release callback runs arbitrary code. */
+  r->releasing = true;
   RetireNode * list = r->retired;
   r->retired = NULL;
   r->retired_nodes = 0;
@@ -411,6 +418,7 @@ void grcore_registry_release_retired(GRCORE_Stack * stack) {
   for (size_t i = kept; i < old_count; i++) {
     grcore_code_release(r->entries[i].code);
   }
+  r->releasing = false;
 }
 
 bool grcore_registry_counts_agree(const GRCORE_Stack * stack) {

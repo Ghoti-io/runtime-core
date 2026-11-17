@@ -201,18 +201,15 @@ GRCORE_Result grcore_deopt_reserve(GRCORE_Context * context, size_t capacity,
     return GRCORE_ERR_INVALID;
   }
   const GRCORE_Allocator * a = engine_allocator(context);
-  uint64_t refusals = grcore_context_memory_refusals(context);
   GRCORE_DeoptReservation * r = a->calloc_fn(a->ctx, 1, sizeof *r);
   if (r == NULL) {
-    return grcore_context_memory_refusals(context) > refusals ? GRCORE_ERR_LIMIT
-                                                              : GRCORE_ERR_OOM;
+    return GRCORE_ERR_OOM; /* the group's memory has no budget to refuse on */
   }
   if (capacity != 0) {
     r->cells = a->calloc_fn(a->ctx, capacity, sizeof *r->cells);
     if (r->cells == NULL) {
       a->free_fn(a->ctx, r);
-      return grcore_context_memory_refusals(context) > refusals ? GRCORE_ERR_LIMIT
-                                                                : GRCORE_ERR_OOM;
+      return GRCORE_ERR_OOM;
     }
   }
   r->capacity = capacity;
@@ -252,12 +249,10 @@ GRCORE_Result grcore_deopt_reservation_extend(GRCORE_Context * context,
       grown = want;
     }
     const GRCORE_Allocator * a = engine_allocator(context);
-    uint64_t refusals = grcore_context_memory_refusals(context);
     uint64_t * cellsp =
         a->realloc_fn(a->ctx, r->cells, grown * sizeof *r->cells);
     if (cellsp == NULL) {
-      return grcore_context_memory_refusals(context) > refusals ? GRCORE_ERR_LIMIT
-                                                                : GRCORE_ERR_OOM;
+      return GRCORE_ERR_OOM; /* the group's memory has no budget to refuse on */
     }
     r->cells = cellsp;
     r->allocated = grown;

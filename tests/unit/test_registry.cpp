@@ -197,6 +197,61 @@ TEST(Registry, SharedRegistrationRetiresOnlyAfterLastReleaseUnderJit) {
   EXPECT_FALSE(grcore_code_lookup(w.ctx, start, &range));
 }
 
+namespace {
+/// A code handle whose release callback comes back into the registry, which its
+/// header forbids: it records what it was answered.
+struct ReentrantCode {
+  GRCORE_Context * ctx = nullptr;
+  GRCORE_EngineId engine = 0;
+  HandCode * other = nullptr;
+  int released = 0;
+  GRCORE_Result registered = GRCORE_OK;
+  GRCORE_Result slot = GRCORE_OK;
+  GRCORE_Result unregistered = GRCORE_OK;
+  GRCORE_Code * code = nullptr;
+  ReentrantCode() {
+    EXPECT_EQ(grcore_code_create(nullptr, this,
+                  [](void * payload) {
+                    auto * self = static_cast<ReentrantCode *>(payload);
+                    self->released++;
+                    self->registered = grcore_code_register(self->ctx, self->engine,
+                        self->other->code, self->other->start(), self->other->size(), &self->other->meta);
+                    GRCORE_EntrySlot * s = nullptr;
+                    self->slot = grcore_entry_slot_create(self->ctx, &s);
+                    self->unregistered = grcore_code_unregister(self->ctx, self->other->start());
+                  },
+                  &code),
+        GRCORE_OK);
+  }
+};
+}  // namespace
+
+TEST(Registry, AReleaseCallbackThatComesBackIntoTheRegistryIsRefusedAndCorruptsNothing) {
+  RWorld w;
+  HandCode other;
+  ReentrantCode bad;
+  bad.ctx = w.ctx;
+  bad.engine = w.alpha;
+  bad.other = &other;
+  const uintptr_t start = w.code.start();
+  w.code.give_up();
+  // The registered range is the one the callback's code was registered for.
+  ASSERT_EQ(grcore_code_register(w.ctx, w.alpha, bad.code, start, w.code.size(), &w.code.meta), GRCORE_OK);
+  grcore_code_release(bad.code);  // the registry's reference is all that is left
+  GRCORE_ActivationRef jit = enter(w.stack, GRCORE_ACTIVATION_JIT);
+  ASSERT_EQ(grcore_code_unregister(w.ctx, start), GRCORE_OK);
+  ASSERT_EQ(grcore_activation_leave(w.stack, jit), GRCORE_OK);
+  EXPECT_EQ(bad.released, 1);
+  EXPECT_EQ(bad.registered, GRCORE_ERR_INVALID);
+  EXPECT_EQ(bad.slot, GRCORE_ERR_INVALID);
+  EXPECT_EQ(bad.unregistered, GRCORE_ERR_INVALID);
+  EXPECT_EQ(grcore_code_registered_count(w.ctx), 0u);
+  EXPECT_EQ(grcore_code_retired_count(w.ctx), 0u);
+  // The registry works again afterwards.
+  EXPECT_EQ(other.add_to(w.ctx, w.alpha), GRCORE_OK);
+  EXPECT_EQ(grcore_code_registered_count(w.ctx), 1u);
+}
+
 TEST(Registry, ArgumentsAreCheckedAndEachRefusalLeavesNothingBehind) {
   RWorld w;
   HandCode & c = w.code;
@@ -332,7 +387,7 @@ TEST(Registry, ARefusedAllocationOnTheFirstRegistrationLeavesNothingBehind) {
         break;
       }
       refusals++;
-      EXPECT_TRUE(r == GRCORE_ERR_OOM || r == GRCORE_ERR_LIMIT) << n;
+      EXPECT_EQ(r, GRCORE_ERR_OOM) << n;  // the group's memory has no budget to refuse on
       EXPECT_EQ(grcore_code_registered_count(w.ctx), 0u) << n;
       EXPECT_EQ(grcore_code_refcount(w.code.code), refs) << n;
       GRCORE_CodeRange range;

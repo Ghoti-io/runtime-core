@@ -254,6 +254,7 @@ struct GRCORE_CodeRegistry {
   size_t retired_nodes;
   size_t retired_peak;   ///< The most `retired_entries + retired_nodes` has been.
   struct SlotRec * slots;
+  bool releasing;        ///< A release is running callbacks: the registry is being edited.
 };
 
 /**

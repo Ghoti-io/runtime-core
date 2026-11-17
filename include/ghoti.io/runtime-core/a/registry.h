@@ -65,7 +65,8 @@
  * the unwinder), ::grcore_code_unregister, ::grcore_entry_slot_set and
  * ::grcore_entry_slot_clear, and at the context's destruction. It must not call
  * back into this header (register, unregister, set or clear) or into the
- * context: the registry is being edited when it runs.
+ * context: the registry is being edited when it runs. A call into the registry
+ * from one is refused with ::GRCORE_ERR_INVALID and changes nothing.
  *
  * Entry slots live until the context is destroyed; there is no call that frees
  * one. Everything is released when the context is destroyed, whatever is open. The
@@ -123,8 +124,9 @@ typedef struct GRCORE_CodeRange {
  *   or a range that overlaps a different mapping already registered (retired
  *   or not);
  *   ::GRCORE_ERR_CORRUPT when the table does not validate;
- *   ::GRCORE_ERR_LIMIT or ::GRCORE_ERR_OOM when the memory is refused. A
- *   refusal changes nothing.
+ *   ::GRCORE_ERR_OOM when the memory is refused (the bookkeeping is the group's
+ *   memory, which has no budget, so it is never ::GRCORE_ERR_LIMIT). A refusal
+ *   changes nothing.
  */
 GRCORE_API GRCORE_Result grcore_code_register(GRCORE_Context * context,
     GRCORE_EngineId engine, GRCORE_Code * code, uintptr_t start, size_t size,
@@ -212,7 +214,7 @@ typedef struct GRCORE_EntrySlot {
  * @param out_slot Receives the slot, which lives until the context is
  *   destroyed. Written only on success.
  * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, a non-owner
- *   or a context with no engine; ::GRCORE_ERR_LIMIT or ::GRCORE_ERR_OOM.
+ *   or a context with no engine; ::GRCORE_ERR_OOM.
  */
 GRCORE_API GRCORE_Result grcore_entry_slot_create(
     GRCORE_Context * context, GRCORE_EntrySlot ** out_slot);
@@ -229,7 +231,7 @@ GRCORE_API GRCORE_Result grcore_entry_slot_create(
  * @param entry The entry address; above ::GRCORE_ENTRY_REFUSED.
  * @return ::GRCORE_OK; ::GRCORE_ERR_INVALID for a NULL argument, an `entry`
  *   that is not above ::GRCORE_ENTRY_REFUSED, a non-owner or a slot that is not this context's;
- *   ::GRCORE_ERR_LIMIT or ::GRCORE_ERR_OOM, with the slot unchanged.
+ *   ::GRCORE_ERR_OOM, with the slot unchanged.
  */
 GRCORE_API GRCORE_Result grcore_entry_slot_set(GRCORE_Context * context,
     GRCORE_EntrySlot * slot, GRCORE_Code * code, uintptr_t entry);
