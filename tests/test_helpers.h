@@ -774,6 +774,12 @@ struct HandCode {
   }
 };
 
+/* A compiled frame is a native frame of a 64-bit emitter (the base and the return address are 8-byte words,
+ * the slots 8 bytes below the base), and the hand stacks below build exactly that. A 32-bit target has no
+ * emitter, so the tests that walk or rebuild such a stack say so and skip there. */
+#define GRCORE_NEEDS_64BIT_FRAMES() \
+  if (sizeof(uintptr_t) != 8) GTEST_SKIP() << "hand-built compiled frames are 64-bit native frames; no emitter exists for this word size"
+
 /* Words standing in for a native stack, with frames built in them. A frame is
  * eight words: words 0..5 are what lies below the base, word 6 is the base
  * (holding the caller's base) and word 7 the return address. Frames are laid

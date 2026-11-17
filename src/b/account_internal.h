@@ -42,11 +42,19 @@
 extern "C" {
 #endif
 
+/* A 64-bit word that `__atomic` builtins touch is 8-aligned on every target: an `int64_t` is only
+ * 4-aligned on 32-bit x86, where such an access is atomic only when it does not straddle a cache line. */
+#ifdef __cplusplus
+#define GRCORE_ALIGN8 alignas(8)
+#else
+#define GRCORE_ALIGN8 _Alignas(8)
+#endif
+
 /** @brief What is charged: bytes in use, the high-water mark, live blocks. */
 typedef struct GRCORE_Meter {
-  uint64_t in_use; ///< Bytes of payload currently held.
-  uint64_t peak;   ///< Greatest value `in_use` has had.
-  uint64_t blocks; ///< Live allocations and page mappings.
+  GRCORE_ALIGN8 uint64_t in_use; ///< Bytes of payload currently held.
+  GRCORE_ALIGN8 uint64_t peak;   ///< Greatest value `in_use` has had.
+  GRCORE_ALIGN8 uint64_t blocks; ///< Live allocations and page mappings.
 } GRCORE_Meter;
 
 /**
@@ -63,9 +71,9 @@ typedef struct GRCORE_Counting {
    * builtins. An allocation that would take the meter past limit + reserve
    * is refused; one that leaves it past the limit sets the memory request
    * bit in `request_word`, if there is one. */
-  uint64_t limit;          ///< UINT64_MAX means no limit.
-  uint64_t reserve;        ///< Bytes allowed past the limit.
-  uint64_t refusals;       ///< Allocations refused for being past the reserve.
+  GRCORE_ALIGN8 uint64_t limit;          ///< UINT64_MAX means no limit.
+  GRCORE_ALIGN8 uint64_t reserve;        ///< Bytes allowed past the limit.
+  GRCORE_ALIGN8 uint64_t refusals;       ///< Allocations refused for being past the reserve.
   uint64_t * request_word; ///< The context's request word, or NULL.
 } GRCORE_Counting;
 

@@ -1805,6 +1805,18 @@ time into a throwaway copy of the tree (a reused generation, a missed root, a
 release that leaves the object alive, a lost lock among them), each of which
 the named test must fail, with the control passing once it is taken out.
 
+## Word sizes and byte orders
+
+The library builds and its tests pass on a 32-bit little-endian target (i686), a 64-bit
+big-endian one (s390x) and AArch64, as well as x86-64. Three things follow from the word size.
+Every 64-bit word an `__atomic` builtin touches (the request word, the meters and budgets, the
+code pages' counters) is 8-aligned, because an `int64_t` is only 4-aligned on i686 and an atomic
+access to a word that straddles a cache line is not atomic; and `GRCORE_CodeLocation`'s `value`
+is 8-aligned so that the struct is 24 bytes everywhere. A compiled frame is a native frame of a
+64-bit emitter (an 8-byte base word, an 8-byte return address, 8-byte slots), and the tests that
+build one by hand skip where a pointer is not 8 bytes, because no emitter exists there: the
+walk itself reads pointer-sized words.
+
 ## Benchmarks
 
 Every library ships a benchmark harness from its first commit (AD-26). This

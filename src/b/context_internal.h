@@ -98,7 +98,9 @@ struct GRCORE_Context {
 
   /* Requests (AD-4). The word and the kind count are the only fields another
    * thread reads, and only a port does, under its mutex. */
-  uint64_t request_word; ///< Bit k is kind k below 63; bit 63: overflow.
+  /* 8-aligned for the `__atomic` builtins, and so for compiled code: an int64_t is only
+   * 4-aligned on 32-bit x86. */
+  GRCORE_ALIGN8 uint64_t request_word; ///< Bit k is kind k below 63; bit 63: overflow.
 
   /* Compiled code (AD-28). Both are read and written by compiled code at the
    * offsets a/layout.h states, so they sit in the context, which compiled code

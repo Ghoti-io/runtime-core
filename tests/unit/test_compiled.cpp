@@ -198,6 +198,7 @@ ChainRun set_up_run(CWorld & w, HandStack & st, size_t first_word, size_t n,
 /* ---- The record's compiled state ---------------------------------------- */
 
 TEST(ActivationCompiled, AFreshRecordCarriesNoStateAndTheSetterWritesAndClearsIt) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   GRCORE_ActivationRef rec = enter(w.stack, GRCORE_ACTIVATION_JIT);
   GRCORE_ActivationInfo info;
@@ -217,6 +218,7 @@ TEST(ActivationCompiled, AFreshRecordCarriesNoStateAndTheSetterWritesAndClearsIt
 }
 
 TEST(ActivationCompiled, OnlyAJitRecordMayCarryTheStateBecauseOnlyThoseKeepRetiredCodeAlive) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   for (GRCORE_ActivationKind kind :
       {GRCORE_ACTIVATION_HOST, GRCORE_ACTIVATION_INTERPRETER,
@@ -232,6 +234,7 @@ TEST(ActivationCompiled, OnlyAJitRecordMayCarryTheStateBecauseOnlyThoseKeepRetir
 }
 
 TEST(ActivationCompiled, ARecordThatIsNotInnermostCanBeSetAndBadArgumentsAreRefused) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   GRCORE_ActivationRef outer = enter(w.stack, GRCORE_ACTIVATION_JIT);
   GRCORE_ActivationRef inner = enter(w.stack, GRCORE_ACTIVATION_NATIVE);
@@ -259,6 +262,7 @@ TEST(ActivationCompiled, ARecordThatIsNotInnermostCanBeSetAndBadArgumentsAreRefu
 /* ---- The walk ----------------------------------------------------------- */
 
 TEST(CompiledWalk, FiftyFramesAreYieldedInnermostFirstEachWithItsCodeSiteAndBase) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(50);
   ChainRun run = set_up_run(w, st, 0, 50, 0);
@@ -281,6 +285,7 @@ TEST(CompiledWalk, FiftyFramesAreYieldedInnermostFirstEachWithItsCodeSiteAndBase
 }
 
 TEST(CompiledWalk, NoStateMeansNothingToWalkWhateverElseTheStackHolds) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   EXPECT_TRUE(walk_compiled(w.ctx).frames.empty()); // no record at all
   GRCORE_CSegment seg = {0x1000, 0x2000};
@@ -304,6 +309,7 @@ TEST(CompiledWalk, NoStateMeansNothingToWalkWhateverElseTheStackHolds) {
 }
 
 TEST(CompiledWalk, ARunEndsAtTheEntryFromTheInterpreterAndTheNextRunIsFoundThroughItsRecord) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   // Inner run: two frames at words 0..15. A native's gap. Outer run: three
   // frames at words 28..51.
@@ -337,6 +343,7 @@ TEST(CompiledWalk, ARunEndsAtTheEntryFromTheInterpreterAndTheNextRunIsFoundThrou
 }
 
 TEST(CompiledWalk, EveryBrokenChainIsAnErrorAndNeverASkipOrAnEnd) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   struct Case {
     const char * name;
     size_t frames_before_the_break;
@@ -401,6 +408,7 @@ TEST(CompiledWalk, EveryBrokenChainIsAnErrorAndNeverASkipOrAnEnd) {
 }
 
 TEST(CompiledWalk, TheMarkerAloneEndsARunWhateverReturnAddressSitsNextToIt) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The marker is what is definitive: the entry stub's return address is in
   // the interpreter's C code, in no registered code, and that is the entry.
   CWorld w;
@@ -423,6 +431,7 @@ TEST(CompiledWalk, TheMarkerAloneEndsARunWhateverReturnAddressSitsNextToIt) {
 }
 
 TEST(CompiledWalk, EachFrameSaysWhereItIsInItsRunAndHowLongTheRunIs) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(8 + 3);
   // An outer run of three under a nested activation, then an inner run of four.
@@ -451,6 +460,7 @@ TEST(CompiledWalk, EachFrameSaysWhereItIsInItsRunAndHowLongTheRunIs) {
 }
 
 TEST(CompiledWalk, ARunBelowTheRunInsideItIsABrokenChain) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(4);
   // The outer record's frames are at the LOW addresses, the inner run's high:
@@ -469,6 +479,7 @@ TEST(CompiledWalk, ARunBelowTheRunInsideItIsABrokenChain) {
 }
 
 TEST(CompiledWalk, FramesReturningIntoRetiredCodeAreStillWalked) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(6);
   ChainRun run = set_up_run(w, st, 0, 6, 0);
@@ -487,6 +498,7 @@ TEST(CompiledWalk, FramesReturningIntoRetiredCodeAreStillWalked) {
 /* ---- Roots -------------------------------------------------------------- */
 
 TEST(CompiledRoots, FiftyFramesEveryStackMapReferenceIsVisitedOnceAndNothingElseIs) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(50);
   set_up_run(w, st, 0, 50, 0);
@@ -509,6 +521,7 @@ TEST(CompiledRoots, FiftyFramesEveryStackMapReferenceIsVisitedOnceAndNothingElse
 }
 
 TEST(CompiledRoots, ARewriteBySomeoneWhoMovedTheObjectLandsInTheNativeFrame) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(50);
   set_up_run(w, st, 0, 50, 0);
@@ -554,6 +567,7 @@ GRCORE_RootVisitor mover_for(Mover * m) {
 } // namespace
 
 TEST(CompiledRoots, EveryDerivedPointerOfASiteFollowsTheSharedBaseAndKeepsItsOwnHeldDelta) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(GRCORE_UNLIMITED, false, false, /*derived=*/true);
   ASSERT_EQ(grcore_codemeta_validate(&w.code.meta, w.code.size(), nullptr), GRCORE_OK);
   HandStack st(50);
@@ -582,6 +596,7 @@ TEST(CompiledRoots, EveryDerivedPointerOfASiteFollowsTheSharedBaseAndKeepsItsOwn
 }
 
 TEST(CompiledRoots, ADerivedPointerIsRewrittenToTheSameValueWhenNothingMoves) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(GRCORE_UNLIMITED, false, false, /*derived=*/true);
   HandStack st(4);
   set_up_run(w, st, 0, 4, 0);
@@ -600,6 +615,7 @@ TEST(CompiledRoots, ADerivedPointerIsRewrittenToTheSameValueWhenNothingMoves) {
 }
 
 TEST(CompiledRoots, AVisitorThatWantsOnlyRangesLeavesTheDerivedSlotAlone) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(GRCORE_UNLIMITED, false, false, /*derived=*/true);
   HandStack st(2);
   set_up_run(w, st, 0, 2, 0);
@@ -612,6 +628,7 @@ TEST(CompiledRoots, AVisitorThatWantsOnlyRangesLeavesTheDerivedSlotAlone) {
 }
 
 TEST(CompiledRoots, AMixedChainScansOnlyTheNativeSegmentConservatively) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(5, 12);
   GRCORE_ActivationRef outer = enter(w.stack, GRCORE_ACTIVATION_JIT);
@@ -657,6 +674,7 @@ std::set<size_t> words_in(HandStack & st, uint64_t lo, uint64_t hi) {
 }
 
 TEST(CompiledRoots, ASegmentThatContainsCompiledFramesIsScannedOnlyBetweenThem) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   // Words 0..15 an inner run of two frames, 16..27 a native's gap, 28..51 an
   // outer run of three: the whole span is one record's segment.
@@ -692,6 +710,7 @@ TEST(CompiledRoots, ASegmentThatContainsCompiledFramesIsScannedOnlyBetweenThem) 
 }
 
 TEST(CompiledRoots, ASegmentThatCutsAFrameInTwoKeepsOnlyWhatIsOutsideTheFrame) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(5, 12);
   // The segment starts in the middle of the inner run's second frame (word 12)
@@ -712,6 +731,7 @@ TEST(CompiledRoots, ASegmentThatCutsAFrameInTwoKeepsOnlyWhatIsOutsideTheFrame) {
 }
 
 TEST(CompiledRoots, ACompiledFrameComesInPlaceAmongTheGuestFramesAndIsNotCountedTwice) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(4);
   auto push = [&](uint64_t v) {
@@ -740,6 +760,7 @@ TEST(CompiledRoots, ACompiledFrameComesInPlaceAmongTheGuestFramesAndIsNotCounted
 }
 
 TEST(CompiledRoots, ARawEntryInAStackMapIsNeverReportedAsARoot) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The validator lets a stack map hold a RAW frame slot; it is not a
   // reference, and handing it to a collector as a writable root is what AD-27
   // forbids. The raw word at -16 of each frame is the one that would be.
@@ -759,6 +780,7 @@ TEST(CompiledRoots, ARawEntryInAStackMapIsNeverReportedAsARoot) {
 }
 
 TEST(CompiledRoots, AGuestFrameThatCannotBeReadDoesNotHideTheCompiledFrames) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The guest walk gives up at a frame whose header is damaged, as it always
   // has; the compiled frames are not guest frames and must still be reported,
   // not dropped with it.
@@ -786,6 +808,7 @@ TEST(CompiledRoots, AGuestFrameThatCannotBeReadDoesNotHideTheCompiledFrames) {
 }
 
 TEST(CompiledRoots, RecordsWithSegmentsAndNoCompiledStateAreScannedWholeAsBefore) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   GRCORE_CSegment seg = {0x4000, 0x4800};
   enter(w.stack, GRCORE_ACTIVATION_NATIVE, &seg);
@@ -802,6 +825,7 @@ TEST(CompiledRoots, RecordsWithSegmentsAndNoCompiledStateAreScannedWholeAsBefore
 }
 
 TEST(CompiledRoots, ABrokenChainStopsTheEnumerationAndSaysWhyRatherThanSkippingAFrame) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   struct Break {
     const char * name;
     std::function<void(HandStack &, CWorld &, uintptr_t &, uintptr_t &)> mutate;
@@ -851,6 +875,7 @@ TEST(CompiledRoots, ABrokenChainStopsTheEnumerationAndSaysWhyRatherThanSkippingA
 }
 
 TEST(CompiledRoots, AGoodChainDoesNotAbortInTheSameChild) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The control for the case above: the same harness, nothing broken.
   CWorld w;
   HandStack st(4);
@@ -948,6 +973,7 @@ struct Interleaved {
 } // namespace
 
 TEST(CompiledFrame, CompiledFramesAppearInOrderBetweenTheGuestFramesWithTheirIdentity) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(0);
   Interleaved scene;
   PauseGuest g;
@@ -988,6 +1014,7 @@ TEST(CompiledFrame, CompiledFramesAppearInOrderBetweenTheGuestFramesWithTheirIde
 }
 
 TEST(CompiledFrame, ACompiledFramesSlotsAreReadThroughItsMapAsTheyAreWithTheirRepresentation) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(0);
   Interleaved scene;
   PauseGuest g;
@@ -1035,6 +1062,7 @@ TEST(CompiledFrame, ACompiledFramesSlotsAreReadThroughItsMapAsTheyAreWithTheirRe
 }
 
 TEST(CompiledFrame, ReadingACompiledFrameNeverConvertsAnything) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The engine converts, and counts: reading a frame by the walk must leave
   // both counts at zero (AD-27: no inspection triggers a conversion).
   ConvLog log;
@@ -1080,6 +1108,7 @@ TEST(CompiledFrame, ReadingACompiledFrameNeverConvertsAnything) {
 }
 
 TEST(CompiledFrame, ADeadFrameStateSlotReadsAsRawZeroWithNoRepresentation) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(0, /*raw_live=*/false, /*dead_slot=*/true);
   HandStack st(1);
   PauseGuest g;
@@ -1110,6 +1139,7 @@ TEST(CompiledFrame, ADeadFrameStateSlotReadsAsRawZeroWithNoRepresentation) {
 }
 
 TEST(CompiledFrame, ABreakFoundByTheLookaheadStillYieldsEveryGuestFrame) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The record is entered first, so the compiled run lies outside the two
   // guest frames, and its innermost base is misaligned: the break is met when
   // the walk begins.
@@ -1139,6 +1169,7 @@ TEST(CompiledFrame, ABreakFoundByTheLookaheadStillYieldsEveryGuestFrame) {
 }
 
 TEST(CompiledFrame, GuestFramesBetweenAGoodCompiledFrameAndTheBreakAreStillYielded) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // G0, then a record whose run has one good frame and a bad caller, then G1:
   // the order is G1, the compiled frame, G0, and only then the break.
   CWorld w(0);
@@ -1166,6 +1197,7 @@ TEST(CompiledFrame, GuestFramesBetweenAGoodCompiledFrameAndTheBreakAreStillYield
 }
 
 TEST(CompiledFrame, ABrokenChainEndsTheFrameWalkAfterWhatWasGoodAndSaysSo) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(0);
   Interleaved scene;
   PauseGuest g;
@@ -1200,6 +1232,7 @@ TEST(CompiledFrame, ABrokenChainEndsTheFrameWalkAfterWhatWasGoodAndSaysSo) {
 }
 
 TEST(CompiledFrame, AContextWithNoCompiledStateWalksExactlyAsBefore) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(0);
   PauseGuest g;
   g.setup = [&](GRCORE_Stack * s) {
@@ -1237,6 +1270,7 @@ uintptr_t * cell_of(GRCORE_Context * c) {
 } // namespace
 
 TEST(WalkCell, TheLayoutNamesTwoWordsThatAreNeitherTheRequestWordNorEachOther) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   const GRCORE_JitLayout * l = grcore_jit_layout();
   EXPECT_EQ(l->walk_cell_offset % sizeof(uintptr_t), 0u);
   EXPECT_EQ(l->native_limit_offset % sizeof(uintptr_t), 0u);
@@ -1249,6 +1283,7 @@ TEST(WalkCell, TheLayoutNamesTwoWordsThatAreNeitherTheRequestWordNorEachOther) {
 }
 
 TEST(WalkCell, AWalkStartsFromTheCellAndMovesItIntoTheInnermostRecord) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(8);
   std::vector<uintptr_t> bases = st.build(w.code, 0, 3, 0, kOutside);
@@ -1273,6 +1308,7 @@ TEST(WalkCell, AWalkStartsFromTheCellAndMovesItIntoTheInnermostRecord) {
 }
 
 TEST(WalkCell, AnActivationEntryMovesTheCellIntoTheRecordBelowAndTheNewOneStartsEmpty) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(8);
   std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
@@ -1295,6 +1331,7 @@ TEST(WalkCell, AnActivationEntryMovesTheCellIntoTheRecordBelowAndTheNewOneStarts
 }
 
 TEST(WalkCell, LeavingTheJitRecordClearsTheCellSoLaterWalksReadNoDeadFrames) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(8);
   std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
@@ -1310,6 +1347,7 @@ TEST(WalkCell, LeavingTheJitRecordClearsTheCellSoLaterWalksReadNoDeadFrames) {
 }
 
 TEST(WalkCell, ACellSetWhileTheInnermostRecordIsNotAJitOneIsABrokenWalkAndAborts) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(8);
   std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
@@ -1337,6 +1375,7 @@ TEST(WalkCell, ACellSetWhileTheInnermostRecordIsNotAJitOneIsABrokenWalkAndAborts
  * a JIT record and leaving it again used to clear it without a word, and a walk
  * made while the record was open attributed the stale words to it. */
 TEST(WalkCell, AStaleCellIsStillABrokenWalkAfterAJitRecordWasEnteredAndLeft) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(8);
   std::vector<uintptr_t> bases = st.build(w.code, 0, 2, 0, kOutside);
@@ -1390,6 +1429,7 @@ struct PairedScene {
 } // namespace
 
 TEST(PairedFrames, EachCompiledFrameAndItsGuestFrameAreReportedAsRootsOnlyOnce) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   PairedScene scene;
   scene.setup(w, w.stack);
@@ -1405,6 +1445,7 @@ TEST(PairedFrames, EachCompiledFrameAndItsGuestFrameAreReportedAsRootsOnlyOnce) 
 }
 
 TEST(PairedFrames, AGuestFrameAboveTheInnermostCompiledFrameIsStillAnOrdinaryFrame) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // A callee that was pushed and has not been entered has no compiled frame: it
   // is reported through its own slots, and the compiled frames below it keep
   // their pairing.
@@ -1421,6 +1462,7 @@ TEST(PairedFrames, AGuestFrameAboveTheInnermostCompiledFrameIsStillAnOrdinaryFra
 }
 
 TEST(PairedFrames, AGuestFrameThatIsNotTheCompiledFramesFunctionIsNotPairedAndNothingIsLost) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The pairing is a claim about the stack; where it does not hold, the frames
   // are reported as before, which can retain too much and never too little.
   CWorld w;
@@ -1442,6 +1484,7 @@ TEST(PairedFrames, AGuestFrameThatIsNotTheCompiledFramesFunctionIsNotPairedAndNo
 }
 
 TEST(PairedFrames, ARecordEnteredWithNoGuestFrameHasNothingToPairWith) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w;
   HandStack st(3);
   set_up_run(w, st, 0, 3, 0);
@@ -1459,6 +1502,7 @@ TEST(PairedFrames, ARecordEnteredWithNoGuestFrameHasNothingToPairWith) {
 }
 
 TEST(PairedFrames, TheAbstractWalkShowsEachPairedFrameOnceByTheCompiledFramesIdentity) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(0);
   PairedScene scene;
   PauseGuest g;
@@ -1509,6 +1553,7 @@ TEST(PairedFrames, TheAbstractWalkShowsEachPairedFrameOnceByTheCompiledFramesIde
 }
 
 TEST(PairedFrames, AFrameWalkWithAnExtraGuestFrameShowsItFirstAndThenThePairedOnes) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   CWorld w(0);
   PairedScene scene;
   PauseGuest g;

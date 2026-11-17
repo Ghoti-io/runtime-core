@@ -117,6 +117,7 @@ struct Chain {
 } // namespace
 
 TEST(ChainRebuild, EveryFrameOfAFiftyDeepRunIsRebuiltIntoItsOwnGuestFrame) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 50);
   size_t rebuilt = 0;
@@ -144,6 +145,7 @@ TEST(ChainRebuild, EveryFrameOfAFiftyDeepRunIsRebuiltIntoItsOwnGuestFrame) {
 }
 
 TEST(ChainRebuild, TheRebuildStartsFromTheWalkStartCellToo) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // Compiled code does not set the record: it stores the cell, and the rebuild
   // starts from it.
   RW w;
@@ -164,6 +166,7 @@ TEST(ChainRebuild, TheRebuildStartsFromTheWalkStartCellToo) {
 }
 
 TEST(ChainRebuild, AGuestFrameAboveTheInnermostCompiledFrameIsLeftAsItIs) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 4, 3, /*extra_above=*/1);
   size_t rebuilt = 0;
@@ -182,6 +185,7 @@ TEST(ChainRebuild, AGuestFrameAboveTheInnermostCompiledFrameIsLeftAsItIs) {
  * collection updated it while its frame was paired, so keeping the guest
  * frame's word would hand the collector a reference that may have moved. */
 TEST(ChainRebuild, ADeadLocationTheEngineCallsAValueIsNulledNotKept) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w(GRCORE_REPR_BITS, false, /*dead_slot=*/true);
   Chain c(w, 5, /*slot_count=*/4);
   ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
@@ -193,6 +197,7 @@ TEST(ChainRebuild, ADeadLocationTheEngineCallsAValueIsNulledNotKept) {
 }
 
 TEST(ChainRebuild, NoCompiledStateRebuildsNothingAndSucceeds) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   size_t rebuilt = 99;
   EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, &rebuilt), GRCORE_OK);
@@ -201,6 +206,7 @@ TEST(ChainRebuild, NoCompiledStateRebuildsNothingAndSucceeds) {
 }
 
 TEST(ChainRebuild, AnUnwindRebuildsOnlyTheFramesThatSurviveIt) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 10);
   size_t rebuilt = 0;
@@ -221,6 +227,7 @@ TEST(ChainRebuild, AnUnwindRebuildsOnlyTheFramesThatSurviveIt) {
 }
 
 TEST(ChainRebuild, ConvertingLocationsAreConvertedInOnePieceFromTheReservation) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w(GRCORE_REPR_I32, /*use_conv=*/true);
   Chain c(w, 50);
   GRCORE_DeoptReservation * res = nullptr;
@@ -239,6 +246,7 @@ TEST(ChainRebuild, ConvertingLocationsAreConvertedInOnePieceFromTheReservation) 
 }
 
 TEST(ChainRebuild, AReservationOneCellShortIsRefusedUpFrontAndNothingIsWritten) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w(GRCORE_REPR_I32, true);
   Chain c(w, 50);
   GRCORE_DeoptReservation * res = nullptr;
@@ -257,6 +265,7 @@ TEST(ChainRebuild, AReservationOneCellShortIsRefusedUpFrontAndNothingIsWritten) 
 }
 
 TEST(ChainRebuild, AnEngineThatCannotConvertRefusesTheChainBeforeWritingAnything) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w(GRCORE_REPR_I32, /*use_conv=*/false);
   Chain c(w, 6);
   GRCORE_DeoptReservation * res = nullptr;
@@ -268,6 +277,7 @@ TEST(ChainRebuild, AnEngineThatCannotConvertRefusesTheChainBeforeWritingAnything
 }
 
 TEST(ChainRebuild, EveryMismatchBetweenTheChainAndTheGuestStackIsRefusedAndWritesNothing) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   struct Case {
     const char * name;
     std::function<void(RW &, Chain &)> mutate;
@@ -306,6 +316,7 @@ TEST(ChainRebuild, EveryMismatchBetweenTheChainAndTheGuestStackIsRefusedAndWrite
 }
 
 TEST(ChainRebuild, AGuestFrameWithTheWrongSlotCountIsRefused) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 4, /*slot_count=*/2); // the frame state describes three
   EXPECT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_ERR_INVALID);
@@ -314,6 +325,7 @@ TEST(ChainRebuild, AGuestFrameWithTheWrongSlotCountIsRefused) {
 }
 
 TEST(ChainRebuild, AGuestFrameWithTheWrongGuestFunctionIsRefused) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 4);
   w.code.sites[0].guest_function = 999;
@@ -327,6 +339,7 @@ TEST(ChainRebuild, AGuestFrameWithTheWrongGuestFunctionIsRefused) {
  * functions sets the id itself. The rebuild records each compiled frame's poll
  * position; it must not replace the id the frame was paired by. */
 TEST(ChainRebuild, TheRebuildKeepsThePairingIdTheEngineSet) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w(GRCORE_REPR_BITS, false, false, nullptr, /*foreign_identity=*/true);
   Chain c(w, 4);
   ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
@@ -347,6 +360,7 @@ TEST(ChainRebuild, TheRebuildKeepsThePairingIdTheEngineSet) {
 }
 
 TEST(ChainRebuild, ModuleQualifiedPollIdentityPairsByGuestFunction) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 4);
   const uint64_t qualified = (UINT64_C(0x12345678) << 32) | 100u;
@@ -369,6 +383,7 @@ TEST(ChainRebuild, ModuleQualifiedPollIdentityPairsByGuestFunction) {
 }
 
 TEST(ChainRebuild, EveryRebuiltFrameTakesItsCompiledFramesIdentity) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // A guest frame keeps the identity it was pushed with until something sets
   // it; the interpreter that resumes a rebuilt frame reads it before it polls
   // (a caller waiting under its callee, the innermost frame at a named exit).
@@ -408,6 +423,7 @@ TEST(ChainRebuild, EveryRebuiltFrameTakesItsCompiledFramesIdentity) {
 }
 
 TEST(ChainRebuild, ARecordEnteredWithNoGuestFrameHasNothingToRebuildInto) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   HandStack st(3);
   std::vector<uintptr_t> bases = st.build(w.code, 0, 3, 0, kOutside);
@@ -418,6 +434,7 @@ TEST(ChainRebuild, ARecordEnteredWithNoGuestFrameHasNothingToRebuildInto) {
 }
 
 TEST(ChainRebuild, ARebuiltJitRecordMayBeLeftWithItsGuestFramesStillOnTheStack) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 5);
   // Before the rebuild the stack must be as it was at entry, as always.
@@ -433,6 +450,7 @@ TEST(ChainRebuild, ARebuiltJitRecordMayBeLeftWithItsGuestFramesStillOnTheStack) 
 }
 
 TEST(ChainRebuild, ARecordEnteredWhereARebuiltOneWasLeftKeepsTheStrictRule) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The rebuilt record's slot is reused by the next entry: the new record has
   // not been rebuilt, so frames pushed inside it must be popped before it is
   // left, exactly as for any record.
@@ -450,6 +468,7 @@ TEST(ChainRebuild, ARecordEnteredWhereARebuiltOneWasLeftKeepsTheStrictRule) {
 }
 
 TEST(ChainRebuild, ARebuiltRecordStillRefusesToBeLeftWithFewerFramesThanItBeganWith) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 3);
   ASSERT_EQ(grcore_compiled_rebuild(w.ctx, nullptr, SIZE_MAX, nullptr), GRCORE_OK);
@@ -463,6 +482,7 @@ TEST(ChainRebuild, ARebuiltRecordStillRefusesToBeLeftWithFewerFramesThanItBeganW
 }
 
 TEST(ChainRebuild, ARecordWhoseRebuildWasRefusedIsNotRebuiltAndKeepsTheStrictRule) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   Chain c(w, 4, 3);
   c.st.words[3 * 8 + 6] = 0; // a broken chain: the rebuild is refused
@@ -472,6 +492,7 @@ TEST(ChainRebuild, ARecordWhoseRebuildWasRefusedIsNotRebuiltAndKeepsTheStrictRul
 }
 
 TEST(ChainRebuild, OnlyTheInnermostRunIsRebuiltAndTheOneUnderANativeIsKept) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   // An outer run of three over a native and then an inner run of two.
   HandStack st(5);
@@ -510,6 +531,7 @@ TEST(ChainRebuild, OnlyTheInnermostRunIsRebuiltAndTheOneUnderANativeIsKept) {
 }
 
 TEST(ReservationExtend, EachCallExtendsByTheCalleesMaximumAndGivesItBack) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   RW w;
   GRCORE_DeoptReservation * res = nullptr;
   ASSERT_EQ(grcore_deopt_reserve(w.ctx, 2, &res), GRCORE_OK);
@@ -535,6 +557,7 @@ TEST(ReservationExtend, EachCallExtendsByTheCalleesMaximumAndGivesItBack) {
 }
 
 TEST(ReservationExtend, ARefusedAllocationLeavesTheReservationAsItWas) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   TrackingAllocator tracking;
   RW w(GRCORE_REPR_BITS, false, false, &tracking.vtable);
   GRCORE_DeoptReservation * res = nullptr;
@@ -553,6 +576,7 @@ TEST(ReservationExtend, ARefusedAllocationLeavesTheReservationAsItWas) {
 }
 
 TEST(ReservationExtend, AnExtendedCellIsAGoodRootOnlyWhileARebuildIsFillingIt) {
+  GRCORE_NEEDS_64BIT_FRAMES();
   // The array may move when it is extended; the collector reads only the cells a
   // rebuild is filling, and none between rebuilds.
   RW w(GRCORE_REPR_I32, true);

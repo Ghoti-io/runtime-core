@@ -106,10 +106,17 @@ typedef enum GRCORE_CodeLocationKind {
  * leaves it zero, which is ::GRCORE_REPR_BITS. The format version stays 1: the
  * struct grew, and every producer in the tree was updated with it.
  */
+#ifdef __cplusplus
+#define GRCORE_LOCATION_ALIGN8 alignas(8)
+#else
+#define GRCORE_LOCATION_ALIGN8 _Alignas(8)
+#endif
 typedef struct GRCORE_CodeLocation {
   GRCORE_CodeLocationKind kind; ///< Which of the three.
   GRCORE_SlotKind slot_kind;    ///< Reference or raw bits.
-  int64_t value;                ///< Offset or immediate; zero for `DEAD`.
+  /* Eight-aligned on every target, so that the struct is 24 bytes where an
+   * `int64_t` is only four-aligned (32-bit x86) as it is where it is eight. */
+  GRCORE_LOCATION_ALIGN8 int64_t value; ///< Offset or immediate; zero for `DEAD`.
   GRCORE_Representation representation; ///< What a raw word is (AD-27).
 } GRCORE_CodeLocation;
 

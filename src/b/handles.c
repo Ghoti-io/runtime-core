@@ -65,7 +65,7 @@ static uint64_t splitmix64(uint64_t x) {
  * the holder check is what keeps a token from being used by a third party. Its
  * job is to refuse a token that belongs to another table or another run. */
 static uint32_t make_tag(const void * address) {
-  static uint64_t counter;
+  static _Alignas(8) uint64_t counter;
   struct timespec ts = { 0, 0 };
   (void)clock_gettime(CLOCK_REALTIME, &ts);
   uint64_t n = __atomic_add_fetch(&counter, 1, __ATOMIC_RELAXED);

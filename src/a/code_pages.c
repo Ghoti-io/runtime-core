@@ -33,8 +33,8 @@ struct GRCORE_CodePages {
   const GRCORE_PageProvider * backing;
   GRCORE_PageProvider provider;
   uint64_t cap;
-  uint64_t in_use;
-  uint64_t peak;
+  _Alignas(8) uint64_t in_use; /* 8-aligned for the `__atomic` builtins (4-aligned on 32-bit x86) */
+  _Alignas(8) uint64_t peak;
   size_t references;
 };
 
