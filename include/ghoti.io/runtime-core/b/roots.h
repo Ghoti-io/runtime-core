@@ -73,6 +73,35 @@ typedef struct GRCORE_ConservativeRange {
   uint64_t base;     ///< Added after the shift.
 } GRCORE_ConservativeRange;
 
+/**
+ * @brief How a 64-bit value word names an object: a word is a reference if and
+ *   only if `(word & tag_mask) == tag_value`, and then it names the address
+ *   `((word & mask) >> shift) + base`.
+ *
+ * The same data a ::GRCORE_ConservativeRange carries, plus the tag test that a
+ * precise slot needs because its words may be integers. A root source states
+ * one (::GRCORE_RootSource) so that engines with different value words can
+ * register sources on one context and be traced by one collector (AD-10,
+ * AD-11, AD-18). `tag_mask` and `tag_value` both zero is how "no tag test" is
+ * spelled, since `(word & 0) == 0` always holds.
+ */
+typedef struct GRCORE_ValueCodec {
+  uint64_t tag_mask;  ///< Bits of a word the tag test looks at.
+  uint64_t tag_value; ///< What those bits must equal. Within `tag_mask`.
+  uint64_t mask;      ///< Bits of a word that carry the address.
+  unsigned shift;     ///< How far to shift them down; below 64.
+  uint64_t base;      ///< Added after the shift.
+} GRCORE_ValueCodec;
+
+/**
+ * @brief Whether a codec is well formed: `shift` below 64 and `tag_value`
+ *   inside `tag_mask`.
+ *
+ * @param codec The codec. NULL is not valid.
+ * @return true when it is.
+ */
+GRCORE_API bool grcore_value_codec_valid(const GRCORE_ValueCodec * codec);
+
 /** @brief What a root source reports its roots to. */
 typedef struct GRCORE_RootVisitor {
   void * user; ///< Handed back to both callbacks.
@@ -93,8 +122,9 @@ typedef struct GRCORE_RootVisitor {
  * first member, `size`, is the `sizeof(GRCORE_RootSource)` of the header the
  * source was compiled against, ::GRCORE_ROOT_SOURCE_INIT writes it, and a
  * member added after `enumerate` is read only where `size` covers it, an absent
- * one being NULL. No such member exists yet, so
- * ::GRCORE_ROOT_SOURCE_MIN_SIZE is the whole struct. ::grcore_context_add_root_source
+ * one being NULL. `codec` is the one such member; the minimum size stays the
+ * layout through `enumerate`, so a source compiled before `codec` existed is
+ * still valid and has no codec. ::grcore_context_add_root_source
  * refuses with ::GRCORE_ERR_INVALID a source that ::grcore_root_source_valid
  * does not accept; a larger `size` is accepted and the unknown tail ignored.
  */
@@ -112,18 +142,36 @@ typedef struct GRCORE_RootSource {
    */
   void (*enumerate)(
       GRCORE_Context * context, void * value, const GRCORE_RootVisitor * visitor);
+  /**
+   * How this source's precise slots are decoded: the codec of the engine whose
+   * value words they hold (RC-28). The source's own struct must outlive the
+   * context, as it must for the source. NULL, and absent in a source whose
+   * `size` ends before it, mean the collector's default codec, so a source
+   * written before this member existed keeps its meaning. A source whose
+   * codec is not valid (::grcore_value_codec_valid) is refused by
+   * ::grcore_context_add_root_source. Read it with ::grcore_root_source_codec.
+   * Conservative ranges carry their own and ignore this.
+   */
+  const GRCORE_ValueCodec * codec;
 } GRCORE_RootSource;
 
 /** @brief The smallest `size` a root source may state: the layout through
- *   `enumerate`, which is every member there is. */
+ *   `enumerate`, which is the layout before `codec` existed. */
 #define GRCORE_ROOT_SOURCE_MIN_SIZE                                         \
   (offsetof(GRCORE_RootSource, enumerate) +                                 \
       sizeof(((GRCORE_RootSource *)0)->enumerate))
 
-/** @brief The initialiser of a root source:
- *   `GRCORE_ROOT_SOURCE_INIT(name, enumerate)`. Begins with
+/** @brief The initialiser of a root source with the collector's default
+ *   codec: `GRCORE_ROOT_SOURCE_INIT(name, enumerate)`. Begins with
  *   `sizeof(GRCORE_RootSource)`. */
-#define GRCORE_ROOT_SOURCE_INIT(...) { sizeof(GRCORE_RootSource), __VA_ARGS__ }
+#define GRCORE_ROOT_SOURCE_INIT(name, enumerate_fn)                         \
+  { sizeof(GRCORE_RootSource), name, enumerate_fn, NULL }
+
+/** @brief The initialiser of a root source whose precise slots are decoded by
+ *   a codec of its own: `GRCORE_ROOT_SOURCE_INIT_CODEC(name, enumerate,
+ *   &codec)`. The codec must outlive the source. */
+#define GRCORE_ROOT_SOURCE_INIT_CODEC(name, enumerate_fn, codec_ptr)        \
+  { sizeof(GRCORE_RootSource), name, enumerate_fn, codec_ptr }
 
 /** @brief Whether a root source's `size` covers a member, so that reading it
  *   is defined. */
@@ -132,11 +180,23 @@ typedef struct GRCORE_RootSource {
       sizeof((source)->member))
 
 /**
+ * @brief The codec a source's precise slots are decoded by.
+ *
+ * @param source The source. NULL is allowed.
+ * @return The source's codec, or NULL when it has none (NULL source, a `size`
+ *   that ends before the member, or the member is NULL): the collector then
+ *   uses its default.
+ */
+GRCORE_API const GRCORE_ValueCodec * grcore_root_source_codec(
+    const GRCORE_RootSource * source);
+
+/**
  * @brief Whether a root source is acceptable (see ::GRCORE_RootSource).
  *
  * @param source The source. NULL is not valid.
  * @return true when `size` is at least ::GRCORE_ROOT_SOURCE_MIN_SIZE and a
- *   multiple of the struct's alignment.
+ *   multiple of the struct's alignment, and a codec the size covers is NULL or
+ *   valid.
  */
 GRCORE_API bool grcore_root_source_valid(const GRCORE_RootSource * source);
 

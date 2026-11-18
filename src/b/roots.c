@@ -36,10 +36,26 @@ static bool owner_ok(const GRCORE_Context * c) {
   return c != NULL && grcore_context_owned_by_caller(c) && !c->tearing_down;
 }
 
+bool grcore_value_codec_valid(const GRCORE_ValueCodec * codec) {
+  return codec != NULL && codec->shift < 64u &&
+      (codec->tag_value & ~codec->tag_mask) == 0;
+}
+
+const GRCORE_ValueCodec * grcore_root_source_codec(
+    const GRCORE_RootSource * source) {
+  return source != NULL && GRCORE_ROOT_SOURCE_HAS(source, codec)
+      ? source->codec
+      : NULL;
+}
+
 bool grcore_root_source_valid(const GRCORE_RootSource * source) {
-  /* See grcore_key_valid: judged by `size` alone. */
-  return source != NULL && source->size >= GRCORE_ROOT_SOURCE_MIN_SIZE &&
-      source->size % _Alignof(GRCORE_RootSource) == 0;
+  /* See grcore_key_valid: judged by `size`, then by the members it covers. */
+  if (source == NULL || source->size < GRCORE_ROOT_SOURCE_MIN_SIZE ||
+      source->size % _Alignof(GRCORE_RootSource) != 0) {
+    return false;
+  }
+  const GRCORE_ValueCodec * codec = grcore_root_source_codec(source);
+  return codec == NULL || grcore_value_codec_valid(codec);
 }
 
 GRCORE_Result grcore_context_add_root_source(GRCORE_Context * context,

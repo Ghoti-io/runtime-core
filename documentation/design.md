@@ -854,6 +854,24 @@ query names the source and a slot's ordinal in its enumeration) calls the
 source's own `enumerate` with a visitor of its own, which is what the
 enumeration does for each entry. It adds no new way to reach a root.
 
+**A codec per source.** A precise slot is one 64-bit word, and whether it names
+an object, and which one, depends on the value encoding of the engine that wrote
+it. Engines that trust each other share one heap (AD-10), so the encoding cannot
+be a property of the heap or of the context: a source states its own. The last
+member of `GRCORE_RootSource` is a pointer to a `GRCORE_ValueCodec` (a tag mask
+and value, an address mask, a shift and a base: a word is a reference if and only
+if `(word & tag_mask) == tag_value`, and then names
+`((word & mask) >> shift) + base`). A collector decodes the precise slots a
+source reports with that codec, and rewrites them with it when it moves an
+object. A source with no codec, and a source compiled before the member existed
+(its `size` ends first, and the bytes after it are not read), is decoded by the
+collector's default. The codec is checked when the source is added, because a
+shift of 64 or more or a tag value outside its mask would make every decode
+undefined, and a refusal there leaves the table unchanged. It is data and not a
+callback so that the collector's inner loop makes no indirect call per slot.
+`GRCORE_ConservativeRange` keeps carrying its own mask, shift and base and has
+no tag test, since a stack word that fails one is not known to be an integer.
+
 **The unwinder (AD-5, AD-18).** `grcore_unwind_to_activation` and
 `grcore_unwind_all` pop frames innermost first, calling the engine's `unwind`
 hook while the frame is still on the stack, leave the deeper activations (which
