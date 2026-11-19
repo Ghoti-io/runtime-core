@@ -51,6 +51,11 @@ GRCORE_Result grcore_group_create(const GRCORE_Allocator * allocator,
   g->pages = pages;
   g->contexts = 0;
   g->ports = 0;
+  g->seed_counter = 0;
+  if (!grcore_entropy(&g->master_seed, sizeof g->master_seed)) {
+    allocator->free_fn(allocator->ctx, g);
+    return GRCORE_ERR_IO;
+  }
   grcore_meter_init(&g->meter);
   grcore_counting_init(&g->counting, &g->meter, allocator, pages);
   if (grcore_handles_table_init(&g->handles, g) != GRCORE_OK) {

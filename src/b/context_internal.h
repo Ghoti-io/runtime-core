@@ -85,6 +85,7 @@ typedef struct GRCORE_RootEntry {
 } GRCORE_RootEntry;
 
 struct GRCORE_Context {
+  uint64_t seed; ///< This context's draw of the group's sequence (b/seeds.h).
   GRCORE_Group * group;
   GRCORE_Options * options; ///< The context's own copy.
   GRCORE_Meter meter;

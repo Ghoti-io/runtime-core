@@ -854,6 +854,23 @@ query names the source and a slot's ordinal in its enumeration) calls the
 source's own `enumerate` with a visitor of its own, which is what the
 enumeration does for each entry. It adds no new way to reach a root.
 
+**The seed sequence (AD-25).** Nothing in the stack is seeded from a clock, and
+there is no entropy callback. A group holds one master seed, drawn from
+operating-system entropy when the group is made (`getrandom`, then the urandom
+device; `rand_s` on Windows) or supplied by the host before the first context
+exists, so a failing run can be reproduced. Each context takes the next draw of
+the group's sequence when it is made, by splitmix64: draw k is the output of
+the standard generator started at the master after k advances, taken with one
+atomic increment, so the same master and the same creation order give the same
+context seeds on every target. A context's own draws are a pure function of its
+seed and an index (`grcore_context_seed_draw`), so an engine derives its hash
+seed (draw 0) and any generators it needs without state of its own, and a
+snapshot that keeps the seed keeps every draw. The master cannot change once a
+context has taken a draw, and destroying a context does not give its draw back.
+Rejected: a seed read from a clock (an irreproducible run), an entropy callback
+(a second way to be irreproducible), and a draw state inside the context (it
+would have to be snapshotted and kept in step with the engine's use).
+
 **A codec per source.** A precise slot is one 64-bit word, and whether it names
 an object, and which one, depends on the value encoding of the engine that wrote
 it. Engines that trust each other share one heap (AD-10), so the encoding cannot

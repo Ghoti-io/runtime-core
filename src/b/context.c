@@ -155,6 +155,7 @@ GRCORE_Result grcore_context_create(GRCORE_Group * group,
   c->unwind_result = GRCORE_OK;
   c->owner = grcore_thread_id();
   c->config = GRCORE_CONFIG_PARKED_OUTSIDE;
+  c->seed = grcore_group_next_seed(group);
   grcore_group_enter(group);
   *out_context = c;
   return GRCORE_OK;

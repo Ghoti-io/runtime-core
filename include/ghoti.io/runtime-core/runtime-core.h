@@ -76,6 +76,7 @@
 #include <ghoti.io/runtime-core/b/request.h>
 #include <ghoti.io/runtime-core/b/roots.h>
 #include <ghoti.io/runtime-core/b/run.h>
+#include <ghoti.io/runtime-core/b/seeds.h>
 #include <ghoti.io/runtime-core/b/snapshot.h>
 
 #endif /* GHOTI_IO_GRCORE_RUNTIME_CORE_H */

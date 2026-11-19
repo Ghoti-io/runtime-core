@@ -46,7 +46,14 @@ struct GRCORE_Group {
   size_t contexts; ///< Touched only through `__atomic` builtins.
   size_t ports;    ///< Likewise.
   GRCORE_HandleTable handles; ///< The cross-heap handle table (b/handles.h).
+  uint64_t master_seed;       ///< The seed sequence's master (b/seeds.h).
+  uint64_t seed_counter;      ///< Draws taken; touched only through `__atomic`.
 };
+
+/** @brief The next draw of the group's sequence: a new context's seed. */
+uint64_t grcore_group_next_seed(GRCORE_Group * group);
+/** @brief Operating-system entropy; false when there is none. */
+bool grcore_entropy(void * bytes, size_t length);
 
 /** @brief Counts a context in. */
 void grcore_group_enter(GRCORE_Group * group);
